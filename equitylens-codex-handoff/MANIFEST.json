@@ -1,0 +1,122 @@
+[
+  {
+    "path": "CODEX_START_HERE.md",
+    "size": 2848,
+    "sha256": "ad57c8bcbbf326d127df6d102efac4f163419b4f75fe635e0a7e787e957d7766"
+  },
+  {
+    "path": "README.md",
+    "size": 3467,
+    "sha256": "e0553bfde48e837720462638d6e1736b57322a0480bc09c8ea071d5feccce080"
+  },
+  {
+    "path": "docs/00_PRODUCT_SPEC.md",
+    "size": 4462,
+    "sha256": "0642a6d505083880b9ef34ec238c19eb192310c696535ad9b0d6e00c8934f13d"
+  },
+  {
+    "path": "docs/01_FRONTEND_UX_SPEC.md",
+    "size": 3446,
+    "sha256": "079fafcef71acf4612b216322ef64803f35e917ff14915c02ed47d74e8b9094c"
+  },
+  {
+    "path": "docs/02_SYSTEM_ARCHITECTURE.md",
+    "size": 3966,
+    "sha256": "75a9480952a000171c612a33d4c9fd4b4a4d11a5c205cf5619e3a6a4237dcb9b"
+  },
+  {
+    "path": "docs/03_DATA_SOURCES_AND_PROVENANCE.md",
+    "size": 6763,
+    "sha256": "8616a54138068131682557753e0a7593555edc6296d11aedf04a8968030a7429"
+  },
+  {
+    "path": "docs/04_FINANCIAL_DATA_MODEL.md",
+    "size": 4309,
+    "sha256": "24dc051d9e9065726f3f4fe161a737d669601b11087556d4ebf5170dc2fb96bf"
+  },
+  {
+    "path": "docs/05_MANAGEMENT_ANALYSIS.md",
+    "size": 3874,
+    "sha256": "b27ee4d77572d0a0a69a4836d41f9b708fad508993b3ead6113881eeeaab73d5"
+  },
+  {
+    "path": "docs/06_VALUATION_ENGINE.md",
+    "size": 4635,
+    "sha256": "1923b9a7025bb93cf1737c122ad72ea37fcf1a3772be53094ffb08b28006e9f3"
+  },
+  {
+    "path": "docs/07_API_CONTRACT.md",
+    "size": 3596,
+    "sha256": "4ded8152662b6f505eece7f4b5a0ac2bb4f53ba74bd7db0b46e7c01041ed83c7"
+  },
+  {
+    "path": "docs/08_IMPLEMENTATION_PLAN.md",
+    "size": 4379,
+    "sha256": "4b7777e00f5d404146e1c2dd437a601c7ef04459cecdf54e0d5e06f89bc8e904"
+  },
+  {
+    "path": "docs/09_ACCEPTANCE_CRITERIA.md",
+    "size": 3005,
+    "sha256": "cba54149832bd2c0ff17c76dfad16f9a1315b24855e986a9452da81d7388c10c"
+  },
+  {
+    "path": "docs/10_SOURCE_REFERENCE.md",
+    "size": 1895,
+    "sha256": "fca6820730ac3d2105b55aa8cec166b32b5e085bc007f1f03bd332d9d15d0feb"
+  },
+  {
+    "path": "reference/equitylens_demo_v3.html",
+    "size": 117773,
+    "sha256": "0fa650ba7b62de23353748a23fcc1256ca5657ed9edf4d29b8673c42e4b4d673"
+  },
+  {
+    "path": "reference/preview_v2_business.png",
+    "size": 191868,
+    "sha256": "d461c8e3fb9b0ae1317f990aea431b0bbdec9fdc758de08a9f493f622bb4642c"
+  },
+  {
+    "path": "reference/preview_v2_financials.png",
+    "size": 160038,
+    "sha256": "9a30badd44f4beb07da3b235d9f97e5035c28d1705ceb25c4f05d067c17f4042"
+  },
+  {
+    "path": "reference/preview_v2_viewport.png",
+    "size": 299785,
+    "sha256": "2f6ba2281ee1b592ea042fbaa56c5d12c20b80fd1d67f606c2994d48546499f5"
+  },
+  {
+    "path": "reference/preview_v3_management.png",
+    "size": 447814,
+    "sha256": "3a3ec6551ea2ba8fe74b9d0fb736b56c01db30d744b0b0fb56bbf8d242b8f28c"
+  },
+  {
+    "path": "reference/preview_v3_valuation.png",
+    "size": 429633,
+    "sha256": "6cfa9b48b873d178de2d4cfd0562b1cb39f1feac2481a1d977eef4598315903a"
+  },
+  {
+    "path": "spec/management_rubric.yaml",
+    "size": 1852,
+    "sha256": "4e52aa3e838447ae32ed4e0232655223dfbc46bf62fefba05c49054ac5511d79"
+  },
+  {
+    "path": "spec/metric_catalog.yaml",
+    "size": 2482,
+    "sha256": "fa1a7263a2d27f421a343b5b3aeb68f44f6760b25225391019b64f72cde38ab3"
+  },
+  {
+    "path": "spec/openapi_stub.yaml",
+    "size": 1868,
+    "sha256": "cfdfeaecec85152ef73a1c1282e9958f7e17d20fa59a7b06d9a4f60146e05112"
+  },
+  {
+    "path": "spec/schema.sql",
+    "size": 4273,
+    "sha256": "564348562b68b557e36f440d736183aa2d48e7871f751fa2cc455f963717f106"
+  },
+  {
+    "path": "spec/source_registry.yaml",
+    "size": 1598,
+    "sha256": "832ae094efc3fbfd53c191e9a0786ede9f6afee0f6cfcdbb8915c234c03377f2"
+  }
+]

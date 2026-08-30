@@ -1,0 +1,68 @@
+version: 1
+minimum_evidence_coverage_for_score: 0.70
+dimensions:
+  strategy_execution:
+    weight: 0.22
+    criteria:
+      - id: strategic_decision_outcomes
+        weight: 0.45
+        evidence: [10-K, 10-Q, 8-K, official_IR]
+      - id: operating_goal_delivery
+        weight: 0.35
+        evidence: [earnings_call, 10-Q, 10-K]
+      - id: strategic_consistency
+        weight: 0.20
+        evidence: [10-K, earnings_call]
+  capital_allocation:
+    weight: 0.22
+    criteria:
+      - id: reinvestment_returns
+        weight: 0.35
+      - id: buyback_discipline
+        weight: 0.25
+      - id: acquisition_record
+        weight: 0.20
+      - id: balance_sheet_discipline
+        weight: 0.20
+  shareholder_alignment:
+    weight: 0.16
+    criteria:
+      - id: net_dilution
+        weight: 0.35
+      - id: incentive_alignment
+        weight: 0.35
+      - id: executive_ownership
+        weight: 0.15
+      - id: capital_return_quality
+        weight: 0.15
+  promise_delivery:
+    weight: 0.16
+    criteria:
+      - id: delivery_rate
+        weight: 0.60
+      - id: miss_severity
+        weight: 0.25
+      - id: transparency_on_misses
+        weight: 0.15
+  operating_discipline:
+    weight: 0.14
+    criteria:
+      - id: margin_discipline
+        weight: 0.35
+      - id: cash_conversion
+        weight: 0.35
+      - id: return_on_capital_stability
+        weight: 0.30
+  governance_succession:
+    weight: 0.10
+    criteria:
+      - id: board_independence_and_controls
+        weight: 0.35
+      - id: compensation_governance
+        weight: 0.30
+      - id: succession_key_person_risk
+        weight: 0.35
+rules:
+  - LLM may write explanations but may not directly set numeric scores.
+  - A score must include sample size/evidence coverage.
+  - Missing evidence produces unavailable/low-confidence score rather than a fabricated neutral score.

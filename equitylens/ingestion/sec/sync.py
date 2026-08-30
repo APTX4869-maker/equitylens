@@ -1,0 +1,187 @@
+"""SEC ingestion orchestrator: fetch -> snapshot -> persist -> normalize."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from datetime import datetime, timezone
+
+from equitylens.config import (
+    PARSER_VERSION,
+    RAW_DIR,
+    SEC_COMPANYFACTS_URL,
+    SEC_SUBMISSIONS_URL,
+)
+from equitylens.domain.companies import get_company
+from equitylens.domain.filings import SourceDocument
+from equitylens.ingestion.sec.client import SECClient
+from equitylens.normalization.fiscal_periods import FiscalCalendar
+from equitylens.normalization.normalize import normalize_companyfacts
+from equitylens.normalization.taxonomy.mappings import MappingRegistry
+from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.storage.raw_store import load_snapshot, save_snapshot
+
+DOC_SUBMISSIONS = "submissions.json"
+DOC_COMPANYFACTS = "companyfacts.json"
+
+
+@dataclass
+class SyncReport:
+    company: str
+    fetched: bool = False
+    source_documents: int = 0
+    facts_seen: int = 0
+    facts_accepted: int = 0
+    facts_rejected: int = 0
+    canonical_count: int = 0
+    derived_count: int = 0
+    rejected_reasons: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    def line(self) -> str:
+        return (
+            f"{self.company}: docs={self.source_documents} facts_seen={self.facts_seen} "
+            f"accepted={self.facts_accepted} rejected={self.facts_rejected} "
+            f"canonical={self.canonical_count} derived={self.derived_count}"
+        )
+
+
+def _fetch_snapshot(client: SECClient, url: str, directory, doc_name: str) -> tuple[bytes, str, dict, SourceDocument]:
+    status, content, meta = client.get(url)
+    path, sha = save_snapshot(directory, doc_name, content)
+    doc = SourceDocument(
+        provider="SEC",
+        document_type="COMPANYFACTS_SNAPSHOT" if "companyfacts" in url else "SUBMISSIONS_SNAPSHOT",
+        source_url=url,
+        content_sha256=sha,
+        local_path=str(path),
+        fetched_at=meta["fetched_at"],
+        parser_version=PARSER_VERSION,
+        metadata_json={"http_status": status, "content_length": meta["content_length"]},
+    )
+    return content, sha, meta, doc
+
+
+def sync_company(
+    ticker: str,
+    *,
+    fetch: bool = True,
+    force: bool = False,
+    store: DuckDBStore | None = None,
+    client: SECClient | None = None,
+    raw_dir=RAW_DIR,
+) -> SyncReport:
+    company = get_company(ticker)
+    cik = company.cik
+    directory = raw_dir / "sec" / cik
+    store = store or DuckDBStore()
+    store.connect()
+    store.init_schema()
+
+    started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    report = SyncReport(company=ticker)
+    fetched_bytes = 0
+    try:
+        docs: list[SourceDocument] = []
+        submissions_data: dict | None = None
+
+        if fetch:
+            own_client = client or SECClient()
+            try:
+                # submissions
+                subs_content, sha, meta, doc = _fetch_snapshot(
+                    own_client, SEC_SUBMISSIONS_URL + f"CIK{cik}.json", directory, DOC_SUBMISSIONS
+                )
+                fetched_bytes += len(subs_content)
+                submissions_data = json.loads(subs_content)
+                doc.company_id = cik
+                doc.filed_at = None
+                docs.append(doc)
+
+                # companyfacts
+                cf_content, sha, meta, doc = _fetch_snapshot(
+                    own_client, SEC_COMPANYFACTS_URL + f"CIK{cik}.json", directory, DOC_COMPANYFACTS
+                )
+                fetched_bytes += len(cf_content)
+                doc.company_id = cik
+                docs.append(doc)
+            finally:
+                if client is None:
+                    own_client.close()
+            report.fetched = True
+        else:
+            # load from cache (idempotent second sync without downloads)
+            subs = load_snapshot(directory, DOC_SUBMISSIONS)
+            cf = load_snapshot(directory, DOC_COMPANYFACTS)
+            if subs is None or cf is None:
+                raise FileNotFoundError(
+                    f"No cached snapshots for {ticker}; run with --fetch first"
+                )
+            submissions_data = json.loads(subs[0])
+            docs = [
+                SourceDocument(provider="SEC", document_type="SUBMISSIONS_SNAPSHOT",
+                              source_url=SEC_SUBMISSIONS_URL + f"CIK{cik}.json",
+                              content_sha256=subs[1], local_path=str(directory / DOC_SUBMISSIONS),
+                              company_id=cik, parser_version=PARSER_VERSION),
+                SourceDocument(provider="SEC", document_type="COMPANYFACTS_SNAPSHOT",
+                              source_url=SEC_COMPANYFACTS_URL + f"CIK{cik}.json",
+                              content_sha256=cf[1], local_path=str(directory / DOC_COMPANYFACTS),
+                              company_id=cik, parser_version=PARSER_VERSION),
+            ]
+
+        # persist source documents (idempotent by hash)
+        doc_rows = [d.to_row() for d in docs]
+        store.upsert_source_documents(doc_rows)
+        report.source_documents = len(doc_rows)
+
+        # normalize companyfacts
+        cf_doc = next(d for d in docs if d.document_type == "COMPANYFACTS_SNAPSHOT")
+        cf_path = cf_doc.local_path
+        cf_data = json.loads(Path(cf_path).read_text())
+        mappings = MappingRegistry()
+        calendar = FiscalCalendar.from_submissions(submissions_data, fallback_mm_dd=company.fiscal_year_end)
+        raw_rows, canonical_rows, result = normalize_companyfacts(
+            cf_data, mappings, calendar, cf_doc.source_document_id, cik
+        )
+        store.replace_raw_facts(cf_doc.source_document_id, raw_rows)
+        store.replace_canonical_facts(cf_doc.source_document_id, canonical_rows)
+
+        report.facts_seen = result.facts_seen
+        report.facts_accepted = result.facts_accepted
+        report.facts_rejected = result.facts_rejected
+        report.canonical_count = result.canonical_count
+        report.derived_count = result.derived_count
+        report.rejected_reasons = result.rejected_reasons
+        report.warnings = [f"{m}: {n}" for m, n in result.rejected_reasons.items()]
+
+        store.insert_ingestion_run({
+            "run_id": f"run_{uuid.uuid4().hex[:12]}",
+            "company_id": cik,
+            "provider": "SEC",
+            "command": "sync" + ("" if fetch else " --no-fetch"),
+            "started_at": started,
+            "finished_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "status": "OK",
+            "fetched_bytes": fetched_bytes,
+            "facts_seen": result.facts_seen,
+            "facts_accepted": result.facts_accepted,
+            "facts_rejected": result.facts_rejected,
+            "warnings_json": json.dumps(report.warnings, ensure_ascii=False),
+        })
+        return report
+    except Exception:
+        store.insert_ingestion_run({
+            "run_id": f"run_{uuid.uuid4().hex[:12]}",
+            "company_id": cik,
+            "provider": "SEC",
+            "command": "sync",
+            "started_at": started,
+            "finished_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "status": "ERROR",
+            "fetched_bytes": fetched_bytes,
+            "facts_seen": 0, "facts_accepted": 0, "facts_rejected": 0,
+            "warnings_json": json.dumps(["exception"], ensure_ascii=False),
+        })
+        raise

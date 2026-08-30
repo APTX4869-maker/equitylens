@@ -1,0 +1,83 @@
+version: 1
+canonical_facts:
+  REVENUE:
+    type: duration
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      - us-gaap:Revenues
+  GROSS_PROFIT:
+    type: duration
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:GrossProfit
+  OPERATING_INCOME:
+    type: duration
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:OperatingIncomeLoss
+  NET_INCOME:
+    type: duration
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:NetIncomeLoss
+  CASH_AND_EQUIVALENTS:
+    type: instant
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:CashAndCashEquivalentsAtCarryingValue
+  TOTAL_ASSETS:
+    type: instant
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:Assets
+  STOCKHOLDERS_EQUITY:
+    type: instant
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:StockholdersEquity
+  OPERATING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    candidate_concepts:
+      - us-gaap:NetCashProvidedByUsedInOperatingActivities
+  CAPITAL_EXPENDITURES:
+    type: duration
+    unit_family: currency
+    sign_normalization: economic_outflow_positive
+    candidate_concepts:
+      - us-gaap:PaymentsToAcquirePropertyPlantAndEquipment
+  DILUTED_EPS:
+    type: duration
+    unit_family: currency_per_share
+    candidate_concepts:
+      - us-gaap:EarningsPerShareDiluted
+  DILUTED_WEIGHTED_AVG_SHARES:
+    type: duration
+    unit_family: shares
+    candidate_concepts:
+      - us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding
+
+derived_metrics:
+  REVENUE_GROWTH_YOY:
+    formula_version: revenue_growth_yoy.v1
+    formula: "REVENUE_Q / REVENUE_Q_MINUS_4 - 1"
+  GROSS_MARGIN:
+    formula_version: gross_margin.v1
+    formula: "GROSS_PROFIT / REVENUE"
+  OPERATING_MARGIN:
+    formula_version: operating_margin.v1
+    formula: "OPERATING_INCOME / REVENUE"
+  NET_MARGIN:
+    formula_version: net_margin.v1
+    formula: "NET_INCOME / REVENUE"
+  FCF:
+    formula_version: fcf.v1
+    formula: "OPERATING_CASH_FLOW - CAPITAL_EXPENDITURES"
+  FCF_MARGIN:
+    formula_version: fcf_margin.v1
+    formula: "FCF / REVENUE"
+notes:
+  - Candidate concepts are starting mappings only; mapping selection must use period/context/unit rules and golden tests.
+  - Custom issuer tags and dimensional segment data require separate mapping/parser logic.
+  - ROIC is intentionally omitted from V0.1 until invested-capital definition is locked and tested.

@@ -1,0 +1,158 @@
+# Canonical fact mappings — versioned concept -> canonical metric rules.
+# V0.1 scope: the fact set required by CODEX_START_HERE.md for AAPL/MSFT.
+# Every rule id is versioned; changing a rule creates a new rule id.
+version: 1
+canonical_facts:
+  REVENUE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      - us-gaap:Revenues
+  COST_OF_REVENUE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:CostOfGoodsAndServicesSold
+      - us-gaap:CostOfRevenue
+      - us-gaap:CostOfGoodsSold
+  GROSS_PROFIT:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:GrossProfit
+  OPERATING_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:OperatingIncomeLoss
+  PRETAX_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+  INCOME_TAX_EXPENSE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:IncomeTaxExpenseBenefit
+  NET_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetIncomeLoss
+  BASIC_EPS:
+    type: duration
+    unit_family: currency_per_share
+    concepts:
+      - us-gaap:EarningsPerShareBasic
+  DILUTED_EPS:
+    type: duration
+    unit_family: currency_per_share
+    concepts:
+      - us-gaap:EarningsPerShareDiluted
+  BASIC_WEIGHTED_AVG_SHARES:
+    type: duration
+    unit_family: shares
+    concepts:
+      - us-gaap:WeightedAverageNumberOfSharesOutstandingBasic
+  DILUTED_WEIGHTED_AVG_SHARES:
+    type: duration
+    unit_family: shares
+    concepts:
+      - us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding
+  CASH_AND_EQUIVALENTS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:CashAndCashEquivalentsAtCarryingValue
+  SHORT_TERM_INVESTMENTS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:ShortTermInvestments
+      - us-gaap:MarketableSecuritiesCurrent
+      - us-gaap:AvailableForSaleSecuritiesCurrent
+  TOTAL_ASSETS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:Assets
+  CURRENT_ASSETS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:AssetsCurrent
+  CURRENT_LIABILITIES:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LiabilitiesCurrent
+  SHORT_TERM_DEBT:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LongTermDebtCurrent
+      - us-gaap:ShortTermBorrowings
+      - us-gaap:CommercialPaper
+  LONG_TERM_DEBT:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LongTermDebtNoncurrent
+      - us-gaap:LongTermDebt
+  STOCKHOLDERS_EQUITY:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:StockholdersEquity
+  SHARES_OUTSTANDING:
+    type: instant
+    unit_family: shares
+    concepts:
+      - us-gaap:CommonStockSharesOutstanding
+  OPERATING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInOperatingActivities
+  CAPITAL_EXPENDITURES:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsToAcquirePropertyPlantAndEquipment
+  DEPRECIATION_AMORTIZATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:DepreciationAmortizationAndAccretionNet
+      - us-gaap:DepreciationDepletionAndAmortization
+  SHARE_BASED_COMPENSATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:ShareBasedCompensation
+  DIVIDENDS_PAID:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsOfDividends
+      - us-gaap:PaymentsOfDividendsCommonStock
+  SHARE_REPURCHASES:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsForRepurchaseOfCommonStock
+
+# Cash-flow style facts: 10-Qs report YTD values only; standalone quarters
+# must be derived by differencing (YTD chain within the same fiscal year).
+derive_standalone_quarter:
+  - OPERATING_CASH_FLOW
+  - CAPITAL_EXPENDITURES
+  - DEPRECIATION_AMORTIZATION
+  - SHARE_BASED_COMPENSATION
+  - DIVIDENDS_PAID
+  - SHARE_REPURCHASES

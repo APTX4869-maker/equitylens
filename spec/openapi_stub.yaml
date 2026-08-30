@@ -1,0 +1,71 @@
+openapi: 3.1.0
+info:
+  title: EquityLens API
+  version: 0.1.0
+paths:
+  /api/v1/companies/{ticker}:
+    get:
+      summary: Company identity and source freshness
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/facts:
+    get:
+      summary: Canonical financial facts
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+        - name: frequency
+          in: query
+          schema: {type: string, enum: [annual, quarterly, ttm]}
+        - name: view
+          in: query
+          schema: {type: string, enum: [latest_restated, point_in_time]}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/segments:
+    get:
+      summary: Reported/mapped segment facts
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/management:
+    get:
+      summary: Management and governance research
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/valuation/run:
+    post:
+      summary: Run deterministic valuation model
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/provenance/{entity_id}:
+    get:
+      summary: Resolve recursive data lineage
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
