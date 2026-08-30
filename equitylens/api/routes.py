@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter, HTTPException, Query
 
+from equitylens.config import RAW_DIR
 from equitylens.domain.companies import get_company
 from equitylens.metrics.engine import MetricEngine
 from equitylens.storage.duckdb_store import DuckDBStore
@@ -165,12 +166,24 @@ def company(ticker: str):
             "sha256": d["content_sha256"][:16],
             "source_document_id": d["source_document_id"],
         }
+    # enrich from the cached submissions snapshot (identity metadata only)
+    sic_description = website = None
+    subs_path = RAW_DIR / "sec" / cik / "submissions.json"
+    if subs_path.exists():
+        try:
+            subs = json.loads(subs_path.read_text())
+            sic_description = subs.get("sicDescription")
+            website = subs.get("website")
+        except (json.JSONDecodeError, OSError):
+            pass
     return {
         "ticker": company.ticker,
         "cik": company.cik,
         "name": company.name,
         "exchange": company.exchange,
         "fiscal_year_end": company.fiscal_year_end,
+        "sic_description": sic_description,
+        "website": website,
         "source_freshness": freshness,
     }
 
