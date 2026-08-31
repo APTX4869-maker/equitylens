@@ -43,6 +43,18 @@ const AXIS = {
   splitLine: { lineStyle: { color: "#eef1f6" } },
 };
 
+function fmtAxis(v: number, unit?: string): string {
+  if (unit === "ratio" || unit === "growth") return `${(v * 100).toFixed(1)}%`;
+  if (unit === "currency") {
+    const abs = Math.abs(v);
+    if (abs >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
+    if (abs >= 1e9) return `$${(v / 1e9).toFixed(0)}B`;
+    if (abs >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
+    return `$${v.toFixed(0)}`;
+  }
+  return String(v);
+}
+
 export function seriesOption(
   labels: (string | null)[],
   values: (number | null)[],
@@ -52,10 +64,10 @@ export function seriesOption(
     grid: GRID,
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v) => (opts.unit === "ratio" ? `${(Number(v) * 100).toFixed(1)}%` : String(v)),
+      valueFormatter: (v) => fmtAxis(Number(v), opts.unit),
     },
     xAxis: { type: "category", data: labels.map((l) => l ?? ""), ...AXIS },
-    yAxis: { type: "value", ...AXIS },
+    yAxis: { type: "value", ...AXIS, axisLabel: { formatter: (v: number) => fmtAxis(v, opts.unit) } },
     series: [
       {
         name: opts.name,

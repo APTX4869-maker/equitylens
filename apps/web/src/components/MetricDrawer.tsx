@@ -18,7 +18,7 @@ export function MetricDrawer({
   if (!metricKey) return null;
   const k = metricKnowledge[metricKey] ?? metricKnowledge.revenue;
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop open" onClick={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>

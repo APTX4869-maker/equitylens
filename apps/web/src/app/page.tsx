@@ -34,6 +34,18 @@ export default function Home() {
     document.body.classList.toggle("pro", mode === "pro");
   }, [mode]);
 
+  // Escape closes any open drawer (metric knowledge / source lineage).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMetricKey(null);
+        setSourceEntity(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Fetch per company into a cache; state is only set in async callbacks.
   useEffect(() => {
     let cancelled = false;

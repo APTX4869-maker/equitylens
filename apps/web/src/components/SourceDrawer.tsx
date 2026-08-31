@@ -80,7 +80,7 @@ export function SourceDrawer({
 
   if (!entityId) return null;
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop open" onClick={onClose}>
       <div className="modal wide" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>

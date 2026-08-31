@@ -54,7 +54,7 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const qKeys = QUARTER_METRICS.map((m) => m.key);
+        const qKeys = [...new Set([...QUARTER_METRICS.map((m) => m.key), "NET_MARGIN", "FCF_MARGIN", "NET_DEBT"])];
         const aKeys = ANNUAL_METRICS.map((m) => m.key);
         const [qRes, aRes, sRes] = await Promise.all([
           api.metrics(ticker, qKeys, "quarterly", 12),

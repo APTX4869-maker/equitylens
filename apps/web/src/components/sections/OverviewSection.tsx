@@ -66,7 +66,7 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
         { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "" },
         { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn" },
         { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "TTM", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "" },
-        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净负债状态" : "净现金状态", tone: netDebt != null && netDebt < 0 ? "warn" : "good" },
+        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good" },
         {
           label: "最新财报期",
           value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",
