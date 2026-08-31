@@ -147,9 +147,20 @@ canonical_facts:
     concepts:
       - us-gaap:PaymentsForRepurchaseOfCommonStock
 
-# Cash-flow style facts: 10-Qs report YTD values only; standalone quarters
-# must be derived by differencing (YTD chain within the same fiscal year).
+# Duration CURRENCY facts that may lack a standalone Q4 (10-K reports only the
+# full year; Q4 must be derived as FY - YTD_9M). Also cash-flow style facts:
+# 10-Qs report YTD values only, so Q2/Q3/Q4 are derived by differencing the
+# YTD chain within the same fiscal year.
+# NEVER include per-share ratios (EPS, weighted shares): differencing those
+# is meaningless; missing values stay missing rather than guessed.
 derive_standalone_quarter:
+  - REVENUE
+  - COST_OF_REVENUE
+  - GROSS_PROFIT
+  - OPERATING_INCOME
+  - PRETAX_INCOME
+  - INCOME_TAX_EXPENSE
+  - NET_INCOME
   - OPERATING_CASH_FLOW
   - CAPITAL_EXPENDITURES
   - DEPRECIATION_AMORTIZATION

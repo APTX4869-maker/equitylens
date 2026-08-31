@@ -46,7 +46,7 @@ def main() -> int:
             failures.append("financials: metric cards missing")
 
         # 3) Metric drawer opens with knowledge + view-source
-        page.get_by_role("button", name="营业利润率", exact=False).first.click()
+        page.locator(".metric-card", has_text="营业利润率").first.click()
         page.wait_for_timeout(600)
         expect(page.get_by_role("dialog").first).to_be_visible()
         drawer = page.locator(".modal-body").first.inner_text()

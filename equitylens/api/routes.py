@@ -21,6 +21,13 @@ def _store() -> DuckDBStore:
     return s
 
 
+def _resolve_company(ticker: str):
+    try:
+        return get_company(ticker)
+    except KeyError as exc:
+        raise HTTPException(404, f"Unsupported or unknown ticker {ticker!r} (V0.x supports AAPL, MSFT)") from exc
+
+
 def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
                     limit: int | None, view: str) -> list[dict]:
     engine = MetricEngine(store)
@@ -151,7 +158,7 @@ def health():
 
 @router.get("/companies/{ticker}")
 def company(ticker: str):
-    company = get_company(ticker)
+    company = _resolve_company(ticker)
     store = _store()
     cik = company.cik
     docs = store.query(
@@ -196,7 +203,7 @@ def facts(
     limit: int | None = Query(None, ge=1, le=100),
     view: str = Query("latest_restated", pattern="^(latest_restated|point_in_time)$"),
 ):
-    company = get_company(ticker)
+    company = _resolve_company(ticker)
     metric_list = [m.strip().upper() for m in metrics.split(",") if m.strip()]
     store = _store()
     if view == "point_in_time":
@@ -213,7 +220,7 @@ def metrics(
     frequency: str = Query("quarterly", pattern="^(annual|quarterly|ttm)$"),
     limit: int | None = Query(None, ge=1, le=200),
 ):
-    company = get_company(ticker)
+    company = _resolve_company(ticker)
     engine = MetricEngine(_store())
     out = []
     for m in metrics.split(","):
@@ -240,7 +247,7 @@ def metrics(
 
 @router.get("/companies/{ticker}/overview")
 def overview(ticker: str, mode: str = Query("latest_restated")):
-    company = get_company(ticker)
+    company = _resolve_company(ticker)
     store = _store()
     engine = MetricEngine(store)
     cik = company.cik
