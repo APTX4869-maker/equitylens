@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import type { MetricPoint, Fact } from "@/lib/types";
 import { demoData } from "@/lib/demo";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
-import { Card, Pill, SectionHead, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
+import { Card, Pill, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
 
 type Props = {
@@ -47,39 +47,47 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
   const [annual, setAnnual] = useState<Record<string, MetricPoint[]>>({});
   const [statement, setStatement] = useState<Fact[]>([]);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const qKeys = QUARTER_METRICS.map((m) => m.key);
-      const aKeys = ANNUAL_METRICS.map((m) => m.key);
-      const [qRes, aRes, sRes] = await Promise.all([
-        api.metrics(ticker, qKeys, "quarterly", 12),
-        api.metrics(ticker, aKeys, "annual", 10),
-        api.facts(
-          ticker,
-          ["REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"],
-          "annual",
-          4
-        ),
-      ]);
-      const qMap: Record<string, MetricPoint[]> = {};
-      for (const m of qRes.metrics) (qMap[m.metric] ??= []).push(m);
-      const aMap: Record<string, MetricPoint[]> = {};
-      for (const m of aRes.metrics) (aMap[m.metric] ??= []).push(m);
-      setQuarterly(qMap);
-      setAnnual(aMap);
-      setStatement(sRes.facts);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [ticker]);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const qKeys = QUARTER_METRICS.map((m) => m.key);
+        const aKeys = ANNUAL_METRICS.map((m) => m.key);
+        const [qRes, aRes, sRes] = await Promise.all([
+          api.metrics(ticker, qKeys, "quarterly", 12),
+          api.metrics(ticker, aKeys, "annual", 10),
+          api.facts(
+            ticker,
+            ["REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"],
+            "annual",
+            4
+          ),
+        ]);
+        if (cancelled) return;
+        const qMap: Record<string, MetricPoint[]> = {};
+        for (const m of qRes.metrics) (qMap[m.metric] ??= []).push(m);
+        const aMap: Record<string, MetricPoint[]> = {};
+        for (const m of aRes.metrics) (aMap[m.metric] ??= []).push(m);
+        setQuarterly(qMap);
+        setAnnual(aMap);
+        setStatement(sRes.facts);
+        setError(null);
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticker, reloadKey]);
 
-  const series = view === "quarter" ? quarterly[activeMetric] ?? [] : annual[activeMetric] ?? [];
+  const series = useMemo(
+    () => (view === "quarter" ? quarterly[activeMetric] ?? [] : annual[activeMetric] ?? []),
+    [view, activeMetric, quarterly, annual]
+  );
   const labels = useMemo(() => series.map((p) => p.period), [series]);
   const values = useMemo(() => series.map((p) => p.value), [series]);
   const kind = useMemo(() => {
@@ -170,7 +178,7 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
         <Pill tone="good">财务质量 {score}/100（Demo）· 数字为 SEC 真实数据</Pill>
       </div>
 
-      {error ? <ErrorBox message={error} onRetry={load} /> : null}
+      {error ? <ErrorBox message={error} onRetry={reload} /> : null}
 
       <Card className="quarter-chart-wrap">
         <div className="chart-top">
@@ -230,7 +238,7 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
       <div className="section-head" style={{ marginTop: 20 }}>
         <div>
           <h2>关键指标</h2>
-          <div className="card-sub">点击任意指标查看定义、公式和常见误区；点击"查看来源"追踪 SEC 原始文件。</div>
+          <div className="card-sub">点击任意指标查看定义、公式和常见误区；点击“查看来源”追踪 SEC 原始文件。</div>
         </div>
       </div>
       <div className="metrics">

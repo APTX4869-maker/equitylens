@@ -65,18 +65,18 @@ export function SourceDrawer({
   entityId: string | null;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<{ tree: ProvenanceNode } | null>(null);
+  const [data, setData] = useState<{ tree: ProvenanceNode; entity: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!entityId) return;
-    setData(null);
-    setError(null);
     api
       .provenance(entityId)
-      .then(setData)
+      .then((d) => setData({ tree: d.tree, entity: entityId }))
       .catch((e) => setError(String(e)));
   }, [entityId]);
+
+  const loading = !data || data.entity !== entityId;
 
   if (!entityId) return null;
   return (
@@ -91,13 +91,13 @@ export function SourceDrawer({
         </div>
         <div className="modal-body">
           {error ? <ErrorBox message={error} /> : null}
-          {!data && !error ? <div className="muted">加载溯源链…</div> : null}
-          {data ? <NodeRow node={data.tree} depth={0} /> : null}
+          {loading && !error ? <div className="muted">加载溯源链…</div> : null}
+          {data && !loading ? <NodeRow node={data.tree} depth={0} /> : null}
           <div className="beginner-note" style={{ marginTop: 16 }}>
             <div>!</div>
             <div>
               <strong>为什么必须看来源？</strong>
-              <p>防止"看着财报猜数字"：每个数字都有官方文件、概念标签、期间和抓取时间戳。若来源缺失，该数字不应被信任。</p>
+              <p>防止“看着财报猜数字”：每个数字都有官方文件、概念标签、期间和抓取时间戳。若来源缺失，该数字不应被信任。</p>
             </div>
           </div>
         </div>

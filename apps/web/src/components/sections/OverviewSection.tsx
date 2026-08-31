@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useMemo } from "react";
 import type { CompanyInfo, OverviewResponse } from "@/lib/types";
 import { demoData, demoV2 } from "@/lib/demo";
-import { fmtMoney, fmtPct, signedPct, fmtNumber } from "@/lib/format";
-import { Card, Pill, SignalDot, SectionHead } from "@/components/ui";
+import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
+import { Card, Pill } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
 
 type Props = {
@@ -12,7 +13,6 @@ type Props = {
   overview: OverviewResponse | null;
   error: string | null;
   onRetry: () => void;
-  onOpenMetric: (key: string, fact: import("@/lib/types").Fact | null) => void;
   onGotoTab: (tab: import("@/components/Shell").TabKey) => void;
 };
 
@@ -27,11 +27,11 @@ function KpiCard({ label, value, note, tone }: KpiItem) {
   );
 }
 
-export function OverviewSection({ company, overview, error, onRetry, onOpenMetric, onGotoTab }: Props) {
+export function OverviewSection({ company, overview, error, onRetry, onGotoTab }: Props) {
   const ticker = company?.ticker ?? "AAPL";
   const demo = demoData[ticker];
   const demoBusiness = demoV2[ticker];
-  const trend = overview?.trend ?? {};
+  const trend = useMemo(() => overview?.trend ?? {}, [overview]);
 
   const kpis = useMemo<{ items: KpiItem[] } | null>(() => {
     if (!overview) return null;
@@ -40,7 +40,6 @@ export function OverviewSection({ company, overview, error, onRetry, onOpenMetri
     const growth = trend.revenueGrowth?.values ?? [];
     const gross = trend.grossMargin?.values ?? [];
     const op = trend.opMargin?.values ?? [];
-    const fcf = trend.fcf?.values ?? [];
     const revTtm = k.TTM_REVENUE?.value ?? null;
     const revTtmPrev = rev.length >= 8 ? rev.slice(-8, -4).reduce((a: number, b) => a + (b ?? 0), 0) : null;
     const latestGrowth = growth.length ? growth[growth.length - 1] : null;
@@ -271,13 +270,13 @@ export function OverviewSection({ company, overview, error, onRetry, onOpenMetri
             <div>💡</div>
             <div>
               <strong>这里重点看什么？</strong>
-              <p>经营现金流减去 CapEx 后才是更接近股东可支配的自由现金流。资本开支突然上升时，要追问它是在"投资未来"还是"维持现状"。</p>
+              <p>经营现金流减去 CapEx 后才是更接近股东可支配的自由现金流。资本开支突然上升时，要追问它是在“投资未来”还是“维持现状”。</p>
             </div>
           </div>
         </Card>
         <Card className="card-pad">
           <div className="card-title">下一步重点跟踪（模拟）</div>
-          <div className="card-sub">把研究从"看完报告"变成持续验证投资逻辑。</div>
+          <div className="card-sub">把研究从“看完报告”变成持续验证投资逻辑。</div>
           <div className="watch-list">
             {demoBusiness.watch.map((w: any, i: number) => (
               <div className="watch-item" key={i}>

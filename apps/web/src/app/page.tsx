@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
-import { Sidebar, Topbar, Hero, TABS, type TabKey } from "@/components/Shell";
+import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
 import {
@@ -17,13 +17,15 @@ import {
 import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 
+type Cached = { info: CompanyInfo; overview: OverviewResponse };
+
 export default function Home() {
   const [company, setCompany] = useState("AAPL");
   const [mode, setMode] = useState<"beginner" | "pro">("beginner");
   const [tab, setTab] = useState<TabKey>("overview");
-  const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null);
-  const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [cache, setCache] = useState<Record<string, Cached>>({});
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [metricKey, setMetricKey] = useState<string | null>(null);
   const [metricFact, setMetricFact] = useState<Fact | null>(null);
   const [sourceEntity, setSourceEntity] = useState<string | null>(null);
@@ -32,23 +34,26 @@ export default function Home() {
     document.body.classList.toggle("pro", mode === "pro");
   }, [mode]);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setOverview(null);
-    setCompanyInfo(null);
-    try {
-      const [c, o] = await Promise.all([api.company(company), api.overview(company)]);
-      setCompanyInfo(c);
-      setOverview(o);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [company]);
-
+  // Fetch per company into a cache; state is only set in async callbacks.
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const [info, overview] = await Promise.all([api.company(company), api.overview(company)]);
+        if (!cancelled) {
+          setCache((prev) => ({ ...prev, [company]: { info, overview } }));
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [company, reloadKey]);
 
+  const entry = cache[company];
   const openMetric = useCallback((key: string, fact: Fact | null) => {
     setMetricKey(key);
     setMetricFact(fact);
@@ -66,14 +71,14 @@ export default function Home() {
       <main>
         <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} />
         <div className="content">
-          <Hero company={companyInfo} />
+          <Hero company={entry?.info ?? null} />
           <div className="research-toolbar">
             <div className="tool-left">
               <div className="tool-group">
                 <span className="tool-label">数据源</span>
                 <span className="tool-value">
-                  {companyInfo?.source_freshness?.COMPANYFACTS_SNAPSHOT
-                    ? `SEC EDGAR · 抓取于 ${companyInfo.source_freshness.COMPANYFACTS_SNAPSHOT.fetched_at.slice(0, 10)}`
+                  {entry?.info?.source_freshness?.COMPANYFACTS_SNAPSHOT
+                    ? `SEC EDGAR · 抓取于 ${entry.info.source_freshness.COMPANYFACTS_SNAPSHOT.fetched_at.slice(0, 10)}`
                     : "SEC EDGAR"}
                 </span>
               </div>
@@ -81,7 +86,7 @@ export default function Home() {
                 <span className="fresh-dot" />
                 <span className="tool-label">最新财报期</span>
                 <span className="tool-value">
-                  {overview?.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—"}
+                  {entry?.overview?.latest_period ? `FY${entry.overview.latest_period.fiscal_year} Q${entry.overview.latest_period.fiscal_quarter}` : "—"}
                 </span>
               </div>
               <div className="tool-group">
@@ -97,11 +102,10 @@ export default function Home() {
           {tab === "overview" ? (
             <section className="section active" id="section-overview">
               <OverviewSection
-                company={companyInfo}
-                overview={overview}
+                company={entry?.info ?? null}
+                overview={entry?.overview ?? null}
                 error={error}
-                onRetry={load}
-                onOpenMetric={openMetric}
+                onRetry={() => setReloadKey((k) => k + 1)}
                 onGotoTab={setTab}
               />
             </section>

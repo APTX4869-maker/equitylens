@@ -1,10 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { demoData, demoV2, demoV3 } from "@/lib/demo";
-import { Card, Pill, SectionHead, ExplainNote, SignalDot } from "@/components/ui";
+import { Card, Pill, ExplainNote } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
-import type { TabKey } from "@/components/Shell";
 
 const DEMO_LABEL = "V3 原型模拟数据 · 未接入真实管线";
 
@@ -45,7 +45,7 @@ export function BusinessSection({ ticker }: { ticker: string }) {
             </div>
           </div>
           <ExplainNote num="💡" title="真实系统会尊重披露边界">
-            公司没有单独披露某业务利润率时，应明确显示"未披露"，而不是让 AI 猜一个数字。
+            公司没有单独披露某业务利润率时，应明确显示“未披露”，而不是让 AI 猜一个数字。
           </ExplainNote>
         </Card>
         <Card className="segment-detail">
@@ -122,7 +122,7 @@ export function MoatSection({ ticker }: { ticker: string }) {
         </div>
         <Card className="card-pad">
           <div className="card-title">为什么这样设计？</div>
-          <div className="card-sub">避免"苹果品牌很强，所以护城河 5 星"这种没有研究价值的 AI 套话。</div>
+          <div className="card-sub">避免“苹果品牌很强，所以护城河 5 星”这种没有研究价值的 AI 套话。</div>
           <ExplainNote num="①" title="先定义护城河类型">转换成本、网络效应、品牌、成本优势、规模优势等。</ExplainNote>
           <ExplainNote num="②" title="必须同时看反面证据">研究不是证明自己是对的，而是主动寻找可能推翻观点的信息。</ExplainNote>
           <ExplainNote num="③" title="最终要落到财务结果">真正的护城河最终通常会体现在定价权、利润率、客户留存或 ROIC 上。</ExplainNote>
@@ -208,7 +208,7 @@ export function ManagementSection({ ticker }: { ticker: string }) {
         </Card>
         <Card className="card-pad">
           <div className="card-title">Shareholder Alignment（模拟）</div>
-          <div className="card-sub">不要只看"回购了多少"，还要扣掉股权激励造成的稀释。</div>
+          <div className="card-sub">不要只看“回购了多少”，还要扣掉股权激励造成的稀释。</div>
           <div className="alignment-grid">
             {m.alignment.map((x: any) => (
               <div className="align-card" key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></div>
@@ -228,7 +228,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       <div className="section-head">
         <div>
           <h2>估值</h2>
-          <div className="card-sub beginner-only">估值不是寻找一个"精确目标价"，而是回答：当前价格对应什么假设？</div>
+          <div className="card-sub beginner-only">估值不是寻找一个“精确目标价”，而是回答：当前价格对应什么假设？</div>
           <div className="card-sub pro-only">FCFF DCF + 历史倍数 + 同行倍数 + Reverse DCF（模拟）</div>
         </div>
         <Pill tone="warn">{v.archetype} · Demo</Pill>
@@ -291,7 +291,7 @@ export function RisksSection({ ticker }: { ticker: string }) {
       <div className="section-head">
         <div>
           <h2>风险清单</h2>
-          <div className="card-sub">风险不是列得越多越专业，而是明确"什么事情发生，会让投资逻辑失效"。</div>
+          <div className="card-sub">风险不是列得越多越专业，而是明确“什么事情发生，会让投资逻辑失效”。</div>
         </div>
         <Pill tone="warn">需持续跟踪 · Demo</Pill>
       </div>
@@ -307,7 +307,7 @@ export function RisksSection({ ticker }: { ticker: string }) {
         </div>
         <Card className="card-pad">
           <div className="card-title">Thesis Breakers</div>
-          <div className="card-sub">未来正式产品里，建议你给每家公司固定维护 3-5 个"逻辑失效条件"。</div>
+          <div className="card-sub">未来正式产品里，建议你给每家公司固定维护 3-5 个“逻辑失效条件”。</div>
           <ExplainNote num="1" title="连续两年核心业务增速显著低于行业">说明竞争力或市场空间判断可能错了。</ExplainNote>
           <ExplainNote num="2" title="ROIC 与自由现金流率持续恶化">说明增长可能是靠更多资本堆出来的。</ExplainNote>
           <ExplainNote num="3" title="护城河证据被新技术/监管削弱">定性变化最终通常会反映到财务指标。</ExplainNote>
@@ -328,7 +328,7 @@ export function AiSection({ ticker }: { ticker: string }) {
       <div className="section-head">
         <div>
           <h2>AI研究助手</h2>
-          <div className="card-sub">Demo 展示的是"AI 解释层"：数字来自数据引擎，观点必须带 Evidence。</div>
+          <div className="card-sub">Demo 展示的是“AI 解释层”：数字来自数据引擎，观点必须带 Evidence。</div>
         </div>
         <Pill tone="good">Evidence-first · Demo</Pill>
       </div>
