@@ -206,7 +206,7 @@ class MetricEngine:
 
     def compute(self, metric: str, company_id: str, frequency: str = "quarterly",
                 limit: int | None = None, view: str = "latest_restated") -> list[MetricPoint]:
-        freq = frequency if frequency in ("quarterly", "annual") else "quarterly"
+        freq = frequency if frequency in ("quarterly", "annual", "ttm") else "quarterly"
         points: list[MetricPoint] = []
 
         if metric == "REVENUE_GROWTH_YOY":
@@ -280,9 +280,24 @@ class MetricEngine:
                         "BASIC_EPS", "DILUTED_WEIGHTED_AVG_SHARES", "BASIC_WEIGHTED_AVG_SHARES"):
             # passthrough canonical metrics (with standalone-quarter derivation for cash flow)
             facts = self.load_facts(company_id, [metric])[metric]
-            series = self.standalone_series(facts) if freq == "quarterly" else {
+            series = self.standalone_series(facts) if freq in ("quarterly", "ttm") else {
                 (f["fiscal_year"], None, "FY"): f for f in facts if f.get("period_type") == "FY"
             }
+            if freq == "ttm":
+                # TTM = trailing 4 standalone quarters per period end
+                keys = sorted(series, key=lambda k: (k[0] or 0, k[1] or 0))
+                for i, key in enumerate(keys):
+                    if i < 3:
+                        continue
+                    window = keys[i - 3 : i + 1]
+                    vals = [float(series[k]["value"]) for k in window]
+                    total = sum(vals)
+                    f = series[key]
+                    points.append(self._point(metric, total, f, "ttm.v1",
+                                              [series[k]["canonical_fact_id"] for k in window],
+                                              "quarterly"))
+                points = [p for p in points]
+                return points
             for key in sorted(series, key=lambda k: (k[0] or 0, k[1] or 0)):
                 f = series[key]
                 formula_id = f.get("formula_id") or (

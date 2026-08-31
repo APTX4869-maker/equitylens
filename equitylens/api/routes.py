@@ -238,6 +238,7 @@ def metrics(
                 "formula_id": p.formula_id,
                 "formula_version": p.formula_version,
                 "input_fact_ids": p.input_fact_ids or [],
+                "canonical_fact_id": p.canonical_fact_id,
                 "fiscal_year": p.fiscal_year,
                 "fiscal_quarter": p.fiscal_quarter,
                 "period_end": p.period_end,

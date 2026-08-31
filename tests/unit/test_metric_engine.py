@@ -63,3 +63,15 @@ def test_metric_points_have_provenance_inputs(engine):
     pts = engine.compute("GROSS_MARGIN", CIK_AAPL, frequency="quarterly")
     assert pts[-1].formula_id == "gross_margin.v1"
     assert len(pts[-1].input_fact_ids) == 2
+
+
+def test_ttm_frequency_sums_four_quarters(engine):
+    pts = engine.compute("REVENUE", CIK_AAPL, frequency="ttm")
+    assert pts[-1].formula_id == "ttm.v1"
+    # TTM as of FY2026Q3 = Q4'25 + Q1'26 + Q2'26 + Q3'26
+    assert pts[-1].value == pytest.approx(
+        102_466_000_000 + 143_756_000_000 + 111_184_000_000 + 109_417_000_000,
+        rel=1e-9,
+    )
+    assert pts[-1].period_label == "FY2026Q3"
+    assert len(pts[-1].input_fact_ids) == 4
