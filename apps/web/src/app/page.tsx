@@ -6,8 +6,8 @@ import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
+import { BusinessSection } from "@/components/sections/BusinessSection";
 import {
-  BusinessSection,
   MoatSection,
   ManagementSection,
   ValuationSection,
@@ -75,7 +75,7 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
-  const realDataTabs: TabKey[] = ["overview", "financials"];
+  const realDataTabs: TabKey[] = ["overview", "business", "financials"];
 
   return (
     <div className="app">

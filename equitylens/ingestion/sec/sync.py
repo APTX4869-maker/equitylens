@@ -6,6 +6,8 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from equitylens.domain.companies import get_company
 from datetime import datetime, timezone
 
 from equitylens.config import (
@@ -14,7 +16,6 @@ from equitylens.config import (
     SEC_COMPANYFACTS_URL,
     SEC_SUBMISSIONS_URL,
 )
-from equitylens.domain.companies import get_company
 from equitylens.domain.filings import SourceDocument
 from equitylens.ingestion.sec.client import SECClient
 from equitylens.normalization.fiscal_periods import FiscalCalendar
@@ -185,3 +186,51 @@ def sync_company(
             "warnings_json": json.dumps(["exception"], ensure_ascii=False),
         })
         raise
+
+
+def sync_segments(
+    ticker: str,
+    *,
+    fetch: bool = True,
+    store: DuckDBStore | None = None,
+    client: SECClient | None = None,
+    forms: tuple[str, ...] = ("10-K", "10-Q"),
+    limit_per_form: int = 5,
+    raw_dir=RAW_DIR,
+) -> SyncReport:
+    """Fetch 10-K/10-Q filing documents and extract segment facts (M4)."""
+    from equitylens.ingestion.sec.filing_docs import fetch_filing_documents
+    from equitylens.normalization.fiscal_periods import FiscalCalendar
+    from equitylens.normalization.ixbrl import IxbrlDocument
+    from equitylens.normalization.segments import SegmentConfigRegistry, extract_segments
+
+    company = get_company(ticker)
+    cik = company.cik
+    store = store or DuckDBStore()
+    store.connect()
+    store.init_schema()
+
+    docs = fetch_filing_documents(ticker, forms=forms, limit_per_form=limit_per_form,
+                                  fetch=fetch, store=store, client=client, raw_dir=raw_dir)
+    subs = json.loads((raw_dir / "sec" / cik / "submissions.json").read_text())
+    calendar = FiscalCalendar.from_submissions(subs, fallback_mm_dd=company.fiscal_year_end)
+    config = SegmentConfigRegistry().get(ticker)
+    if config is None:
+        raise ValueError(f"No segment mapping configured for {ticker}")
+
+    total = 0
+    warnings: list[str] = []
+    for doc in docs:
+        content = Path(doc.local_path).read_bytes()
+        ixbrl = IxbrlDocument.parse(content)
+        rows, ws = extract_segments(ticker, ixbrl, config, calendar, doc.source_document_id)
+        for r in rows:
+            r["company_id"] = cik
+        store.replace_segment_facts(doc.source_document_id, rows)
+        total += len(rows)
+        warnings.extend(ws)
+
+    report = SyncReport(company=ticker)
+    report.facts_accepted = total
+    report.warnings = warnings
+    return report

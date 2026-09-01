@@ -1,7 +1,7 @@
 # EquityLens — 本地优先的美股基本面研究系统
 
 > 事实来自权威数据源（SEC EDGAR）；计算来自确定性代码；观点来自有证据支撑的研究层。
-> 当前交付：**M1–M3** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析页 + 溯源抽屉。
+> 当前交付：**M1–M4** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成页 + 溯源抽屉。
 
 ## 快速开始
 
@@ -9,6 +9,7 @@
 # 1. 后端（Python 3.12 + uv）
 uv sync                                   # 安装依赖（默认走清华 PyPI 镜像）
 uv run equitylens sync AAPL MSFT          # 拉取并规范化 SEC 数据（首次联网，之后 --no-fetch 可离线重跑）
+uv run equitylens sync-segments AAPL MSFT # 拉取 10-K/10-Q filing 并提取分部数据（M4）
 uv run uvicorn equitylens.api.main:app --port 8000
 
 # 2. 前端（Node 24 + pnpm）
@@ -53,7 +54,7 @@ SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规�
 ## 测试
 
 ```bash
-uv run pytest -q                       # 42 个测试：golden（对照官方 10-K/10-Q）+ 单元
+uv run pytest -q                       # 62 个测试：golden（对照官方 10-K/10-Q/分部）+ 单元 + 集成
 uv run python tests/e2e/smoke.py       # 浏览器冒烟（需两个服务已在跑）
 ```
 
@@ -63,7 +64,9 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
 ## 当前范围与边界（M1–M3）
 
 - ✅ 总览页 + 财务分析页：真实 SEC 数据（KPI、季度/年度趋势、指标卡、三年财务表、来源抽屉）
-- ⚠️ 业务构成/护城河/管理层/估值/风险/AI 助手：V3 原型**模拟数据**（页面显著标注），M4–M7 接入
+- ✅ 业务构成页（M4）：AAPL 地理分部/产品类别 + MSFT 三大分部，来自 10-K/10-Q iXBRL 维度解析；
+  环形图、点击下钻、8 期趋势、Q4 由「年度−9 个月累计」推导、利润率 NOT_DISCLOSED 明确标注、来源可溯源
+- ⚠️ 护城河/管理层/估值/风险/AI 助手：V3 原型**模拟数据**（页面显著标注），M5–M7 接入
 - ⚠️ 行情价格：未配置（按约定先做 provider 抽象），估值页显示"行情未配置"
 - ⚠️ 支持的 ticker：AAPL、MSFT（V0.1 正确性优先于覆盖面）
 

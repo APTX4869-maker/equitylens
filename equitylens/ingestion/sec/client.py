@@ -43,9 +43,11 @@ class SECClient:
         self.rate = RateLimiter(rps)
         self.timeout = timeout
         self.max_retries = max_retries
+        from equitylens.config import user_agent as default_ua
+
         self._client = httpx.Client(
             headers={
-                "User-Agent": user_agent or user_agent(),
+                "User-Agent": user_agent or default_ua(),
                 "Accept-Encoding": "gzip, deflate",
             },
             timeout=timeout,

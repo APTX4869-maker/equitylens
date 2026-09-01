@@ -246,6 +246,22 @@ def metrics(
     return {"ticker": ticker, "frequency": frequency, "metrics": out}
 
 
+@router.get("/companies/{ticker}/segments")
+def segments(
+    ticker: str,
+    kind: str = Query("segment", pattern="^(segment|product)$"),
+    frequency: str = Query("annual", pattern="^(annual|quarterly)$"),
+    limit: int | None = Query(None, ge=1, le=50),
+):
+    from equitylens.api.segments_service import get_segments
+
+    company = _resolve_company(ticker)
+    try:
+        return get_segments(_store(), company.ticker, kind=kind, frequency=frequency, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @router.get("/companies/{ticker}/overview")
 def overview(ticker: str, mode: str = Query("latest_restated")):
     company = _resolve_company(ticker)

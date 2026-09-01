@@ -2,9 +2,8 @@
 "use client";
 
 import { useState } from "react";
-import { demoData, demoV2, demoV3 } from "@/lib/demo";
+import { demoData, demoV3 } from "@/lib/demo";
 import { Card, Pill, ExplainNote } from "@/components/ui";
-import { EChart, seriesOption } from "@/components/charts";
 
 const DEMO_LABEL = "V3 原型模拟数据 · 未接入真实管线";
 
@@ -13,75 +12,6 @@ function DemoBanner({ title }: { title: string }) {
     <div className="demo-banner">
       <strong>⚠ {title}</strong> — 本页为 {DEMO_LABEL}。页面顶部的总览与财务分析已使用 SEC 真实数据。
     </div>
-  );
-}
-
-export function BusinessSection({ ticker }: { ticker: string }) {
-  const v = demoV2[ticker];
-  const [segKey, setSegKey] = useState(v.segments[0].key);
-  const seg = v.segments.find((s: any) => s.key === segKey) ?? v.segments[0];
-  return (
-    <>
-      <DemoBanner title="业务构成" />
-      <div className="section-head">
-        <div>
-          <h2>业务构成</h2>
-          <div className="card-sub">先理解公司靠哪些业务赚钱，再判断增长来自哪里、利润来自哪里。</div>
-        </div>
-        <Pill tone="blue">Segment Analysis · Demo</Pill>
-      </div>
-      <div className="business-layout">
-        <Card className="donut-card">
-          <div className="card-title">TTM 营收构成（模拟）</div>
-          <div className="donut-layout" style={{ flexDirection: "column" }}>
-            <div className="donut-legend">
-              {v.segments.map((s: any) => (
-                <button key={s.key} className={`segment-btn ${segKey === s.key ? "active" : ""}`} onClick={() => setSegKey(s.key)}>
-                  <span className="legend-swatch" style={{ background: s.color }} />
-                  <span><strong>{s.name}</strong><br /><span>${s.revenue}B · YoY {s.yoy > 0 ? "+" : ""}{s.yoy}%</span></span>
-                  <span className="segment-share">{s.share}%</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <ExplainNote num="💡" title="真实系统会尊重披露边界">
-            公司没有单独披露某业务利润率时，应明确显示“未披露”，而不是让 AI 猜一个数字。
-          </ExplainNote>
-        </Card>
-        <Card className="segment-detail">
-          <div className="segment-head">
-            <div>
-              <div className="eyebrow">{seg.share}% of revenue</div>
-              <h2>{seg.name}</h2>
-              <div className="card-sub">{seg.summary}</div>
-            </div>
-            {seg.profitSource === "na" ? (
-              <span className="provenance na">利润率未单独披露</span>
-            ) : (
-              <span className="provenance official">官方披露口径（模拟）</span>
-            )}
-          </div>
-          <div className="segment-kpis">
-            <div className="segment-kpi"><label>TTM Revenue</label><strong>${seg.revenue}B</strong></div>
-            <div className="segment-kpi"><label>Revenue Share</label><strong>{seg.share}%</strong></div>
-            <div className="segment-kpi"><label>YoY Growth</label><strong>{seg.yoy > 0 ? "+" : ""}{seg.yoy}%</strong></div>
-            <div className="segment-kpi"><label>Profitability</label><strong style={{ fontSize: 13 }}>{seg.profit}</strong></div>
-          </div>
-          <div className="card-title">近 8 季业务收入趋势（模拟）</div>
-          <EChart option={seriesOption(v.q.labels, seg.q, { color: seg.color })} height={210} />
-          <div className="detail-columns">
-            <div className="detail-box">
-              <h4>主要增长驱动</h4>
-              <ul>{seg.drivers.map((x: any) => <li key={x}>{x}</li>)}</ul>
-            </div>
-            <div className="detail-box">
-              <h4>主要风险</h4>
-              <ul>{seg.risks.map((x: any) => <li key={x}>{x}</li>)}</ul>
-            </div>
-          </div>
-        </Card>
-      </div>
-    </>
   );
 }
 

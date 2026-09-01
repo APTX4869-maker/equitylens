@@ -22,6 +22,8 @@ EXTRA_SCHEMA = """
 -- ownership column so a canonical fact resolves to its source document
 -- without a join, and re-normalization is idempotent per document
 ALTER TABLE canonical_fact ADD COLUMN IF NOT EXISTS source_document_id VARCHAR;
+ALTER TABLE segment_fact ADD COLUMN IF NOT EXISTS segment_kind VARCHAR;
+ALTER TABLE segment_fact ADD COLUMN IF NOT EXISTS period_type VARCHAR;
 ALTER TABLE raw_fact ADD COLUMN IF NOT EXISTS accession_number VARCHAR;
 ALTER TABLE raw_fact ADD COLUMN IF NOT EXISTS form_type VARCHAR;
 ALTER TABLE raw_fact ADD COLUMN IF NOT EXISTS filed_at VARCHAR;
@@ -130,6 +132,13 @@ class DuckDBStore:
             "DELETE FROM canonical_fact WHERE source_document_id = ?", [source_document_id]
         )
         self._insert_many("canonical_fact", rows)
+
+    def replace_segment_facts(self, source_document_id: str, rows: list[dict]) -> None:
+        self.connect()
+        self._conn.execute(
+            "DELETE FROM segment_fact WHERE source_document_id = ?", [source_document_id]
+        )
+        self._insert_many("segment_fact", rows)
 
     def insert_ingestion_run(self, row: dict) -> None:
         self.connect()

@@ -16,6 +16,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  fetchJson: <T>(path: string): Promise<T> => getJson<T>(path),
   company: (ticker: string) => getJson<CompanyInfo>(`/api/v1/companies/${ticker}`),
   facts: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number) =>
     getJson<FactsResponse>(

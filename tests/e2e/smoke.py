@@ -61,12 +61,29 @@ def main() -> int:
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
 
-        # 4) Company switch -> MSFT real data
+        # 4) Business tab (AAPL): REAL segment data from SEC filings
+        page.get_by_role("button", name="业务构成").click()
+        page.wait_for_timeout(2500)
+        biz = page.locator("body").inner_text()
+        if "公司报告分部" not in biz or "美洲" not in biz:
+            failures.append("business: real segments not rendered (AAPL)")
+        if "NOT_DISCLOSED" not in biz:
+            failures.append("business: NOT_DISCLOSED profitability badge missing")
+        page.screenshot(path="/tmp/el_business.png", full_page=True)
+
+        # 5) Company switch -> MSFT: segments with disclosed profit
         page.get_by_role("button", name="MSFT Microsoft").click()
         page.wait_for_timeout(1500)
         expect(page.get_by_role("heading", name="Microsoft")).to_be_visible()
+        page.get_by_role("button", name="业务构成").click()
+        page.wait_for_timeout(2500)
+        biz2 = page.locator("body").inner_text()
+        if "智能云" not in biz2 or "生产力与业务流程" not in biz2:
+            failures.append("business: MSFT segments not rendered")
+        if "官方披露 · 营业利润" not in biz2:
+            failures.append("business: MSFT disclosed segment profit missing")
 
-        # 5) Demo tab shows the demo banner
+        # 6) Demo tab shows the demo banner
         page.get_by_role("button", name="护城河").click()
         page.wait_for_timeout(500)
         demo_body = page.locator("body").inner_text()

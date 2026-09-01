@@ -114,3 +114,39 @@ def test_sources_endpoint(client):
 def test_unsupported_ticker_404(client):
     r = client.get("/api/v1/companies/ZZZZ")
     assert r.status_code in (400, 404)
+
+
+def test_segments_annual_aapl(client):
+    r = client.get("/api/v1/companies/AAPL/segments", params={"frequency": "annual"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["profit_disclosed"] is False
+    assert d["total_revenue"] == pytest.approx(416_161_000_000, rel=1e-6)
+    names = {s["name"] for s in d["segments"]}
+    assert {"美洲", "欧洲", "大中华区", "日本", "亚太其他"} <= names
+    am = next(s for s in d["segments"] if s["name"] == "美洲")
+    assert am["latest"]["value"] == pytest.approx(178_353_000_000, rel=1e-9)
+    assert am["share"] == pytest.approx(178_353 / 416_161, rel=1e-6)
+    assert am["profitability"]["status"] == "NOT_DISCLOSED"
+    assert am["sources"], "segment must carry source documents"
+
+
+def test_segments_quarterly_msft_with_profit(client):
+    r = client.get("/api/v1/companies/MSFT/segments", params={"frequency": "quarterly"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["profit_disclosed"] is True
+    cloud = next(s for s in d["segments"] if s["name"] == "智能云")
+    # FY2026 Q4 derived from FY - YTD_9M
+    q4 = [p for p in cloud["series"] if p["period"] == "FY2026Q4"]
+    assert q4 and q4[0]["status"] == "CALCULATED"
+    assert cloud["profitability"]["status"] == "DISCLOSED"
+    assert cloud["profitability"]["value"] == pytest.approx(13_753_000_000, rel=1e-9)
+
+
+def test_segments_product_view_aapl(client):
+    r = client.get("/api/v1/companies/AAPL/segments", params={"kind": "product", "frequency": "annual"})
+    assert r.status_code == 200
+    d = r.json()
+    iphone = next(s for s in d["segments"] if s["name"] == "iPhone")
+    assert iphone["latest"]["value"] == pytest.approx(209_586_000_000, rel=1e-9)
