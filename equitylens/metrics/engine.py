@@ -277,7 +277,10 @@ class MetricEngine:
                                       [f.get("canonical_fact_id") for f in (st, lt, cash, inv) if f], freq))
         elif metric in ("REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME",
                         "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "DILUTED_EPS",
-                        "BASIC_EPS", "DILUTED_WEIGHTED_AVG_SHARES", "BASIC_WEIGHTED_AVG_SHARES"):
+                        "BASIC_EPS", "DILUTED_WEIGHTED_AVG_SHARES", "BASIC_WEIGHTED_AVG_SHARES",
+                        "SHARE_REPURCHASES", "DIVIDENDS_PAID", "SHARE_BASED_COMPENSATION",
+                        "DEPRECIATION_AMORTIZATION", "PRETAX_INCOME", "INCOME_TAX_EXPENSE",
+                        "COST_OF_REVENUE"):
             # passthrough canonical metrics (with standalone-quarter derivation for cash flow)
             facts = self.load_facts(company_id, [metric])[metric]
             series = self.standalone_series(facts) if freq in ("quarterly", "ttm") else {

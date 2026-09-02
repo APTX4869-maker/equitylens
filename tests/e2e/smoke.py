@@ -83,7 +83,19 @@ def main() -> int:
         if "官方披露 · 营业利润" not in biz2:
             failures.append("business: MSFT disclosed segment profit missing")
 
-        # 6) Demo tab shows the demo banner
+        # 6) Management tab (real DEF 14A + Form 4 data)
+        page.get_by_role("button", name="管理层").click()
+        page.wait_for_timeout(2500)
+        mgmt = page.locator("body").inner_text()
+        if "管理层质量评分卡" not in mgmt or "Satya Nadella" not in mgmt:
+            failures.append("management: scorecard or leaders missing (MSFT)")
+        if "总分不可用" not in mgmt and "证据覆盖" not in mgmt:
+            failures.append("management: evidence-coverage gating not shown")
+        if "资本配置去向" not in mgmt or "内部人交易" not in mgmt:
+            failures.append("management: allocation or Form 4 section missing")
+        page.screenshot(path="/tmp/el_management.png", full_page=True)
+
+        # 7) Demo tab shows the demo banner
         page.get_by_role("button", name="护城河").click()
         page.wait_for_timeout(500)
         demo_body = page.locator("body").inner_text()

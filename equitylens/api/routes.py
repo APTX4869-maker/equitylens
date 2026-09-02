@@ -430,3 +430,110 @@ def source(source_document_id: str):
     if not row:
         raise HTTPException(404, f"Unknown source document {source_document_id}")
     return row
+
+
+@router.get("/companies/{ticker}/management")
+def management(ticker: str):
+    from equitylens.domain.management_score import capital_allocation, management_scorecard
+
+    company = _resolve_company(ticker)
+    store = _store()
+    cik = company.cik
+
+    execs = store.query(
+        """WITH latest_comp AS (
+             SELECT c.executive_id, c.fiscal_year AS latest_year,
+                    c.total_compensation AS latest_total,
+                    ROW_NUMBER() OVER (PARTITION BY c.executive_id ORDER BY c.fiscal_year DESC) AS rn
+             FROM executive_compensation c
+           )
+           SELECT e.name, e.title, e.executive_id, l.latest_year, l.latest_total
+           FROM executive e
+           LEFT JOIN latest_comp l ON l.executive_id = e.executive_id AND l.rn = 1
+           WHERE e.company_id = ?
+           ORDER BY l.latest_total DESC NULLS LAST""",
+        [cik],
+    )
+    comp = store.query(
+        """SELECT e.name, c.fiscal_year, c.salary, c.stock_awards, c.non_equity_incentive,
+                  c.all_other, c.total_compensation
+           FROM executive_compensation c JOIN executive e ON e.executive_id = c.executive_id
+           WHERE c.company_id = ? ORDER BY c.fiscal_year DESC, e.name""",
+        [cik],
+    )
+    board = store.query(
+        """SELECT name, occupation, age, director_since, independent FROM board_member
+           WHERE company_id = ? ORDER BY name""",
+        [cik],
+    )
+    insider = store.query(
+        """SELECT insider_name, officer_title, transaction_date, transaction_code, security_title,
+                  shares, price_per_share, shares_owned_after, filed_at, accession_number, source_url
+           FROM insider_transaction WHERE company_id = ?
+           ORDER BY transaction_date DESC LIMIT 20""",
+        [cik],
+    )
+    alloc = capital_allocation(store, cik)
+    scorecard = management_scorecard(store, cik, ticker)
+
+    leaders = []
+    for e in execs:
+        leaders.append({
+            "name": e["name"], "title": e["title"],
+            "latest_fy": e["latest_year"],
+            "total_compensation": e["latest_total"],
+            "source": "DEF 14A",
+        })
+    independent = [b for b in board if (b["independent"] or "").lower() in ("yes", "true", "1", "independent", "independen")]
+    governance = {
+        "board_size": len(board),
+        "independent_count": len(independent),
+        "director_sources": ["DEF 14A"],
+        "avg_comp_committee": None,
+    }
+    alignment = {}
+    if alloc.get("latest"):
+        l = alloc["latest"]
+        alignment = {
+            "gross_buybacks": l.get("gross_buybacks"),
+            "sbc": l.get("sbc"),
+            "net_buybacks": l.get("net_buybacks"),
+            "dividends": l.get("dividends"),
+            "share_count_5y_change": alloc.get("summary", {}).get("share_count_5y_change"),
+        }
+    return {
+        "ticker": ticker,
+        "leaders": leaders,
+        "compensation_table": comp,
+        "board": [dict(b, **{"source": "DEF 14A"}) for b in board],
+        "governance": governance,
+        "capital_allocation": alloc,
+        "shareholder_alignment": alignment,
+        "insider_transactions": insider,
+        "scorecard": scorecard,
+        "promises": {"items": [], "status": "PENDING_M7", "note": "Promise Tracker 数据模型已就绪；Earnings-call 证据解析属 M7"},
+        "watch_items": _management_watch_items(ticker, alloc, scorecard),
+    }
+
+
+def _management_watch_items(ticker: str, alloc: dict, scorecard: dict) -> list[dict]:
+    items = []
+    summary = alloc.get("summary") or {}
+    latest = alloc.get("latest") or {}
+    fc, cc = summary.get("fcf_cagr"), summary.get("capex_cagr")
+    if fc is not None and cc is not None and cc > fc:
+        items.append({
+            "topic": "资本开支增速高于自由现金流",
+            "signal": f"FCF CAGR {fc*100:.1f}% vs CapEx CAGR {cc*100:.1f}%",
+            "next_check": "下一份 10-K/10-Q",
+        })
+    sc5 = summary.get("share_count_5y_change")
+    if sc5 is not None and sc5 > 0:
+        items.append({"topic": "股本净增长", "signal": f"5 年稀释股本 +{sc5*100:.1f}%", "next_check": "10-K 股本表"})
+    if scorecard.get("overall_score") is None:
+        items.append({
+            "topic": "管理层评分证据不足",
+            "signal": f"证据覆盖率 {scorecard['coverage']*100:.0f}%（需 ≥{scorecard['minimum_coverage']*100:.0f}%）",
+            "next_check": "接入 DEF 14A 更多章节与 Earnings Call（M7）",
+        })
+    return items[:5]

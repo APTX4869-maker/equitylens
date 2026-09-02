@@ -19,6 +19,60 @@ import duckdb
 from equitylens.config import DB_PATH, SPEC_DIR
 
 EXTRA_SCHEMA = """
+-- M6: management / governance records
+CREATE TABLE IF NOT EXISTS executive (
+  executive_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  title VARCHAR,
+  source_document_id VARCHAR,
+  source_doc_type VARCHAR,
+  as_of_year INTEGER
+);
+CREATE TABLE IF NOT EXISTS executive_compensation (
+  comp_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  executive_id VARCHAR,
+  fiscal_year INTEGER NOT NULL,
+  salary DOUBLE,
+  bonus DOUBLE,
+  stock_awards DOUBLE,
+  option_awards DOUBLE,
+  non_equity_incentive DOUBLE,
+  all_other DOUBLE,
+  total_compensation DOUBLE,
+  source_document_id VARCHAR
+);
+CREATE TABLE IF NOT EXISTS board_member (
+  board_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  occupation VARCHAR,
+  age INTEGER,
+  director_since VARCHAR,
+  independent VARCHAR,
+  committees VARCHAR,
+  source_document_id VARCHAR
+);
+CREATE TABLE IF NOT EXISTS insider_transaction (
+  transaction_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  insider_name VARCHAR NOT NULL,
+  insider_cik VARCHAR,
+  officer_title VARCHAR,
+  transaction_date DATE,
+  transaction_code VARCHAR,
+  security_title VARCHAR,
+  shares DOUBLE,
+  price_per_share DOUBLE,
+  acquired_disposed_code VARCHAR,
+  shares_owned_after DOUBLE,
+  filed_at DATE,
+  accession_number VARCHAR,
+  source_url VARCHAR,
+  source_document_id VARCHAR
+);
+
 -- ownership column so a canonical fact resolves to its source document
 -- without a join, and re-normalization is idempotent per document
 ALTER TABLE canonical_fact ADD COLUMN IF NOT EXISTS source_document_id VARCHAR;
@@ -139,6 +193,21 @@ class DuckDBStore:
             "DELETE FROM segment_fact WHERE source_document_id = ?", [source_document_id]
         )
         self._insert_many("segment_fact", rows)
+
+    def replace_proxy(self, company_id: str, source_document_id: str,
+                      exec_rows: list[dict], comp_rows: list[dict], board_rows: list[dict]) -> None:
+        self.connect()
+        self._conn.execute("DELETE FROM executive WHERE company_id = ?", [company_id])
+        self._conn.execute("DELETE FROM executive_compensation WHERE company_id = ?", [company_id])
+        self._conn.execute("DELETE FROM board_member WHERE company_id = ?", [company_id])
+        self._insert_many("executive", exec_rows)
+        self._insert_many("executive_compensation", comp_rows)
+        self._insert_many("board_member", board_rows)
+
+    def replace_insider_transactions(self, company_id: str, rows: list[dict]) -> None:
+        self.connect()
+        self._conn.execute("DELETE FROM insider_transaction WHERE company_id = ?", [company_id])
+        self._insert_many("insider_transaction", rows)
 
     def insert_ingestion_run(self, row: dict) -> None:
         self.connect()

@@ -23,6 +23,59 @@ def db(tmp_path) -> DuckDBStore:
     store.close()
 
 
+def _seed_management(store: DuckDBStore, ticker: str) -> None:
+    """Seed M6 records from the reduced proxy/form4 fixtures."""
+    from equitylens.domain.companies import get_company
+    from equitylens.domain.filings import SourceDocument
+    from equitylens.ingestion.sec.management import _proxy_rows
+    from equitylens.normalization.insider import parse_form4
+    from equitylens.normalization.proxy import parse_proxy
+    from equitylens.storage.raw_store import sha256_bytes
+
+    company = get_company(ticker)
+    cik = company.cik
+    proxy_path = FIXTURE_ROOT / "sec" / cik / "proxy" / "def14a.html"
+    if proxy_path.exists():
+        parsed = parse_proxy(proxy_path.read_bytes())
+        doc = SourceDocument(
+            provider="SEC", document_type="FILING_DOCUMENT", form_type="DEF 14A",
+            accession_number="fixture-proxy", source_url="https://www.sec.gov/Archives/edgar/data/fixture",
+            content_sha256=sha256_bytes(proxy_path.read_bytes()), local_path=str(proxy_path),
+            fetched_at="2026-01-01T00:00:00", parser_version="fixture", company_id=cik,
+        )
+        store.upsert_source_documents([doc.to_row()])
+        e, c, b = _proxy_rows(cik, parsed, doc.source_document_id)
+        store.replace_proxy(cik, doc.source_document_id, e, c, b)
+    ins_rows = []
+    f4_dir = FIXTURE_ROOT / "sec" / cik / "form4"
+    if f4_dir.exists():
+        for f in sorted(f4_dir.iterdir()):
+            if not f.name.endswith(".xml"):
+                continue
+            accn = f.stem
+            parsed = parse_form4(f.read_bytes())
+            doc = SourceDocument(
+                provider="SEC", document_type="FILING_DOCUMENT", form_type="4",
+                accession_number=accn, source_url=f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accn}",
+                content_sha256=sha256_bytes(f.read_bytes()), local_path=str(f),
+                fetched_at="2026-01-01T00:00:00", parser_version="fixture", company_id=cik,
+            )
+            store.upsert_source_documents([doc.to_row()])
+            for i, t in enumerate(parsed.transactions):
+                ins_rows.append({
+                    "transaction_id": f"f4_fix_{cik}_{accn}_{i}", "company_id": cik,
+                    "insider_name": t.insider_name, "insider_cik": t.insider_cik,
+                    "officer_title": t.officer_title, "transaction_date": t.transaction_date,
+                    "transaction_code": t.transaction_code, "security_title": t.security_title,
+                    "shares": t.shares, "price_per_share": t.price_per_share,
+                    "acquired_disposed_code": t.acquired_disposed_code,
+                    "shares_owned_after": t.shares_owned_after, "filed_at": None,
+                    "accession_number": accn, "source_url": doc.source_url,
+                    "source_document_id": doc.source_document_id,
+                })
+    store.replace_insider_transactions(cik, ins_rows)
+
+
 def _seed_segments(store: DuckDBStore, ticker: str) -> None:
     """Seed segment facts from the reduced fixture filing documents (M4)."""
     import json as _json
@@ -77,6 +130,7 @@ def company_db(tmp_path_factory) -> DuckDBStore:
     for ticker in SUPPORTED_TICKERS:
         sync_company(ticker, fetch=False, store=store, raw_dir=FIXTURE_ROOT)
         _seed_segments(store, ticker)
+        _seed_management(store, ticker)
     yield store
     store.close()
 

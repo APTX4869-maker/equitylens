@@ -137,3 +137,11 @@
 
 .demo-banner.real{display:block;background:var(--good-soft);color:var(--good);border:1px solid #cdeadd;border-radius:12px;padding:10px 14px;margin-bottom:16px;font-size:12px}
 .demo-banner.real strong{color:var(--good)}
+
+.board-row{display:flex;justify-content:space-between;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12px}
+.board-row strong{font-size:13px;color:var(--navy)}
+.board-row span{color:var(--muted);font-size:11px;margin-left:6px}
+.criteria-row{display:flex;gap:8px;align-items:center;font-size:11px;padding:3px 0;color:var(--muted)}
+.criteria-row em{font-style:normal;font-weight:700;color:var(--navy);min-width:34px}
+.criteria-row small{color:#8d97a5}
+.mgmt-dim .mini-track{background:#eef1f6}

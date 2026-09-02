@@ -55,6 +55,30 @@ function fmtAxis(v: number, unit?: string): string {
   return String(v);
 }
 
+export function barOption(
+  labels: (string | null)[],
+  seriesData: { name: string; data: (number | null)[]; color?: string }[],
+  opts: { unit?: string } = {}
+): echarts.EChartsOption {
+  return {
+    grid: { left: 52, right: 18, top: 40, bottom: 34 },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => fmtAxis(Number(v), opts.unit),
+    },
+    legend: { top: 4, textStyle: { fontSize: 11, color: "#6d7788" } },
+    xAxis: { type: "category", data: labels.map((l) => l ?? ""), ...AXIS },
+    yAxis: { type: "value", ...AXIS, axisLabel: { formatter: (v: number) => fmtAxis(v, opts.unit) } },
+    series: seriesData.map((sd) => ({
+      name: sd.name,
+      type: "bar",
+      data: sd.data,
+      barMaxWidth: 26,
+      itemStyle: { color: sd.color ?? "#315ca8", borderRadius: [4, 4, 0, 0] },
+    })),
+  };
+}
+
 export function seriesOption(
   labels: (string | null)[],
   values: (number | null)[],

@@ -150,3 +150,23 @@ def test_segments_product_view_aapl(client):
     d = r.json()
     iphone = next(s for s in d["segments"] if s["name"] == "iPhone")
     assert iphone["latest"]["value"] == pytest.approx(209_586_000_000, rel=1e-9)
+
+
+def test_management_endpoint_aapl(client):
+    r = client.get("/api/v1/companies/AAPL/management")
+    assert r.status_code == 200
+    d = r.json()
+    tim = next(l for l in d["leaders"] if l["name"] == "Tim Cook")
+    assert tim["total_compensation"] == pytest.approx(74_294_811, rel=1e-9)
+    assert d["governance"]["board_size"] == 9
+    assert d["capital_allocation"]["latest"]["gross_buybacks"] == pytest.approx(90_711_000_000, rel=1e-9)
+    assert d["scorecard"]["overall_score"] is None  # evidence coverage below threshold
+    assert d["insider_transactions"], "Form 4 transactions present"
+    assert d["promises"]["status"] == "PENDING_M7"
+
+
+def test_management_endpoint_msft(client):
+    r = client.get("/api/v1/companies/MSFT/management")
+    d = r.json()
+    satya = next(l for l in d["leaders"] if l["name"] == "Satya Nadella")
+    assert satya["total_compensation"] == pytest.approx(96_496_790, rel=1e-9)

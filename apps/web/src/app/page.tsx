@@ -7,9 +7,9 @@ import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
 import { BusinessSection } from "@/components/sections/BusinessSection";
+import { ManagementSection } from "@/components/sections/ManagementSection";
 import {
   MoatSection,
-  ManagementSection,
   ValuationSection,
   RisksSection,
   AiSection,
@@ -75,7 +75,7 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
-  const realDataTabs: TabKey[] = ["overview", "business", "financials"];
+  const realDataTabs: TabKey[] = ["overview", "business", "financials", "management"];
 
   return (
     <div className="app">
