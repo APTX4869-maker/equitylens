@@ -119,8 +119,29 @@ def main() -> int:
         if "市场隐含" not in page.locator("body").inner_text() and "无根" not in page.locator("body").inner_text():
             failures.append("valuation: reverse DCF output missing")
 
-        # 8) Demo tab shows the demo banner
+        # 8) Risks tab: real deterministic risk signals
+        page.get_by_role("button", name="风险").click()
+        page.wait_for_timeout(2000)
+        rk = page.locator("body").inner_text()
+        if "确定性规则" not in rk and "风险信号" not in rk:
+            failures.append("risks: deterministic banner missing")
+        page.screenshot(path="/tmp/el_risks.png", full_page=True)
+
+        # 9) AI tab: evidence-first Q&A
+        page.get_by_role("button", name="AI研究助手").click()
+        page.wait_for_timeout(1500)
+        page.get_by_role("button", name="公司最近的风险有哪些？").click()
+        page.wait_for_timeout(2500)
+        ai = page.locator("body").inner_text()
+        if "证据优先" not in ai and "Evidence-first" not in ai:
+            failures.append("ai: evidence-first banner missing")
+        if "置信度" not in ai:
+            failures.append("ai: structured claims with confidence missing")
+        page.screenshot(path="/tmp/el_ai.png", full_page=True)
+
+        # 10) Moat stays demo-marked
         page.get_by_role("button", name="护城河").click()
+        page.wait_for_timeout(500)
         page.wait_for_timeout(500)
         demo_body = page.locator("body").inner_text()
         if "模拟" not in demo_body:

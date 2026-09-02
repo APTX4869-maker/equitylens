@@ -577,3 +577,43 @@ def valuation_runs(ticker: str, limit: int = 10):
         [company.cik, limit],
     )
     return {"ticker": ticker, "runs": rows}
+
+
+@router.get("/companies/{ticker}/risks")
+def company_risks(ticker: str):
+    from equitylens.domain.risks import risk_signals
+
+    company = _resolve_company(ticker)
+    return risk_signals(_store(), company.cik, company.ticker)
+
+
+@router.post("/research/ask")
+def research_ask(payload: dict):
+    """Evidence-first research Q&A (deterministic engine; LLM pluggable later)."""
+    from equitylens.research.engine import ask
+
+    ticker = (payload.get("ticker") or "AAPL").upper()
+    question = payload.get("question") or ""
+    if not question.strip():
+        raise HTTPException(400, "question is required")
+    company = _resolve_company(ticker)
+    return ask(_store(), company.cik, company.ticker, question)
+
+
+@router.get("/companies/{ticker}/promises")
+def company_promises(ticker: str):
+    """Promise Tracker data model (items pending Earnings-call evidence, M7.5)."""
+    company = _resolve_company(ticker)
+    rows = _store().query(
+        "SELECT promise_id, promise_text, normalized_claim, verification_metrics, "
+        "verification_deadline, status, speaker, statement_date, source_evidence_id "
+        "FROM management_promise WHERE company_id = ? ORDER BY statement_date DESC",
+        [company.cik],
+    )
+    return {
+        "ticker": ticker,
+        "status": "READY",
+        "sample_note": "数据模型已就绪；Earnings-call/prepared-remarks 证据解析在后续版本启用",
+        "items": rows,
+        "delivery_rate": None,
+    }

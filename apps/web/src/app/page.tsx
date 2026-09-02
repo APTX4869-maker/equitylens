@@ -9,7 +9,9 @@ import { FinancialsSection } from "@/components/sections/FinancialsSection";
 import { BusinessSection } from "@/components/sections/BusinessSection";
 import { ManagementSection } from "@/components/sections/ManagementSection";
 import { ValuationSection } from "@/components/sections/ValuationSection";
-import { MoatSection, RisksSection, AiSection } from "@/components/sections/DemoSections";
+import { RisksSection } from "@/components/sections/RisksSection";
+import { AiSection } from "@/components/sections/AiSection";
+import { MoatSection } from "@/components/sections/DemoSections";
 import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 
@@ -71,7 +73,7 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
-  const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation"];
+  const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai"];
 
   return (
     <div className="app">
