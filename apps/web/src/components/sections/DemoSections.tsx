@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { demoData, demoV3 } from "@/lib/demo";
+import { demoData } from "@/lib/demo";
 import { Card, Pill, ExplainNote } from "@/components/ui";
 
 const DEMO_LABEL = "V3 原型模拟数据 · 未接入真实管线";
@@ -57,69 +57,6 @@ export function MoatSection({ ticker }: { ticker: string }) {
           <ExplainNote num="②" title="必须同时看反面证据">研究不是证明自己是对的，而是主动寻找可能推翻观点的信息。</ExplainNote>
           <ExplainNote num="③" title="最终要落到财务结果">真正的护城河最终通常会体现在定价权、利润率、客户留存或 ROIC 上。</ExplainNote>
         </Card>
-      </div>
-    </>
-  );
-}
-
-export function ValuationSection({ ticker }: { ticker: string }) {
-  const v = demoV3[ticker].valuation;
-  return (
-    <>
-      <DemoBanner title="估值" />
-      <div className="section-head">
-        <div>
-          <h2>估值</h2>
-          <div className="card-sub beginner-only">估值不是寻找一个“精确目标价”，而是回答：当前价格对应什么假设？</div>
-          <div className="card-sub pro-only">FCFF DCF + 历史倍数 + 同行倍数 + Reverse DCF（模拟）</div>
-        </div>
-        <Pill tone="warn">{v.archetype} · Demo</Pill>
-      </div>
-      <Card className="valuation-snapshot" style={{ marginBottom: 16 }}>
-        <div className="card-sub">Reference Value Snapshot · Demo 模拟（行情未配置，价格非实时）</div>
-        <div className="value-band">
-          <div><span className="card-sub">当前价格</span><div className="big-number">${v.market}</div></div>
-          <div className="range-number"><span>Base DCF 参考值</span><strong>${Math.round(v.dcf.defaults.wacc * 100)} — 待行情接入</strong></div>
-          <div style={{ textAlign: "right" }}><span className="card-sub">模型可信度</span><div className="big-number" style={{ fontSize: 22 }}>{v.confidence}</div></div>
-        </div>
-      </Card>
-      <div className="grid grid-2">
-        <Card className="card-pad">
-          <div className="card-title">相对估值：和自己过去比（模拟）</div>
-          <div className="relative-grid">
-            <div className="relative-kpi"><span>Current P/E</span><strong>{v.relative.pe}×</strong></div>
-            <div className="relative-kpi"><span>P/FCF</span><strong>{v.relative.pfcf}×</strong></div>
-            <div className="relative-kpi"><span>FCF Yield</span><strong>{v.relative.fcfYield}%</strong></div>
-            <div className="relative-kpi"><span>10Y P/E Percentile</span><strong>{v.relative.percentile}%</strong></div>
-          </div>
-          <div className="range-track"><div className="range-marker" style={{ left: `${v.relative.percentile}%` }} /></div>
-          <div className="range-labels"><span>25%：{v.relative.hist25}×</span><span>中位：{v.relative.histMedian}×</span><span>75%：{v.relative.hist75}×</span></div>
-        </Card>
-        <Card className="card-pad">
-          <div className="card-title">同行估值比较（模拟）</div>
-          <table className="peer-table">
-            <thead><tr><th>公司</th><th>P/E</th><th>Revenue Growth</th><th>FCF Margin</th></tr></thead>
-            <tbody>
-              {v.relative.peers.map((p: any) => (
-                <tr key={p[0]}><td>{p[0]}</td><td>{p[1]}×</td><td>{p[2]}%</td><td>{p[3]}%</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </div>
-      <div className="card card-pad" style={{ marginTop: 16 }}>
-        <div className="card-title">Scenario Valuation（模拟）</div>
-        <div className="card-sub">不是给一个目标价，而是明确：什么经营世界对应什么价值。</div>
-        <div className="scenario-grid-v3">
-          {v.scenarios.map((s: any) => (
-            <div className="scenario-v3" key={s[0]}>
-              <h3>{s[0]} Case</h3>
-              <ul>
-                <li>Revenue CAGR {s[1]}%</li><li>Op Margin {s[2]}%</li><li>WACC {s[3]}%</li><li>Terminal {s[4]}%</li><li>{s[5]}</li>
-              </ul>
-            </div>
-          ))}
-        </div>
       </div>
     </>
   );

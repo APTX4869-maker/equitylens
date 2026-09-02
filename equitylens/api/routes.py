@@ -537,3 +537,43 @@ def _management_watch_items(ticker: str, alloc: dict, scorecard: dict) -> list[d
             "next_check": "接入 DEF 14A 更多章节与 Earnings Call（M7）",
         })
     return items[:5]
+
+
+@router.get("/companies/{ticker}/valuation/default")
+def valuation_default(ticker: str):
+    from equitylens.valuation.service import default_valuation
+
+    company = _resolve_company(ticker)
+    return default_valuation(_store(), company.cik, company.ticker)
+
+
+@router.post("/companies/{ticker}/valuation/run")
+def valuation_run(ticker: str, payload: dict):
+    from equitylens.valuation.service import run_custom
+
+    company = _resolve_company(ticker)
+    try:
+        return run_custom(_store(), company.cik, company.ticker, payload)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/companies/{ticker}/valuation/reverse-dcf")
+def valuation_reverse(ticker: str, payload: dict):
+    from equitylens.valuation.service import reverse_dcf
+
+    company = _resolve_company(ticker)
+    if "target_price" not in payload:
+        raise HTTPException(400, "target_price is required (market quote or user input)")
+    return reverse_dcf(_store(), company.cik, company.ticker, payload)
+
+
+@router.get("/companies/{ticker}/valuation/runs")
+def valuation_runs(ticker: str, limit: int = 10):
+    company = _resolve_company(ticker)
+    rows = _store().query(
+        "SELECT valuation_run_id, model_version, run_at, assumption_set_id, warnings_json "
+        "FROM valuation_run WHERE company_id = ? ORDER BY run_at DESC LIMIT ?",
+        [company.cik, limit],
+    )
+    return {"ticker": ticker, "runs": rows}

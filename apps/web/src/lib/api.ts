@@ -6,17 +6,17 @@ import type {
   ProvenanceNode,
 } from "./types";
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path, { cache: "no-store" });
+async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { cache: "no-store", ...init });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`GET ${path} -> ${res.status} ${body.slice(0, 200)}`);
+    throw new Error(`${init?.method ?? "GET"} ${path} -> ${res.status} ${body.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  fetchJson: <T>(path: string): Promise<T> => getJson<T>(path),
+  fetchJson: <T>(path: string, init?: RequestInit): Promise<T> => getJson<T>(path, init),
   company: (ticker: string) => getJson<CompanyInfo>(`/api/v1/companies/${ticker}`),
   facts: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number) =>
     getJson<FactsResponse>(

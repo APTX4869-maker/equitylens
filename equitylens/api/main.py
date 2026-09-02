@@ -5,16 +5,38 @@ Run:  uv run uvicorn equitylens.api.main:app --reload --port 8000
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from equitylens.api.routes import router
+
+
+def _warm_risk_free() -> None:
+    """Pre-warm the risk-free-rate cache so the first valuation call is fast."""
+    try:
+        from equitylens.valuation.rates import risk_free_rate
+
+        risk_free_rate()
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    threading.Thread(target=_warm_risk_free, daemon=True).start()
+    yield
+
 
 app = FastAPI(
     title="EquityLens API",
     version="0.1.0",
     description="Local-first US equity research API. Facts from SEC, "
                 "calculations from deterministic code, opinions from evidence.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

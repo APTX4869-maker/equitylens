@@ -1,7 +1,7 @@
 # EquityLens — 本地优先的美股基本面研究系统
 
 > 事实来自权威数据源（SEC EDGAR）；计算来自确定性代码；观点来自有证据支撑的研究层。
-> 当前交付：**M1–M6** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层页 + 溯源抽屉。
+> 当前交付：**M1–M5–M6** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层/估值页 + 溯源抽屉。
 
 ## 快速开始
 
@@ -11,6 +11,7 @@ uv sync                                   # 安装依赖（默认走清华 PyPI 
 uv run equitylens sync AAPL MSFT          # 拉取并规范化 SEC 数据（首次联网，之后 --no-fetch 可离线重跑）
 uv run equitylens sync-segments AAPL MSFT # 拉取 10-K/10-Q filing 并提取分部数据（M4）
 uv run equitylens sync-management AAPL MSFT # 拉取 DEF 14A + Form 4 并提取管理层数据（M6）
+# 估值：无同步命令；DCF 直接基于已同步的 canonical facts，每次 POST /valuation/run 持久化
 uv run uvicorn equitylens.api.main:app --port 8000
 
 # 2. 前端（Node 24 + pnpm）
@@ -55,7 +56,7 @@ SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规�
 ## 测试
 
 ```bash
-uv run pytest -q                       # 72 个测试：golden（官方财报/分部/DEF 14A/Form 4）+ 单元 + 集成
+uv run pytest -q                       # 81 个测试：golden（官方财报/分部/DEF 14A/Form 4/DCF）+ 单元 + 集成
 uv run python tests/e2e/smoke.py       # 浏览器冒烟（需两个服务已在跑）
 ```
 
@@ -69,7 +70,10 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
   环形图、点击下钻、8 期趋势、Q4 由「年度−9 个月累计」推导、利润率 NOT_DISCLOSED 明确标注、来源可溯源
 - ✅ 管理层页（M6）：DEF 14A 代理解析（核心高管/薪酬表/董事会）、Form 4 内部人交易、
   资本配置（回购/SBC/分红/CapEx/FCF/股本变化）、确定性 rubric 评分卡（证据覆盖率 <70% 时总分不可用）、观察项
-- ⚠️ 护城河/估值/风险/AI 助手：V3 原型**模拟数据**（页面显著标注），M5/M7 接入
+- ✅ 估值页（M5）：确定性 FCFF DCF 引擎（版本化 fcff_dcf.v1、WACC>g 护栏、每次运行持久化可复现）、
+  基准假设自动取自 SEC 事实（margin/tax/capex/net cash/shares）、4 滑杆实时全量重算、Bear/Base/Bull、
+  敏感性矩阵、Reverse DCF 二分求根、假设来源可溯源；行情 provider 未配置时显式"未配置"（不做假价格）
+- ⚠️ 护城河/风险/AI 助手：V3 原型**模拟数据**（页面显著标注），M7 接入
 - ⚠️ 行情价格：未配置（按约定先做 provider 抽象），估值页显示"行情未配置"
 - ⚠️ 支持的 ticker：AAPL、MSFT（V0.1 正确性优先于覆盖面）
 

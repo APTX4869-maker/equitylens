@@ -95,7 +95,31 @@ def main() -> int:
             failures.append("management: allocation or Form 4 section missing")
         page.screenshot(path="/tmp/el_management.png", full_page=True)
 
-        # 7) Demo tab shows the demo banner
+        # 7) Valuation tab: real DCF + slider recompute
+        page.get_by_role("button", name="估值").click()
+        page.wait_for_timeout(2500)
+        val = page.locator("body").inner_text()
+        if "5-Year FCFF DCF" not in val or "Scenario Valuation" not in val or "Reverse DCF" not in val:
+            failures.append("valuation: DCF sections missing")
+        if "未配置" not in val:
+            failures.append("valuation: market-unconfigured state not shown")
+        page.screenshot(path="/tmp/el_valuation.png", full_page=True)
+        # move a slider -> fair value recomputes deterministically
+        fair_before = page.locator(".fair").first.inner_text()
+        slider = page.locator('input[type="range"]').nth(0)
+        slider.fill("12")  # bump growth
+        page.wait_for_timeout(1500)
+        fair_after = page.locator(".fair").first.inner_text()
+        if fair_before == fair_after:
+            failures.append("valuation: slider did not recompute fair value")
+        # reverse DCF
+        page.locator('input[type="number"]').first.fill("300")
+        page.get_by_role("button", name="计算隐含增长").click()
+        page.wait_for_timeout(1500)
+        if "市场隐含" not in page.locator("body").inner_text() and "无根" not in page.locator("body").inner_text():
+            failures.append("valuation: reverse DCF output missing")
+
+        # 8) Demo tab shows the demo banner
         page.get_by_role("button", name="护城河").click()
         page.wait_for_timeout(500)
         demo_body = page.locator("body").inner_text()
