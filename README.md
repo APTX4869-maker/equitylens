@@ -1,7 +1,7 @@
 # EquityLens — 本地优先的美股基本面研究系统
 
 > 事实来自权威数据源（SEC EDGAR）；计算来自确定性代码；观点来自有证据支撑的研究层。
-> 当前交付：**M1–M8** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层/估值/风险/AI 研究助手全页面 + 真实行情（Nasdaq/腾讯）。
+> 当前交付：**M1–M8.5** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层/估值/风险/AI 研究助手/护城河全页面 + 真实行情（Nasdaq/腾讯）。全部标签页均为真实数据，无 Demo 页。
 
 ## 快速开始
 
@@ -27,17 +27,23 @@ pnpm dev                                  # http://localhost:3000（/api/v1/* �
 
 ```text
 equitylens/
-  equitylens/            # Python 后端包
-    ingestion/sec/       # SEC HTTP client（限速 2 req/s、UA、重试）+ sync 编排
-    normalization/       # XBRL 解析、版本化概念映射、fiscal-period resolver（YTD→单季）
-    metrics/engine.py    # 确定性指标引擎（版本化公式 + 输入事实记录）
-    storage/             # raw store（SHA-256 快照）+ DuckDB 存储层
-    api/                 # FastAPI：/api/v1/companies|facts|metrics|overview|provenance
-  apps/web/              # Next.js 16 前端（中文 UI，初学者/专业双模式）
-  config/mappings/       # canonical_mappings.yaml（版本化概念→指标映射）
-  data/raw/sec/{cik}/    # 不可变原始快照（submissions/companyfacts JSON + SHA-256）
-  tests/                 # pytest：golden（官方财报核对）+ unit；e2e/smoke.py（Playwright）
-  spec/                  # 从 handoff 包保留的 schema.sql / openapi_stub.yaml
+  equitylens/                  # Python 后端包
+    ingestion/sec/             # SEC HTTP client（限速 2 req/s、UA、重试）+ sync 编排
+    normalization/             # XBRL/分部(segments)/DEF14A(proxy)/Form4(insider) 解析 + fiscal resolver
+    metrics/engine.py          # 确定性指标引擎（版本化公式 + 输入事实记录）
+    market/                    # 行情 provider（nasdaq/tencent）+ sync/quote 服务（M8）
+    valuation/                 # FCFF DCF 引擎 + 假设/敏感性/reverse + 利率适配器（M5）
+    domain/                    # companies/filings/risks(M7)/moat(M8.5)/management_score(M6)
+    research/engine.py         # 证据优先问答引擎（M7，LLM 可插拔解释层）
+    storage/                   # raw store（SHA-256 快照）+ DuckDB 存储层
+    api/                       # FastAPI：/api/v1/companies|facts|metrics|overview|segments|
+                               #   management|valuation|risks|moat|research|promises|market|provenance|sources
+  apps/web/                    # Next.js 16 前端（中文 UI，初学者/专业双模式）
+  config/                      # mappings/（概念→指标）、market/（行情源）、management/、valuation/、sources.yaml
+  data/raw/sec/{cik}/          # 不可变 SEC 原始快照（submissions/companyfacts JSON + SHA-256）
+  data/raw/market/{ticker}/    # 不可变行情原始快照（provider 响应 + SHA-256，M8）
+  tests/                       # pytest：golden（官方财报/分部/14A/Form4/DCF/风险/AI/行情/护城河）+ unit + integration；e2e/smoke.py
+  spec/                        # 从 handoff 包保留的 schema.sql / openapi_stub.yaml
 ```
 
 ## 数据管线（反幻觉红线）
@@ -57,7 +63,7 @@ SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规�
 ## 测试
 
 ```bash
-uv run pytest -q                       # 101 个测试：golden（官方财报/分部/DEF 14A/Form 4/DCF/风险/AI/行情）+ 单元 + 集成
+uv run pytest -q                       # 105 个测试：golden（官方财报/分部/14A/Form4/DCF/风险/AI/行情/护城河）+ 单元 + 集成
 uv run python tests/e2e/smoke.py       # 浏览器冒烟（需两个服务已在跑）
 ```
 
@@ -73,7 +79,8 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
   资本配置（回购/SBC/分红/CapEx/FCF/股本变化）、确定性 rubric 评分卡（证据覆盖率 <70% 时总分不可用）、观察项
 - ✅ 估值页（M5）：确定性 FCFF DCF 引擎（版本化 fcff_dcf.v1、WACC>g 护栏、每次运行持久化可复现）、
   基准假设自动取自 SEC 事实（margin/tax/capex/net cash/shares）、4 滑杆实时全量重算、Bear/Base/Bull、
-  敏感性矩阵、Reverse DCF 二分求根、假设来源可溯源；行情 provider 未配置时显式"未配置"（不做假价格）
+  敏感性矩阵、Reverse DCF 二分求根、假设来源可溯源；
+  行情已同步时显示"市场价(快照)"与较公允价偏离（price_vs_fair.v1，确定性计算），未同步则显式标注
 - ✅ 风险页（M7）：确定性风险信号（增长/利润率/FCF 转化/资本开支强度/净债务/集中度/估值敏感性/管理层证据），
   每条带严重度、类别、证据与可回访的监控信号
 - ✅ AI 研究助手（M7）：证据优先确定性引擎（意图路由→真实事实检索→结构化 claims + 证据 ID），
