@@ -600,6 +600,15 @@ def company_risks(ticker: str):
     return risk_signals(_store(), company.cik, company.ticker)
 
 
+@router.get("/companies/{ticker}/moat")
+def company_moat(ticker: str):
+    """Moat evidence from SEC numbers only; qualitative gaps are explicit (M8.5)."""
+    from equitylens.domain.moat import moat_signals
+
+    company = _resolve_company(ticker)
+    return moat_signals(_store(), company.cik, company.ticker)
+
+
 @router.post("/research/ask")
 def research_ask(payload: dict):
     """Evidence-first research Q&A (deterministic engine; LLM pluggable later)."""

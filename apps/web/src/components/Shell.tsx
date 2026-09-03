@@ -68,7 +68,7 @@ export function Sidebar({
         </button>
       ))}
       <div className="side-footer">
-        真实财务数据来自 SEC EDGAR；未接入模块（护城河/管理层/估值/风险/AI）显示 V3 原型模拟数据并已标注。不构成投资建议。
+        事实来自 SEC EDGAR，计算来自确定性代码，行情为公开非授权源（研究用途）；观点均带证据与来源可溯源。不构成投资建议。
       </div>
     </aside>
   );

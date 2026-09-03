@@ -202,3 +202,13 @@ def test_reverse_dcf_endpoint_returns_implied_growth(client):
     assert "implied_revenue_cagr" in d
     assert d["market"]["status"] == "OK"
     assert d["historical_revenue_cagr"] is not None
+
+
+def test_moat_endpoint_real_evidence(client):
+    r = client.get("/api/v1/companies/MSFT/moat")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["demo"] is False
+    assert d["signals"], "moat signals missing"
+    assert any(s["evidence_ids"] for s in d["signals"])
+    assert d["qualitative_gaps"], "evidence gaps must be explicit"

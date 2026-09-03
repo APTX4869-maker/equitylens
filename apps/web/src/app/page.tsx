@@ -11,7 +11,7 @@ import { ManagementSection } from "@/components/sections/ManagementSection";
 import { ValuationSection } from "@/components/sections/ValuationSection";
 import { RisksSection } from "@/components/sections/RisksSection";
 import { AiSection } from "@/components/sections/AiSection";
-import { MoatSection } from "@/components/sections/DemoSections";
+import { MoatSection } from "@/components/sections/MoatSection";
 import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 
@@ -79,7 +79,7 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
-  const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai"];
+  const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai", "moat"];
 
   return (
     <div className="app">
@@ -138,7 +138,7 @@ export default function Home() {
           ) : null}
           {tab === "moat" ? (
             <section className="section active" id="section-moat">
-              <MoatSection ticker={company} />
+              <MoatSection ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "management" ? (

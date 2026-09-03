@@ -143,15 +143,20 @@ def main() -> int:
             failures.append("ai: structured claims with confidence missing")
         page.screenshot(path="/tmp/el_ai.png", full_page=True)
 
-        # 10) Moat stays demo-marked
+        # 10) Moat tab: real SEC-evidence signals + explicit qualitative gaps
         page.get_by_role("button", name="护城河").click()
-        page.wait_for_timeout(500)
-        page.wait_for_timeout(500)
-        demo_body = page.locator("body").inner_text()
-        if "模拟" not in demo_body:
-            failures.append("moat: demo banner missing")
+        page.wait_for_timeout(2500)
+        moat_body = page.locator("body").inner_text()
+        if "护城河证据" not in moat_body or "确定性" not in moat_body:
+            failures.append("moat: real evidence banner missing")
+        if "证据缺口" not in moat_body:
+            failures.append("moat: qualitative evidence gaps not shown")
+        if "强信号" not in moat_body:
+            failures.append("moat: verdict signals missing")
+        if "模拟" in moat_body:
+            failures.append("moat: demo banner still present")
 
-        page.screenshot(path="/tmp/el_demo_moat.png", full_page=True)
+        page.screenshot(path="/tmp/el_moat.png", full_page=True)
         browser.close()
 
     if console_errors:
