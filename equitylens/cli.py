@@ -34,6 +34,25 @@ def _cmd_quotes(args) -> int:
     return 0
 
 
+def _cmd_promises(args) -> int:
+    from equitylens.domain.companies import get_company
+    from equitylens.domain.promises import ingest_cards, load_cards
+    from equitylens.storage.duckdb_store import DuckDBStore
+
+    store = DuckDBStore()
+    store.connect()
+    store.init_schema()
+    for ticker in args.tickers:
+        company = get_company(ticker)
+        cards = load_cards(ticker)
+        if not cards:
+            print(f"{ticker}: data/evidence/promises/{ticker.upper()}/ 没有证据卡（*.json，忽略 _ 前缀）")
+            continue
+        r = ingest_cards(store, company.cik, ticker, cards)
+        print(f"{ticker}: {r}")
+    return 0
+
+
 def cmd_sync(args) -> int:
     for ticker in args.tickers:
         report = sync_company(ticker, fetch=not args.no_fetch, force=args.force)
@@ -71,6 +90,10 @@ def main(argv: list[str] | None = None) -> int:
     quotes.add_argument("--provider", choices=["nasdaq", "tencent"], default=None,
                         help="Force one provider instead of the configured chain")
     quotes.set_defaults(func=lambda a: _cmd_quotes(a))
+
+    prom = sub.add_parser("ingest-promises", help="Upsert promise evidence cards (data/evidence/promises/{TICKER}/*.json)")
+    prom.add_argument("tickers", nargs="+", help="Tickers, e.g. AAPL MSFT")
+    prom.set_defaults(func=lambda a: _cmd_promises(a))
 
     args = parser.parse_args(argv)
     return args.func(args)

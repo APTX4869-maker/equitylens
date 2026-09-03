@@ -34,6 +34,8 @@ def main() -> int:
         body = page.locator("body").inner_text()
         if "TTM 营业收入" not in body or "$4" not in body:
             failures.append("overview: real KPI cards not rendered (TTM revenue missing)")
+        if "数据新鲜度" not in body:
+            failures.append("overview: data freshness strip missing")
         page.screenshot(path="/tmp/el_overview.png", full_page=True)
 
         # 2) Financial Analysis tab: real quarterly chart + metric cards + drawers
@@ -94,6 +96,8 @@ def main() -> int:
             failures.append("management: evidence-coverage gating not shown")
         if "资本配置去向" not in mgmt or "内部人交易" not in mgmt:
             failures.append("management: allocation or Form 4 section missing")
+        if "承诺追踪" not in mgmt:
+            failures.append("management: promise tracker card missing")
         page.screenshot(path="/tmp/el_management.png", full_page=True)
 
         # 7) Valuation tab: real DCF + slider recompute + market quote state

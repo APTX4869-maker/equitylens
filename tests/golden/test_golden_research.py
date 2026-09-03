@@ -53,8 +53,3 @@ def test_ai_never_fabricates_unknown_metric(company_db):
     d = ask(company_db, "0000320193", "AAPL", "公司2027年收入的内部预测是多少？")
     # the engine routes this to overview/fallback; no claim may present a made-up future number
     assert not any("2027" in c["claim"] and "$" in c["claim"] for c in d["claims"])
-
-
-def test_promises_endpoint_empty_but_ready(company_db):
-    rows = company_db.query("SELECT count(*) n FROM management_promise")
-    assert rows[0]["n"] == 0  # schema exists, no earnings-call evidence yet

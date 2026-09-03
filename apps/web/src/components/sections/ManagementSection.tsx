@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { fmtMoney } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
+import { PromiseTracker } from "@/components/sections/PromiseTracker";
 
 type Leader = { name: string; title: string | null; latest_fy: number | null; total_compensation: number | null; source?: string };
 type CompRow = { name: string; fiscal_year: number; salary: number | null; stock_awards: number | null; non_equity_incentive: number | null; all_other: number | null; total_compensation: number | null };
@@ -268,18 +269,8 @@ export function ManagementSection({ ticker }: { ticker: string }) {
         </div>
       </Card>
 
-      {/* Promise tracker placeholder */}
-      <Card className="card-pad" style={{ marginTop: 16 }}>
-        <div className="card-title">Management Promise Tracker</div>
-        <div className="card-sub">{data.promises.note}</div>
-        <div className="beginner-note" style={{ marginTop: 10 }}>
-          <div>·</div>
-          <div>
-            <strong>数据模型已就绪（{data.promises.status}）</strong>
-            <p>每个承诺需包含来源证据、验证指标与验证期。等 M7 接入 Earnings Call / Prepared Remarks 证据解析后启用。</p>
-          </div>
-        </div>
-      </Card>
+      {/* Promise tracker: live evidence-card verification (M8.6) */}
+      <PromiseTracker ticker={ticker} />
 
       {/* Watch items */}
       <Card className="card-pad" style={{ marginTop: 16 }}>

@@ -247,6 +247,16 @@ class DuckDBStore:
             [company_id],
         )
 
+    def upsert_promise(self, row: dict) -> None:
+        """Replace (or insert) one management_promise by promise_id."""
+        self.connect()
+        cols = list(row.keys())
+        placeholders = ", ".join("?" for _ in cols)
+        self._conn.execute(
+            f"INSERT OR REPLACE INTO management_promise ({', '.join(cols)}) VALUES ({placeholders})",
+            [row[c] for c in cols],
+        )
+
     def insert_ingestion_run(self, row: dict) -> None:
         self.connect()
         cols = list(row.keys())

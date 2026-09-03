@@ -16,6 +16,11 @@ import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 
 type Cached = { info: CompanyInfo; overview: OverviewResponse };
+type FreshnessModule = {
+  key: string; label: string; as_of: string | null;
+  detail: string; status: "ok" | "stale" | "missing"; days_ago: number | null;
+};
+type Freshness = { modules: FreshnessModule[]; stale_modules: string[]; hint: string | null };
 
 export default function Home() {
   const [company, setCompany] = useState("AAPL");
@@ -23,6 +28,7 @@ export default function Home() {
   const [tab, setTab] = useState<TabKey>("overview");
   const [cache, setCache] = useState<Record<string, Cached>>({});
   const [market, setMarket] = useState<Record<string, MarketQuote | null>>({});
+  const [freshness, setFreshness] = useState<Record<string, Freshness | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [metricKey, setMetricKey] = useState<string | null>(null);
@@ -50,14 +56,16 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const [info, overview, mq] = await Promise.all([
+        const [info, overview, mq, fresh] = await Promise.all([
           api.company(company),
           api.overview(company),
           api.marketQuote(company),
+          api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness`),
         ]);
         if (!cancelled) {
           setCache((prev) => ({ ...prev, [company]: { info, overview } }));
           setMarket((prev) => ({ ...prev, [company]: mq }));
+          setFreshness((prev) => ({ ...prev, [company]: fresh }));
           setError(null);
         }
       } catch (e) {
@@ -104,6 +112,18 @@ export default function Home() {
                 <span className="tool-value">
                   {entry?.overview?.latest_period ? `FY${entry.overview.latest_period.fiscal_year} Q${entry.overview.latest_period.fiscal_quarter}` : "—"}
                 </span>
+              </div>
+              <div className="tool-group" title={freshness[company]?.hint ?? "各数据模块最近更新时间；过期/缺失模块会标色"}>
+                <span className="tool-label">数据新鲜度</span>
+                {(freshness[company]?.modules ?? []).slice(0, 5).map((m) => {
+                  const color = m.status === "ok" ? "#2c8b72" : m.status === "stale" ? "#b58900" : "#c0392b";
+                  return (
+                    <span key={m.key} className="tool-value" title={m.detail} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8 }}>
+                      <span className="fresh-dot" style={{ background: color }} />
+                      {m.as_of ?? "未同步"}
+                    </span>
+                  );
+                })}
               </div>
               <div className="tool-group">
                 <span className="tool-label">视图</span>

@@ -212,3 +212,34 @@ def test_moat_endpoint_real_evidence(client):
     assert d["signals"], "moat signals missing"
     assert any(s["evidence_ids"] for s in d["signals"])
     assert d["qualitative_gaps"], "evidence gaps must be explicit"
+
+
+def test_promises_endpoint_deterministic_verification(client, company_db):
+    import json as _json
+    from pathlib import Path
+
+    from equitylens.domain.companies import get_company
+    from equitylens.domain.promises import ingest_cards
+
+    fx = Path(__file__).parent.parent / "fixtures" / "promises" / "AAPL"
+    cards = [_json.loads(f.read_text()) for f in sorted(fx.glob("*.json"))]
+    ingest_cards(company_db, get_company("AAPL").cik, "AAPL", cards)
+    r = client.get("/api/v1/companies/AAPL/promises")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "READY"
+    by_id = {i["promise_id"]: i for i in d["items"]}
+    assert by_id["aapl-fy2025-buyback-gte"]["computed_status"] == "VERIFIED"
+    assert by_id["aapl-fy2025-buyback-unrealistic"]["computed_status"] == "BROKEN"
+    assert by_id["aapl-fy2026-forward"]["computed_status"] == "OPEN"
+
+
+def test_freshness_endpoint_modules(client):
+    r = client.get("/api/v1/companies/AAPL/freshness")
+    assert r.status_code == 200
+    d = r.json()
+    keys = [m["key"] for m in d["modules"]]
+    assert "market_quote" in keys and "sec_financials" in keys
+    mkt = next(m for m in d["modules"] if m["key"] == "market_quote")
+    assert mkt["status"] in ("ok", "stale")
+    assert mkt["detail"] and "Nasdaq" in mkt["detail"]

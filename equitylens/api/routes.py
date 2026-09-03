@@ -624,18 +624,17 @@ def research_ask(payload: dict):
 
 @router.get("/companies/{ticker}/promises")
 def company_promises(ticker: str):
-    """Promise Tracker data model (items pending Earnings-call evidence, M7.5)."""
+    """Promise Tracker: evidence cards with deterministic verification (M8.6)."""
+    from equitylens.domain.promises import list_promises
+
     company = _resolve_company(ticker)
-    rows = _store().query(
-        "SELECT promise_id, promise_text, normalized_claim, verification_metrics, "
-        "verification_deadline, status, speaker, statement_date, source_evidence_id "
-        "FROM management_promise WHERE company_id = ? ORDER BY statement_date DESC",
-        [company.cik],
-    )
-    return {
-        "ticker": ticker,
-        "status": "READY",
-        "sample_note": "数据模型已就绪；Earnings-call/prepared-remarks 证据解析在后续版本启用",
-        "items": rows,
-        "delivery_rate": None,
-    }
+    return list_promises(_store(), company.cik, company.ticker)
+
+
+@router.get("/companies/{ticker}/freshness")
+def company_freshness(ticker: str):
+    """Per-module data freshness (as-of dates), never silently stale."""
+    from equitylens.domain.freshness import freshness
+
+    company = _resolve_company(ticker)
+    return freshness(_store(), company.cik, company.ticker)
