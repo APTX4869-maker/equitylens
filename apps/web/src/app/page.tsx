@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
+import type { CompanyInfo, Fact, MarketQuote, OverviewResponse } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
@@ -22,6 +22,7 @@ export default function Home() {
   const [mode, setMode] = useState<"beginner" | "pro">("beginner");
   const [tab, setTab] = useState<TabKey>("overview");
   const [cache, setCache] = useState<Record<string, Cached>>({});
+  const [market, setMarket] = useState<Record<string, MarketQuote | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [metricKey, setMetricKey] = useState<string | null>(null);
@@ -49,9 +50,14 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const [info, overview] = await Promise.all([api.company(company), api.overview(company)]);
+        const [info, overview, mq] = await Promise.all([
+          api.company(company),
+          api.overview(company),
+          api.marketQuote(company),
+        ]);
         if (!cancelled) {
           setCache((prev) => ({ ...prev, [company]: { info, overview } }));
+          setMarket((prev) => ({ ...prev, [company]: mq }));
           setError(null);
         }
       } catch (e) {
@@ -81,7 +87,7 @@ export default function Home() {
       <main>
         <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} />
         <div className="content">
-          <Hero company={entry?.info ?? null} />
+          <Hero company={entry?.info ?? null} market={market[company] ?? null} />
           <div className="research-toolbar">
             <div className="tool-left">
               <div className="tool-group">
@@ -127,7 +133,7 @@ export default function Home() {
           ) : null}
           {tab === "financials" ? (
             <section className="section active" id="section-financials">
-              <FinancialsSection ticker={company} onOpenMetric={openMetric} />
+              <FinancialsSection ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
             </section>
           ) : null}
           {tab === "moat" ? (

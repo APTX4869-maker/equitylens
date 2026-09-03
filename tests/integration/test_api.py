@@ -170,3 +170,35 @@ def test_management_endpoint_msft(client):
     d = r.json()
     satya = next(l for l in d["leaders"] if l["name"] == "Satya Nadella")
     assert satya["total_compensation"] == pytest.approx(96_496_790, rel=1e-9)
+
+
+def test_market_quote_endpoint_ok_with_derived(client):
+    """Synced quotes come back with source + deterministic derived facts."""
+    r = client.get("/api/v1/companies/AAPL/market/quote")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "OK"
+    assert d["quote"]["source_url"].startswith("https://api.nasdaq.com")
+    assert d["quote"]["observed_at"], "provider-reported observation time present"
+    assert d["derived"]["market_cap"] > 0
+    assert d["derived"]["pe_ttm"] > 0
+    assert d["derived"]["pe_ttm_formula"] == "pe_ttm.v1"
+
+
+def test_market_quote_in_valuation_default(client):
+    r = client.get("/api/v1/companies/AAPL/valuation/default")
+    d = r.json()
+    market = d["market"]
+    assert market["status"] == "OK"
+    assert market["quote"]["price"] > 0
+    assert "price_vs_fair_pct" in market["derived"]
+
+
+def test_reverse_dcf_endpoint_returns_implied_growth(client):
+    r = client.post("/api/v1/companies/AAPL/valuation/reverse-dcf",
+                    json={"target_price": 300.0})
+    assert r.status_code == 200
+    d = r.json()
+    assert "implied_revenue_cagr" in d
+    assert d["market"]["status"] == "OK"
+    assert d["historical_revenue_cagr"] is not None

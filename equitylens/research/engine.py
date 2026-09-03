@@ -236,9 +236,16 @@ def _answer_valuation(store, company_id: str, ticker: str) -> dict:
         tv = dv["result"]["terminal_value_share"]
         bear = dv["scenarios"]["bear"]["result"]["fair_value_per_share"]
         bull = dv["scenarios"]["bull"]["result"]["fair_value_per_share"]
+        market = dv.get("market") or {}
+        if market.get("status") == "OK" and market.get("quote") and "price_vs_fair_pct" in (market.get("derived") or {}):
+            price = market["quote"]["price"]
+            premium = market["derived"]["price_vs_fair_pct"]
+            side = f"现价 ${price:.2f} 较公允价 {premium:+.1f}%（确定性 price_vs_fair.v1）"
+        else:
+            side = "行情未同步，无法与市场价格对比（运行 sync-quotes 后可见）"
         return {
             "answer": (f"{ticker} 确定性 FCFF DCF：Base ${fair:.0f}，参考区间 ${bear:.0f}–${bull:.0f}，"
-                       f"终值占 EV {tv*100:.0f}%。行情未配置，无法与市场价格对比。"),
+                       f"终值占 EV {tv*100:.0f}%。{side}。"),
             "claims": [
                 _claim(f"DCF Base 每股价值 ${fair:.0f}（fcff_dcf.v1，假设可溯源）。", "MEDIUM",
                        ["valuation_model:fcff_dcf.v1"]),

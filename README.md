@@ -1,7 +1,7 @@
 # EquityLens — 本地优先的美股基本面研究系统
 
 > 事实来自权威数据源（SEC EDGAR）；计算来自确定性代码；观点来自有证据支撑的研究层。
-> 当前交付：**M1–M7** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层/估值/风险/AI 研究助手全页面。
+> 当前交付：**M1–M8** — AAPL/MSFT 真实 SEC 财务数据全链路 + 总览/财务分析/业务构成/管理层/估值/风险/AI 研究助手全页面 + 真实行情（Nasdaq/腾讯）。
 
 ## 快速开始
 
@@ -11,6 +11,7 @@ uv sync                                   # 安装依赖（默认走清华 PyPI 
 uv run equitylens sync AAPL MSFT          # 拉取并规范化 SEC 数据（首次联网，之后 --no-fetch 可离线重跑）
 uv run equitylens sync-segments AAPL MSFT # 拉取 10-K/10-Q filing 并提取分部数据（M4）
 uv run equitylens sync-management AAPL MSFT # 拉取 DEF 14A + Form 4 并提取管理层数据（M6）
+uv run equitylens sync-quotes AAPL MSFT     # 同步真实行情：原始快照 + market_quote 行（M8，Nasdaq 主源/腾讯备源）
 # 估值：无同步命令；DCF 直接基于已同步的 canonical facts，每次 POST /valuation/run 持久化
 uv run uvicorn equitylens.api.main:app --port 8000
 
@@ -56,7 +57,7 @@ SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规�
 ## 测试
 
 ```bash
-uv run pytest -q                       # 87 个测试：golden（官方财报/分部/DEF 14A/Form 4/DCF/风险/AI）+ 单元 + 集成
+uv run pytest -q                       # 101 个测试：golden（官方财报/分部/DEF 14A/Form 4/DCF/风险/AI/行情）+ 单元 + 集成
 uv run python tests/e2e/smoke.py       # 浏览器冒烟（需两个服务已在跑）
 ```
 
@@ -77,8 +78,11 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
   每条带严重度、类别、证据与可回访的监控信号
 - ✅ AI 研究助手（M7）：证据优先确定性引擎（意图路由→真实事实检索→结构化 claims + 证据 ID），
   离线可用、零幻觉；LLM 解释层可后续插拔，永不生成财务数字
+- ✅ 行情（M8）：`sync-quotes` 抓取 Nasdaq（主）/腾讯（备）→ SHA-256 原始快照 → market_quote 行（追加、可溯源）；
+  估值页现价 vs 公允价偏离（确定性 price_vs_fair.v1）、财务页 P/E(TTM)=市值/净利TTM（pe_ttm.v1，证据 ID 可查）；
+  未同步时显式"行情未同步"（不伪造价格）；两源均为非授权公开接口，仅研究用途
 - ⚠️ 护城河：V3 原型**模拟数据**（页面显著标注）；定性护城河研究需后续研究层
-- ⚠️ 行情价格：未配置（按约定先做 provider 抽象），估值页显示"行情未配置"
+- ⚠️ 行情价格：已接入（见上），但依赖公开接口可用性；断网/接口变更时回到显式"未同步"状态
 - ⚠️ 支持的 ticker：AAPL、MSFT（V0.1 正确性优先于覆盖面）
 
 ## 常见问题

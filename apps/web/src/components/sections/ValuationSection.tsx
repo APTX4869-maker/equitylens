@@ -27,7 +27,27 @@ type RunResponse = {
   };
   scenarios: Record<"bear" | "base" | "bull", { result: { fair_value_per_share: number } }>;
   sensitivity: { wacc_grid: number[]; terminal_grid: number[]; rows: { wacc: number; values: (number | null)[] }[] };
-  market?: { status: string; reason?: string };
+  market?: {
+    status: string;
+    reason?: string;
+    quote?: {
+      price: number;
+      currency: string;
+      observed_at: string;
+      provider: string;
+      provider_label: string;
+      source_url: string;
+      fetched_at?: string;
+      prev_close?: number | null;
+    };
+    derived?: {
+      market_cap?: number;
+      pe_ttm?: number;
+      price_vs_fair_pct?: number;
+      price_vs_fair_formula?: string;
+      fair_value_per_share?: number;
+    };
+  };
   risk_free?: { value: number; as_of?: string; source?: string };
 };
 
@@ -49,6 +69,14 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const [reverse, setReverse] = useState<{ implied: number | null; hist: number | null; note?: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // M8: when a synced quote is present, prefill the reverse-DCF reference once.
+  const prefillReverseTarget = useCallback((d: RunResponse) => {
+    const q = d.market?.status === "OK" ? d.market.quote : null;
+    if (q && q.price > 0) {
+      setTargetPrice((prev) => (prev === "" ? String(Math.round(q.price)) : prev));
+    }
+  }, []);
+
   const loadDefault = useCallback(async () => {
     try {
       const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
@@ -58,12 +86,13 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       setMargin(i.op_margin_end * 100);
       setWacc(i.wacc * 100);
       setTerminal(i.terminal_growth * 100);
+      prefillReverseTarget(d);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [ticker]);
+  }, [ticker, prefillReverseTarget]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +106,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
         setMargin(inp.op_margin_end * 100);
         setWacc(inp.wacc * 100);
         setTerminal(inp.terminal_growth * 100);
+        prefillReverseTarget(d);
         setError(null);
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -85,7 +115,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
     return () => {
       cancelled = true;
     };
-  }, [ticker]);
+  }, [ticker, prefillReverseTarget]);
 
   const recompute = useCallback(
     async (over: Partial<{ growth: number; margin: number; wacc: number; terminal: number }>) => {
@@ -117,8 +147,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
 
   const runReverse = useCallback(async () => {
     const price = parseFloat(targetPrice);
-    if (!price || price <= 0) return;
-    setLoading(true);
+    if (!price || price <= 0) return;    setLoading(true);
     try {
       const d = await api.fetchJson<{ implied_revenue_cagr: number | null; historical_revenue_cagr: number | null; no_root_reason?: string | null }>(
         `/api/v1/companies/${ticker}/valuation/reverse-dcf`,
@@ -159,12 +188,17 @@ export function ValuationSection({ ticker }: { ticker: string }) {
 
   const i = base.assumptions.inputs;
   const meta = base.assumptions.meta;
+  const mkt = base.market?.status === "OK" && base.market.quote ? base.market : null;
+  const mktQuote = mkt?.quote ?? null;
+  const premiumPct = mkt?.derived?.price_vs_fair_pct ?? null;
 
   return (
     <>
       <div className="demo-banner real">
         <strong>✓ 估值</strong> — FCFF DCF 由确定性引擎计算（公式版本 {base.result.model_version}），每次运行持久化可复现。
-        行情未配置：价格与相对估值显示“未配置”；DCF 与 reverse DCF 可先用假设探索。
+        {mktQuote
+          ? ` 行情已同步（${mktQuote.provider_label} · ${mktQuote.observed_at}）：现价与公允价对比为确定性计算，非买卖建议。`
+          : " 行情未同步：本地快照模式（运行 equitylens sync-quotes AAPL MSFT 后价格对比自动出现），DCF 与 reverse DCF 可先用假设探索。"}
       </div>
       <div className="section-head">
         <div>
@@ -172,16 +206,35 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           <div className="card-sub beginner-only">估值不是寻找一个“精确目标价”，而是回答：当前假设下价值在什么区间？</div>
           <div className="card-sub pro-only">5Y FCFF DCF · 情景 · 敏感性矩阵 · Reverse DCF（确定性重算）</div>
         </div>
-        <Pill tone="warn">模型可信度中 · 行情未配置</Pill>
+        <Pill tone={mktQuote ? "good" : "warn"}>
+          {mktQuote ? "行情已同步 · 现价 vs 公允价" : "模型可信度中 · 行情未同步"}
+        </Pill>
       </div>
 
       <Card className="valuation-snapshot" style={{ marginBottom: 16 }}>
         <div className="card-sub">Reference Value Snapshot · SEC 事实 + 确定性模型（研究参考，非目标价）</div>
         <div className="value-band">
           <div>
-            <span className="card-sub">市场价</span>
-            <div className="big-number" style={{ fontSize: 22 }}>未配置</div>
-            <small className="muted">{base.market?.reason ?? "行情 provider 未配置"}</small>
+            <span className="card-sub">市场价（快照）</span>
+            {mktQuote ? (
+              <>
+                <div className="big-number" style={{ fontSize: 22 }}>${mktQuote.price.toFixed(2)}</div>
+                <small className="muted">{mktQuote.provider_label} · {mktQuote.observed_at}</small>
+                {premiumPct != null ? (
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    <span style={{ color: premiumPct > 5 ? "#c0392b" : premiumPct < -5 ? "#2c8b72" : "inherit", fontWeight: 600 }}>
+                      较公允价 {premiumPct >= 0 ? "+" : ""}{premiumPct.toFixed(1)}%
+                    </span>
+                    <span className="muted">（现价 vs Base DCF ${base.result.fair_value_per_share.toFixed(0)}）</span>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="big-number" style={{ fontSize: 22 }}>未同步</div>
+                <small className="muted">{base.market?.reason ?? "行情未同步"}</small>
+              </>
+            )}
           </div>
           <div className="range-number">
             <span>DCF 参考区间（Bear–Bull）</span>
@@ -301,7 +354,11 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <Card className="card-pad" data-testid="reverse-dcf">
           <div className="card-title">Reverse DCF：某价格隐含什么增长？</div>
-          <div className="card-sub">行情未配置 → 输入一个参考价（例如当前市场价）做探索。</div>
+          <div className="card-sub">
+            {mktQuote
+              ? `行情已同步：现价 $${mktQuote.price.toFixed(2)} 已自动填入（可改价），反推市场当前价格隐含的增长。`
+              : "行情未同步 → 输入一个参考价（例如当前市场价）做探索。"}
+          </div>
           <div className="reverse-box" style={{ marginTop: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input

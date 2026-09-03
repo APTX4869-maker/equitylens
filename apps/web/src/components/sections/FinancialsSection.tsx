@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import type { MetricPoint, Fact } from "@/lib/types";
+import type { MarketQuote, MetricPoint, Fact } from "@/lib/types";
 import { demoData } from "@/lib/demo";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
@@ -10,6 +10,7 @@ import { EChart, seriesOption } from "@/components/charts";
 
 type Props = {
   ticker: string;
+  market?: MarketQuote | null;
   onOpenMetric: (key: string, fact: Fact | null) => void;
 };
 
@@ -37,10 +38,10 @@ const CARD_DEFS: { key: string; metric: string; label: string; note: string; k?:
   { key: "fcfMargin", metric: "FCF_MARGIN", label: "自由现金流率", note: "最近季度", k: "fcfMargin" },
   { key: "netCash", metric: "NET_DEBT", label: "净现金 / 净债务", note: "最新资产负债表", k: "netCash" },
   { key: "roic", metric: "ROIC", label: "投入资本回报率 ROIC", note: "V0.1 暂不提供", k: "roic" },
-  { key: "pe", metric: "P_E", label: "市盈率 P/E", note: "行情未配置", k: "pe" },
+  { key: "pe", metric: "P_E", label: "市盈率 P/E", note: "行情未同步", k: "pe" },
 ];
 
-export function FinancialsSection({ ticker, onOpenMetric }: Props) {
+export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
   const [view, setView] = useState<"quarter" | "annual">("quarter");
   const [activeMetric, setActiveMetric] = useState("REVENUE");
   const [quarterly, setQuarterly] = useState<Record<string, MetricPoint[]>>({});
@@ -117,8 +118,16 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
   const cardValues = useMemo(() => {
     const out: Record<string, { value: string; note: string; fact: Fact | null }> = {};
     for (const def of CARD_DEFS) {
-      if (def.key === "roic" || def.key === "pe") {
+      if (def.key === "roic") {
         out[def.key] = { value: "—", note: def.note, fact: null };
+        continue;
+      }
+      if (def.key === "pe") {
+        // M8: P/E(TTM) = 行情市值 / 净利润TTM（确定性公式 pe_ttm.v1，后端计算）
+        const pe = market?.status === "OK" ? market.derived?.pe_ttm : undefined;
+        out[def.key] = pe
+          ? { value: pe.toFixed(1), note: `P/E(TTM) · ${market?.quote?.provider_label ?? ""} · 确定性`, fact: null }
+          : { value: "—", note: "行情未同步", fact: null };
         continue;
       }
       if (def.key === "revenue") {
@@ -148,7 +157,7 @@ export function FinancialsSection({ ticker, onOpenMetric }: Props) {
       };
     }
     return out;
-  }, [quarterly]);
+  }, [quarterly, market]);
 
   const annualRows = useMemo(() => {
     const byMetric: Record<string, Fact[]> = {};

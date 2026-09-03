@@ -579,6 +579,19 @@ def valuation_runs(ticker: str, limit: int = 10):
     return {"ticker": ticker, "runs": rows}
 
 
+@router.get("/companies/{ticker}/market/quote")
+def market_quote(ticker: str):
+    """Latest synced quote + deterministic derived market facts (M8).
+
+    Reads only the local store; a missing sync is an explicit UNAVAILABLE
+    state with the command hint — never a fabricated price.
+    """
+    from equitylens.market.service import quote_block
+
+    company = _resolve_company(ticker)
+    return quote_block(_store(), company.cik, company.ticker)
+
+
 @router.get("/companies/{ticker}/risks")
 def company_risks(ticker: str):
     from equitylens.domain.risks import risk_signals

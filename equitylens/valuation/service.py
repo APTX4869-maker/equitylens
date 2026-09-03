@@ -35,10 +35,12 @@ def default_valuation(store, company_id: str, ticker: str) -> dict:
     inputs, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
     meta["risk_free"] = rf
     output = run_dcf(inputs)
+    from equitylens.market.service import valuation_market_block
+
     return {
         "ticker": ticker,
         "model_version": dcf_mod.MODEL_VERSION,
-        "market": {"status": "UNAVAILABLE", "reason": "market-data provider not configured"},
+        "market": valuation_market_block(store, company_id, ticker, output.fair_value_per_share),
         "risk_free": rf,
         "assumptions": {"inputs": _inputs_dict(inputs), "meta": meta},
         "result": _output_dict(output),
@@ -130,10 +132,13 @@ def run_custom(store, company_id: str, ticker: str, payload: dict) -> dict:
         "warnings_json": json.dumps(output.warnings, ensure_ascii=False),
     }
     _persist_run(store, run)
+    from equitylens.market.service import valuation_market_block
+
     return {
         "valuation_run_id": run["valuation_run_id"],
         "model_version": dcf_mod.MODEL_VERSION,
         "run_at": run["run_at"],
+        "market": valuation_market_block(store, company_id, ticker, output.fair_value_per_share),
         "assumptions": {"inputs": _inputs_dict(base), "meta": meta},
         "result": _output_dict(output),
         "scenarios": scenario_valuation(base, ticker),
@@ -163,6 +168,7 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
         )
     target = float(payload.get("target_price"))
     implied = implied_growth(base, target)
+    from equitylens.market.service import valuation_market_block
     from equitylens.metrics.engine import MetricEngine
 
     hist = MetricEngine(store)
@@ -174,6 +180,7 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
     return {
         "implied_revenue_cagr": implied,
         "target_price": target,
+        "market": valuation_market_block(store, company_id, ticker, fair_value_per_share=None),
         "historical_revenue_cagr": hist_cagr,
         "fixed_assumptions": {"wacc": base.wacc, "terminal_growth": base.terminal_growth,
                               "margin_end": base.op_margin_end, "tax_rate": base.tax_rate},

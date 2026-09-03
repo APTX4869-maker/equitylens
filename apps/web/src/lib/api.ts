@@ -1,6 +1,7 @@
 import type {
   CompanyInfo,
   FactsResponse,
+  MarketQuote,
   MetricsResponse,
   OverviewResponse,
   ProvenanceNode,
@@ -31,6 +32,8 @@ export const api = {
       )}&frequency=${frequency}${limit ? `&limit=${limit}` : ""}`
     ),
   overview: (ticker: string) => getJson<OverviewResponse>(`/api/v1/companies/${ticker}/overview`),
+  marketQuote: (ticker: string) =>
+    getJson<MarketQuote>(`/api/v1/companies/${ticker}/market/quote`),
   provenance: (entityId: string) =>
     getJson<{ entity_id: string; kind: string; tree: ProvenanceNode }>(
       `/api/v1/provenance/${entityId}`

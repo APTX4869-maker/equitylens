@@ -88,3 +88,31 @@ export type OverviewResponse = {
   trend: Record<string, { label: string; values: (number | null)[]; periods: (string | null)[] }>;
   provenance_available: boolean;
 };
+
+/** M8: latest synced market quote + deterministic derived facts. */
+export type MarketQuote = {
+  status: "OK" | "UNAVAILABLE";
+  configured: boolean;
+  synced: boolean;
+  reason?: string;
+  quote?: {
+    price: number;
+    currency: string;
+    observed_at: string;
+    provider: string;
+    provider_label: string;
+    name?: string | null;
+    prev_close?: number | null;
+    source_label: string;
+    source_url: string;
+    fetched_at: string;
+  };
+  derived?: {
+    market_cap?: number;
+    pe_ttm?: number;
+    pe_ttm_formula?: string;
+    price_vs_fair_pct?: number;
+    price_vs_fair_formula?: string;
+    fair_value_per_share?: number;
+  };
+};

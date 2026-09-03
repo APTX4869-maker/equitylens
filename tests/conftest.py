@@ -121,6 +121,36 @@ def _seed_segments(store: DuckDBStore, ticker: str) -> None:
         store.replace_segment_facts(doc.source_document_id, rows)
 
 
+def _seed_market(store: DuckDBStore, ticker: str) -> None:
+    """Seed M8 market_quote rows parsed from live-captured provider payloads.
+
+    Fixtures under tests/fixtures/market/ are verbatim provider responses
+    captured on 2026-09-03; parsing goes through the production parsers so the
+    golden tests exercise the same code path as `equitylens sync-quotes`.
+    """
+    import json as _json
+
+    from equitylens.domain.companies import get_company
+    from equitylens.market.providers import parse_nasdaq_snapshot, parse_tencent_body
+
+    company = get_company(ticker)
+    cik = company.cik
+    fx = FIXTURE_ROOT / "market"
+    if ticker == "AAPL":
+        snapshot = {
+            "request_url": "https://api.nasdaq.com/api/quote/AAPL/info?assetclass=stocks",
+            "info": _json.loads((fx / "nasdaq" / "aapl_info.json").read_text()),
+            "summary": _json.loads((fx / "nasdaq" / "aapl_summary.json").read_text()),
+        }
+        quote = parse_nasdaq_snapshot(snapshot, "AAPL")
+    else:
+        body = (fx / "tencent" / "msft.txt").read_text()
+        quote = parse_tencent_body(body, "MSFT",
+                                   request_url="https://qt.gtimg.cn/q=usMSFT")
+    row = quote.to_row(cik, snapshot_sha="fixture-market", fetched_at="2026-09-03T09:58:00")
+    store.insert_market_quote(row)
+
+
 @pytest.fixture(scope="session")
 def company_db(tmp_path_factory) -> DuckDBStore:
     """AAPL + MSFT normalized ONCE from the saved official SEC fixtures."""
@@ -131,6 +161,7 @@ def company_db(tmp_path_factory) -> DuckDBStore:
         sync_company(ticker, fetch=False, store=store, raw_dir=FIXTURE_ROOT)
         _seed_segments(store, ticker)
         _seed_management(store, ticker)
+        _seed_market(store, ticker)
     yield store
     store.close()
 

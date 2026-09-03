@@ -56,3 +56,15 @@ sources:
       - timezone
       - corporate_action_policy
     production_fallback_to_scraper: false
+    # M8: concrete runtime config lives in config/market/sources.yaml
+    configured:
+      active: [nasdaq, tencent]
+      providers:
+        nasdaq:
+          license_notes: "Nasdaq 官方站点公开 JSON（非授权接口，可能随时变更），仅研究用途。"
+          timezone: America/New_York
+          corporate_action_policy: none
+        tencent:
+          license_notes: "腾讯行情公开接口（非授权），仅研究用途。"
+          timezone: Asia/Shanghai
+          corporate_action_policy: none

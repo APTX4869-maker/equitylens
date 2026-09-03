@@ -25,6 +25,15 @@ def _cmd_management(args) -> int:
     return 0
 
 
+def _cmd_quotes(args) -> int:
+    from equitylens.market.service import sync_quotes
+
+    reports = sync_quotes(args.tickers, fetch=not args.no_fetch, provider_name=args.provider)
+    for r in reports:
+        print(r.line())
+    return 0
+
+
 def cmd_sync(args) -> int:
     for ticker in args.tickers:
         report = sync_company(ticker, fetch=not args.no_fetch, force=args.force)
@@ -55,6 +64,13 @@ def main(argv: list[str] | None = None) -> int:
     mgmt.add_argument("--no-fetch", action="store_true", help="Use cached documents only")
     mgmt.add_argument("--forms4", type=int, default=12, help="Number of recent Form 4 filings to parse")
     mgmt.set_defaults(func=lambda a: _cmd_management(a))
+
+    quotes = sub.add_parser("sync-quotes", help="Sync latest market quotes (snapshot + market_quote row)")
+    quotes.add_argument("tickers", nargs="+", help="Tickers, e.g. AAPL MSFT")
+    quotes.add_argument("--no-fetch", action="store_true", help="Replay newest local snapshots only")
+    quotes.add_argument("--provider", choices=["nasdaq", "tencent"], default=None,
+                        help="Force one provider instead of the configured chain")
+    quotes.set_defaults(func=lambda a: _cmd_quotes(a))
 
     args = parser.parse_args(argv)
     return args.func(args)

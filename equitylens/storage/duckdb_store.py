@@ -96,6 +96,27 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
   facts_rejected BIGINT,
   warnings_json JSON
 );
+
+-- M8: market quote observations (external facts, never overwritten; latest wins by fetched_at)
+CREATE TABLE IF NOT EXISTS market_quote (
+  quote_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  ticker VARCHAR NOT NULL,
+  provider VARCHAR NOT NULL,
+  observed_at VARCHAR,
+  price DOUBLE NOT NULL,
+  currency VARCHAR,
+  prev_close DOUBLE,
+  open_price DOUBLE,
+  high DOUBLE,
+  low DOUBLE,
+  market_cap DOUBLE,
+  name VARCHAR,
+  source_label VARCHAR,
+  source_url VARCHAR,
+  snapshot_sha VARCHAR,
+  fetched_at TIMESTAMP
+);
 """
 
 
@@ -208,6 +229,23 @@ class DuckDBStore:
         self.connect()
         self._conn.execute("DELETE FROM insider_transaction WHERE company_id = ?", [company_id])
         self._insert_many("insider_transaction", rows)
+
+    def insert_market_quote(self, row: dict) -> None:
+        """Append one quote observation; identical observations are ignored."""
+        self.connect()
+        cols = list(row.keys())
+        placeholders = ", ".join("?" for _ in cols)
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO market_quote ({', '.join(cols)}) VALUES ({placeholders})",
+            [row[c] for c in cols],
+        )
+
+    def latest_market_quote(self, company_id: str) -> dict | None:
+        return self.query_one(
+            """SELECT * FROM market_quote WHERE company_id = ?
+               ORDER BY fetched_at DESC, observed_at DESC LIMIT 1""",
+            [company_id],
+        )
 
     def insert_ingestion_run(self, row: dict) -> None:
         self.connect()

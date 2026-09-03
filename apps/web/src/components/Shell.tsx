@@ -1,6 +1,6 @@
 "use client";
 
-import type { CompanyInfo } from "@/lib/types";
+import type { CompanyInfo, MarketQuote } from "@/lib/types";
 
 export type TabKey =
   | "overview"
@@ -105,7 +105,8 @@ export function Topbar({
   );
 }
 
-export function Hero({ company }: { company: CompanyInfo | null }) {
+export function Hero({ company, market }: { company: CompanyInfo | null; market?: MarketQuote | null }) {
+  const mq = market?.status === "OK" && market.quote ? market.quote : null;
   return (
     <div className="hero">
       <div>
@@ -117,7 +118,11 @@ export function Hero({ company }: { company: CompanyInfo | null }) {
         <div className="company-line">
           <span>{company?.exchange ?? ""}</span>
           <span>·</span>
-          <span className="pill neutral">行情未配置（V0.1）</span>
+          <span className={mq ? "pill good" : "pill neutral"}>
+            {mq
+              ? `行情 ${mq.provider_label} $${mq.price.toFixed(2)} · ${mq.observed_at}`
+              : "行情未同步"}
+          </span>
           <span className="pill blue">高质量公司研究</span>
         </div>
       </div>

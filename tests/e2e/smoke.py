@@ -10,6 +10,7 @@ Run:  cd apps/web && pnpm dev &  (backend already running)
 
 from __future__ import annotations
 
+import re
 import sys
 
 from playwright.sync_api import expect, sync_playwright
@@ -95,14 +96,17 @@ def main() -> int:
             failures.append("management: allocation or Form 4 section missing")
         page.screenshot(path="/tmp/el_management.png", full_page=True)
 
-        # 7) Valuation tab: real DCF + slider recompute
+        # 7) Valuation tab: real DCF + slider recompute + market quote state
         page.get_by_role("button", name="估值").click()
         page.wait_for_timeout(2500)
         val = page.locator("body").inner_text()
         if "5-Year FCFF DCF" not in val or "Scenario Valuation" not in val or "Reverse DCF" not in val:
             failures.append("valuation: DCF sections missing")
-        if "未配置" not in val:
-            failures.append("valuation: market-unconfigured state not shown")
+        snap = page.locator(".valuation-snapshot").first.inner_text()
+        if "市场价" not in snap:
+            failures.append("valuation: market snapshot card missing")
+        if "未同步" not in snap and not re.search(r"\$\d+\.\d{2}", snap):
+            failures.append("valuation: synced quote card missing a price")
         page.screenshot(path="/tmp/el_valuation.png", full_page=True)
         # move a slider -> fair value recomputes deterministically
         fair_before = page.locator(".fair").first.inner_text()
