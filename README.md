@@ -94,8 +94,21 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
   页面无模拟数据、无整体打分，结论只覆盖证据能支撑的部分
 - ⚠️ 支持的 ticker：AAPL、MSFT（V0.1 正确性优先于覆盖面）
 
-## 常见问题
+## Docker Compose（可选打包）
 
-- **uv 安装慢**：pyproject.toml 已配置清华镜像 `[tool.uv] index-url`，可自行改回官方源。
+```bash
+docker compose up -d --build                  # api(:8000) + web(:3000)
+docker compose exec api uv run --no-sync equitylens sync AAPL MSFT
+docker compose exec api uv run --no-sync equitylens sync-segments AAPL MSFT
+docker compose exec api uv run --no-sync equitylens sync-management AAPL MSFT
+docker compose exec api uv run --no-sync equitylens sync-quotes AAPL MSFT
+# 打开 http://localhost:3000（web 通过 EQUITYLENS_API_URL 代理到 compose 内网 api:8000）
+```
+
+- `./data`（快照 + DuckDB）与 `./config`（只读）挂载进 api 容器；CLI 在容器内执行。
+- web 为**开发模式容器**（热更新）；生产 standalone 构建留待硬化。
+- 需 Docker Desktop/daemon；基础镜像 ghcr.io/astral-sh/uv、依赖走清华 PyPI 镜像。
+
+## 常见问题
 - **同步失败/想离线重跑**：`uv run equitylens sync AAPL MSFT --no-fetch` 只从本地快照重算。
 - **SEC 拒绝请求**：请设置 `EQUITYLENS_USER_AGENT`（SEC fair-access 要求标识应用）。

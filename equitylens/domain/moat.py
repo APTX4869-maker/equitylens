@@ -142,6 +142,7 @@ def moat_signals(store, company_id: str, ticker: str) -> dict:
         ))
 
     # ---- 6) segment/product dependency ----
+    dependency_count = 0
     try:
         from equitylens.api.segments_service import get_segments
 
@@ -150,6 +151,7 @@ def moat_signals(store, company_id: str, ticker: str) -> dict:
             segs = [s for s in seg["segments"] if s.get("share")]
             if not segs:
                 continue
+            dependency_count += 1
             top = max(segs, key=lambda s: s["share"] or 0)
             share = top["share"] or 0.0
             verdict = "watch" if share >= 0.40 else "strength"
@@ -160,7 +162,10 @@ def moat_signals(store, company_id: str, ticker: str) -> dict:
                 evidence_ids=[f"segment:{top['name']}"], value_label=f"{share*100:.0f}%",
             ))
     except Exception:
-        pass  # segment data unavailable -> stays a gap below
+        dependency_count = 0  # segment data unavailable -> honest gap below
+    if dependency_count == 0:
+        gaps.append({"dimension": "分部/产品收入依赖",
+                     "note": "当前数据源没有可用的年度分部披露（运行 sync-segments 后自动评估）；依赖度未判定。"})
 
     # ---- 7) board independence (only when the 14A marks it) ----
     board = store.query(

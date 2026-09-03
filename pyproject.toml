@@ -12,6 +12,7 @@ dependencies = [
     "duckdb>=1.1",
     "polars>=1.8",
     "pyyaml>=6.0",
+    "lxml>=5.0",
 ]
 
 [dependency-groups]
