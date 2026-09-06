@@ -37,23 +37,40 @@ def _latest_fy(store, company_id: str, metric: str) -> int | None:
     return pts[-1].fiscal_year if pts else None
 
 
-def estimate_depreciation(store, company_id: str) -> float | None:
+def _annual_point(store, company_id: str, metric: str, fiscal_year: int):
+    """Return the latest-restated annual point for one exact fiscal year."""
+    points = MetricEngine(store).compute(metric, company_id, frequency="annual")
+    return next(
+        (point for point in reversed(points)
+         if point.fiscal_year == fiscal_year and point.value is not None),
+        None,
+    )
+
+
+def _depreciation_selection(store, company_id: str, fiscal_year: int,
+                            unit: str = "USD") -> tuple[float | None, str]:
+    combined = _annual_point(store, company_id, "DEPRECIATION_AMORTIZATION", fiscal_year)
+    if combined is not None and combined.unit == unit:
+        return float(combined.value), "combined"
+
+    dep = _annual_point(store, company_id, "DEPRECIATION", fiscal_year)
+    amort = _annual_point(store, company_id, "AMORTIZATION_OF_INTANGIBLE_ASSETS", fiscal_year)
+    if dep is None or amort is None or dep.unit != unit or amort.unit != unit:
+        return None, "missing"
+    return float(dep.value) + float(amort.value), "split"
+
+
+def estimate_depreciation(store, company_id: str, fiscal_year: int,
+                          unit: str = "USD") -> float | None:
     """D&A estimate from canonical tags.
 
-    Falls back to summing Depreciation + Amortization concepts when the
-    single combined concept is absent (MSFT tags them separately).
+    Prefer a single combined concept; otherwise sum the separate Depreciation
+    and AmortizationOfIntangibleAssets components for the SAME fiscal year
+    (MSFT reports them separately). Returns None when no reliable,
+    non-overlapping estimate exists — never a silent fallback here.
     """
-    combined = _latest_annual_value(store, company_id, "DEPRECIATION_AMORTIZATION")
-    if combined is not None:
-        return combined
-    dep = store.query(
-        """SELECT value FROM canonical_fact WHERE company_id = ?
-           AND canonical_metric = 'DEPRECIATION_AMORTIZATION'
-           AND period_type = 'FY' AND status = 'NORMALIZED'
-           ORDER BY fiscal_year DESC LIMIT 1""",
-        [company_id],
-    )
-    return float(dep[0]["value"]) if dep else None
+    value, _ = _depreciation_selection(store, company_id, fiscal_year, unit)
+    return value
 
 
 def default_assumption_set(store, company_id: str, ticker: str,
@@ -63,7 +80,9 @@ def default_assumption_set(store, company_id: str, ticker: str,
     Returns (inputs, metadata) where metadata explains each input's source.
     """
     wacc_cfg = _load_wacc_config()
-    issuer = wacc_cfg["issuers"].get(ticker.upper(), wacc_cfg["issuers"]["MSFT"])
+    issuer = wacc_cfg["issuers"].get(ticker.upper())
+    if issuer is None:
+        raise ValueError(f"no issuer defaults configured for {ticker}")
     rf = risk_free if risk_free is not None else wacc_cfg["risk_free_rate"]["value"]
     erp = wacc_cfg["equity_risk_premium"]["value"]
     beta = float(issuer["beta"])
@@ -83,17 +102,26 @@ def default_assumption_set(store, company_id: str, ticker: str,
     net_debt = _latest_annual_value(store, company_id, "NET_DEBT")
     shares = _latest_annual_value(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES")
     fy = _latest_fy(store, company_id, "REVENUE")
-    da = estimate_depreciation(store, company_id)
+    da, da_source_kind = _depreciation_selection(store, company_id, fy) if fy is not None else (None, "missing")
 
     if not revenue:
         raise ValueError("no revenue facts; run `equitylens sync` first")
-    op_margin = op_income / revenue if op_income else None
-    tax_rate = (tax / pretax) if (tax and pretax) else 0.17
-    capex_pct = (capex / revenue) if capex else 0.05
-    da_pct = (da / revenue) if da else 0.03
+    if op_income is None:
+        raise ValueError("no operating income facts; cannot derive operating margin")
+    op_margin = op_income / revenue
+    # Zero is a valid value: a real zero tax rate / CapEx / D&A must stay zero,
+    # not be silently replaced by an assumption. Only genuine absence falls back.
+    tax_rate = (tax / pretax) if (tax is not None and pretax) else 0.17
+    capex_pct = (capex / revenue) if capex is not None else 0.05
+    da_pct = (da / revenue) if da is not None else 0.03
     # NET_DEBT = debt - cash - ST investments (positive = net debt);
-    # DCF equity bridge adds net cash = -NET_DEBT
-    net_cash = -net_debt if net_debt is not None else 0.0
+    # DCF equity bridge adds net cash = -NET_DEBT. A missing bridge forbids a
+    # per-share value.
+    if net_debt is None:
+        raise ValueError("no net-debt bridge; cannot derive net cash")
+    net_cash = -net_debt
+    if shares is None:
+        raise ValueError("no diluted share count; cannot produce a per-share value")
 
     # WACC: E/(D+E)*CoE + D/(D+E)*AfterTaxCoD with documented weights
     # (debt weight assumption 0.10 absent balance-sheet-based weight config)
@@ -103,12 +131,14 @@ def default_assumption_set(store, company_id: str, ticker: str,
     cod_after_tax = debt_cost * (1 - tax_rate)
     wacc = equity_weight * coe + debt_weight * cod_after_tax
 
-    growth = [0.08, 0.075, 0.07, 0.06, 0.05]  # default path; user-adjustable
+    # per-issuer default 5-year growth path (user-adjustable); AAPL and MSFT no
+    # longer share one unexplained path (P01).
+    growth = list(issuer.get("growth_path") or [0.08, 0.075, 0.07, 0.06, 0.05])
     inputs = DcfInputs(
         revenue_base=revenue,
         revenue_growth=growth,
-        op_margin_start=op_margin or 0.25,
-        op_margin_end=(op_margin or 0.25) + 0.005,
+        op_margin_start=op_margin,
+        op_margin_end=op_margin + 0.005,
         tax_rate=tax_rate,
         da_pct=da_pct,
         capex_pct=capex_pct,
@@ -116,14 +146,20 @@ def default_assumption_set(store, company_id: str, ticker: str,
         wacc=wacc,
         terminal_growth=0.025,
         net_cash=net_cash,
-        shares=shares or 1.0,
+        shares=shares,
     )
     meta.update({
         "revenue_base": {"value": revenue, "fiscal_year": fy, "source": "SEC 10-K canonical fact"},
+        "revenue_growth": {"value": growth, "source": issuer.get("growth_path_source") or "assumption (hand-versioned)"},
         "op_margin": {"value": op_margin, "fiscal_year": fy, "source": "OPERATING_INCOME / REVENUE"},
-        "tax_rate": {"value": tax_rate, "source": "INCOME_TAX / PRETAX_INCOME (latest FY)"},
-        "da_pct": {"value": da_pct, "source": "canonical D&A / revenue" if da else "assumption (D&A tag absent)"},
-        "capex_pct": {"value": capex_pct, "source": "CAPITAL_EXPENDITURES / REVENUE"},
+        "tax_rate": {"value": tax_rate,
+                     "source": "INCOME_TAX / PRETAX_INCOME (latest FY)" if (tax is not None and pretax)
+                               else "assumption (normalized 17% tax rate)"},
+        "da_pct": {"value": da_pct,
+                   "fiscal_year": fy,
+                   "source_kind": da_source_kind if da is not None else "assumption",
+                   "source": "canonical D&A / revenue" if da is not None else "assumption (D&A tag absent)"},
+        "capex_pct": {"value": capex_pct, "source": "CAPITAL_EXPENDITURES / REVENUE" if capex is not None else "assumption (CapEx absent)"},
         "net_cash": {"value": net_cash, "source": "NET_DEBT sign flip (latest balance sheet)"},
         "shares": {"value": shares, "basis": "FY diluted weighted-average", "source": "SEC canonical fact"},
         "wacc": {"value": wacc, "formula": "E/(D+E)*CoE + D/(D+E)*CoD_after_tax, weights documented"},
