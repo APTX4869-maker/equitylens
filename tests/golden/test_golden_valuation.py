@@ -102,6 +102,53 @@ def test_out_of_range_inputs_rejected():
         run_dcf(make_inputs(shares=0.0))
 
 
+def test_minus_100_percent_growth_releases_working_capital():
+    """V01: at -100% first-year growth, released working capital must stay in
+    FCFF. dNWC is computed from the PRIOR revenue base, not the new zero."""
+    inputs = make_inputs(revenue_base=100.0, revenue_growth=[-1.0, 0, 0, 0, 0],
+                         op_margin_start=0, op_margin_end=0, tax_rate=0,
+                         da_pct=0, capex_pct=0, nwc_pct=0.10,
+                         wacc=0.10, terminal_growth=0, net_cash=0, shares=1)
+    out = run_dcf(inputs)
+    assert out.forecast[0].nwc_delta == -10.0
+    assert out.forecast[0].fcff == 10.0
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("capex_pct", -0.2),
+    ("wacc", -1.0),
+])
+def test_dcf_rejects_model_incompatible_inputs(field, value):
+    """V01: negative CapEx and WACC <= -1 are model-incompatible; they must be
+    rejected with a structured error naming the offending field (never a normal
+    price nor a downstream ZeroDivisionError)."""
+    with pytest.raises(ValuationError) as exc:
+        run_dcf(make_inputs(**{field: value},
+                            terminal_growth=-1.1 if field == "wacc" else 0.02))
+    assert exc.value.field == field
+    assert exc.value.code == "INVALID_ASSUMPTION"
+
+
+def test_explicit_terminal_values_must_be_finite():
+    """V01: explicit-forecast terminal inputs (terminal_ebit etc.) must be
+    finite; NaN must not flow through to a NaN fair value."""
+    from equitylens.valuation.dcf import run_dcf_explicit
+
+    with pytest.raises(ValuationError) as exc:
+        run_dcf_explicit(
+            ebit=[20.0] * 5,
+            da=[3.0] * 5,
+            capex=[5.0] * 5,
+            tax_rate=0.25,
+            wacc=0.10,
+            terminal_growth=0.0,
+            net_cash=10.0,
+            shares=10.0,
+            terminal_ebit=float("nan"),
+        )
+    assert exc.value.field == "terminal_ebit"
+
+
 def test_negative_fcff_not_clipped_to_zero():
     """A legal negative-FCFF path must not crash nor be coerced to zero."""
     out = run_dcf(make_inputs(op_margin_start=0.05, op_margin_end=0.05, tax_rate=0.2,
