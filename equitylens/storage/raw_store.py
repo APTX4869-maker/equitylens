@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 MANIFEST_NAME = "_manifest.json"
@@ -39,7 +40,11 @@ def _read_manifest(directory: Path) -> dict:
 
 
 def _write_manifest(directory: Path, manifest: dict) -> None:
-    _manifest_path(directory).write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    """Atomically replace the manifest (temp file + os.replace on same fs)."""
+    path = _manifest_path(directory)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    os.replace(tmp, path)
 
 
 def _versioned_name(doc_name: str, sha: str) -> str:
@@ -81,16 +86,45 @@ def load_snapshot(directory: Path, doc_name: str, sha: str | None = None) -> tup
 
     Defaults to the latest successful snapshot recorded in the manifest; pass a
     full or 8-char prefix of a `sha` to read a specific prior version. The
-    returned content is hash-verified against the recorded checksum.
+    returned content is always hash-verified against the requested digest.
     """
     if sha is not None:
-        # a specific version: find the hash-suffixed file, else the fixed name
-        for path in (directory / _versioned_name(doc_name, sha), directory / doc_name):
-            if path.exists():
-                content = path.read_bytes()
-                return content, sha256_bytes(content)
-        return None
+        return _load_by_sha(directory, doc_name, sha)
+    return _load_latest(directory, doc_name)
 
+
+def _load_by_sha(directory: Path, doc_name: str, sha: str) -> tuple[bytes, str] | None:
+    """Strict lookup by full or 8-char-prefix SHA (D08).
+
+    Returns bytes whose computed SHA matches the requested digest, or None when
+    no stored snapshot matches (an unknown hash never falls back to the fixed
+    legacy name). A versioned file whose name implies the digest but whose bytes
+    hash differently is corruption and raises.
+    """
+    requested = sha.lower()
+    versioned = directory / _versioned_name(doc_name, requested)
+    if versioned.exists():
+        content = versioned.read_bytes()
+        computed = sha256_bytes(content)
+        if not computed.startswith(requested):
+            raise ValueError(
+                f"snapshot {doc_name}@{requested[:8]} is corrupted "
+                f"(content hash {computed[:8]} does not match)"
+            )
+        return content, computed
+
+    # No versioned file: the fixed legacy name may satisfy the request only when
+    # its actual digest matches — a mismatched digest returns None, not v1 bytes.
+    fixed = directory / doc_name
+    if fixed.exists():
+        content = fixed.read_bytes()
+        computed = sha256_bytes(content)
+        if computed.startswith(requested):
+            return content, computed
+    return None
+
+
+def _load_latest(directory: Path, doc_name: str) -> tuple[bytes, str] | None:
     manifest = _read_manifest(directory)
     entry = manifest.get(doc_name)
     if entry and entry.get("path"):

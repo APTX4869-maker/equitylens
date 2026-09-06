@@ -33,6 +33,42 @@ def test_load_specific_version_by_sha(tmp_path):
     assert content == b"version-two"
 
 
+def test_load_unknown_sha_returns_none_not_legacy(tmp_path):
+    """D08: an unknown hash must return None, never the old fixed-name v1."""
+    d = tmp_path / "snap"
+    save_snapshot(d, "companyfacts.json", b"v1-content")
+    save_snapshot(d, "companyfacts.json", b"v2-content")
+
+    assert load_snapshot(d, "companyfacts.json", sha="0" * 64) is None
+    assert load_snapshot(d, "companyfacts.json", sha="deadbeef") is None
+
+
+def test_load_8char_prefix_matches_versioned(tmp_path):
+    d = tmp_path / "snap"
+    save_snapshot(d, "companyfacts.json", b"v1")
+    _, sha2 = save_snapshot(d, "companyfacts.json", b"v2")
+
+    content, computed = load_snapshot(d, "companyfacts.json", sha=sha2[:8])
+    assert content == b"v2"
+    assert computed == sha2
+
+
+def test_load_corrupted_versioned_sha_raises(tmp_path):
+    """D08: a versioned file whose name implies the digest but whose bytes hash
+    differently is corruption, not a valid read."""
+    d = tmp_path / "snap"
+    save_snapshot(d, "companyfacts.json", b"v1")
+    _, sha2 = save_snapshot(d, "companyfacts.json", b"v2")
+
+    versioned = next(
+        p for p in d.iterdir()
+        if p.name != "companyfacts.json" and p.name != "_manifest.json"
+    )
+    versioned.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="corrupted"):
+        load_snapshot(d, "companyfacts.json", sha=sha2)
+
+
 def test_save_idempotent(tmp_path):
     d = tmp_path / "snap"
     p1, sha1 = save_snapshot(d, "companyfacts.json", b"same")
