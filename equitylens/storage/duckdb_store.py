@@ -117,6 +117,22 @@ CREATE TABLE IF NOT EXISTS market_quote (
   snapshot_sha VARCHAR,
   fetched_at TIMESTAMP
 );
+
+-- P06: personal reference-price plans. Immutable once saved; the reference price
+-- is reference_value * (1 - margin_of_safety). No order/broker/trading actions.
+CREATE TABLE IF NOT EXISTS valuation_plan (
+  plan_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  ticker VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  reference_value DOUBLE,
+  reference_source VARCHAR,
+  margin_of_safety DOUBLE,
+  reference_price DOUBLE,
+  notes VARCHAR,
+  assumptions_json JSON,
+  created_at TIMESTAMP NOT NULL
+);
 """
 
 

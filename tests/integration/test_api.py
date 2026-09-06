@@ -239,6 +239,41 @@ def test_valuation_run_invalid_input_400_no_write(client, company_db, bad):
     assert after == before
 
 
+def test_valuation_response_fingerprints_complete_executed_inputs(client):
+    """V03/V05: the response carries a deterministic fingerprint of the COMPLETE
+    executed inputs, recomputable from the returned input object; a WACC-only
+    change must change it."""
+    from equitylens.valuation.service import valuation_input_fingerprint
+
+    a = client.post("/api/v1/companies/AAPL/valuation/run",
+                    json={"persist": False, "assumptions": {"wacc": 0.10}}).json()
+    b = client.post("/api/v1/companies/AAPL/valuation/run",
+                    json={"persist": False, "assumptions": {"wacc": 0.11}}).json()
+    assert a["ticker"] == "AAPL"
+    assert a["input_fingerprint"] != b["input_fingerprint"]
+    assert a["input_fingerprint"] == valuation_input_fingerprint(a["assumptions"]["inputs"])
+    # every editable field is present in the complete input object
+    for k in ("revenue_base", "revenue_growth", "op_margin_start", "op_margin_end",
+              "tax_rate", "da_pct", "capex_pct", "nwc_pct", "wacc",
+              "terminal_growth", "net_cash", "shares"):
+        assert k in a["assumptions"]["inputs"]
+
+
+def test_valuation_run_structured_error_body(client, company_db):
+    """V01: a domain validation error returns {"error": {code, field, message}}
+    (not a bare string) and writes no run."""
+    before = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    r = client.post("/api/v1/companies/AAPL/valuation/run",
+                    json={"persist": False, "assumptions": {"capex_pct": -0.2}})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["error"]["code"] == "INVALID_ASSUMPTION"
+    assert body["error"]["field"] == "capex_pct"
+    assert body["error"]["message"]
+    after = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    assert after == before
+
+
 def test_default_valuation_does_not_persist_run(client, company_db):
     """V05: GET /default is a preview and must not add a valuation_run."""
     before = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]

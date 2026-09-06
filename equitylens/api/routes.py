@@ -6,6 +6,7 @@ import json
 import threading
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from equitylens.config import RAW_DIR
 from equitylens.domain.companies import get_company
@@ -563,14 +564,23 @@ def valuation_default(ticker: str):
 
 @router.post("/companies/{ticker}/valuation/run")
 def valuation_run(ticker: str, payload: dict):
+    from equitylens.valuation.dcf import ValuationError
     from equitylens.valuation.service import run_custom
 
     company = _resolve_company(ticker)
     try:
         persist = bool(payload.get("persist", True))
         return run_custom(_store(), company.cik, company.ticker, payload, persist=persist)
-    except Exception as exc:
-        raise HTTPException(400, str(exc)) from exc
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": "INVALID_INPUT", "field": None, "message": str(exc)}},
+        )
 
 
 @router.post("/companies/{ticker}/valuation/reverse-dcf")
