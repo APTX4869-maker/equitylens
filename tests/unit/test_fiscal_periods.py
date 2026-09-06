@@ -100,3 +100,92 @@ def test_derive_does_not_guess_missing_buckets():
     ]
     derived = derive_standalone_quarters(facts, 2025, cal)
     assert all(d["fiscal_quarter"] != 2 for d in derived)
+
+
+def test_derive_does_not_treat_standalone_quarter_as_cumulative():
+    """D04: with Q1/Q2/Q3 standalone and FY but no YTD9, Q4 must NOT be derived.
+
+    Treating the standalone Q3 as if it were the YTD-9M bucket would produce
+    FY(400) - Q3(100) = 300, which is wrong (real Q4 = 400 - 100 - 100 - 100 = 100,
+    but with no YTD-9M the quarter simply cannot be derived).
+    """
+    cal = make_calendar()
+    facts = [
+        {"canonical_fact_id": "a", "canonical_metric": "OCF", "period_type": "Q_STANDALONE",
+         "fiscal_quarter": 1, "period_end": "2024-09-30", "value": 100.0, "unit": "USD", "as_known_at": "2024-10-30"},
+        {"canonical_fact_id": "b", "canonical_metric": "OCF", "period_type": "Q_STANDALONE",
+         "fiscal_quarter": 2, "period_end": "2024-12-31", "value": 100.0, "unit": "USD", "as_known_at": "2025-01-29"},
+        {"canonical_fact_id": "c", "canonical_metric": "OCF", "period_type": "Q_STANDALONE",
+         "fiscal_quarter": 3, "period_end": "2025-03-31", "value": 100.0, "unit": "USD", "as_known_at": "2025-04-29"},
+        {"canonical_fact_id": "d", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": "2025-06-30", "value": 400.0, "unit": "USD", "as_known_at": "2025-07-29"},
+    ]
+    derived = derive_standalone_quarters(facts, 2025, cal)
+    assert all(d["fiscal_quarter"] != 4 for d in derived), "must not derive Q4 without YTD-9M"
+
+
+def test_derive_uses_latest_restated_fy_for_q4():
+    """D05: Q4 uses the latest-restated FY fact and propagates as_known_at."""
+    cal = make_calendar()
+    base = [
+        {"canonical_fact_id": "a", "canonical_metric": "OCF", "period_type": "Q_STANDALONE",
+         "fiscal_quarter": 1, "period_end": "2024-09-30", "value": 100.0, "unit": "USD", "as_known_at": "2024-10-30"},
+        {"canonical_fact_id": "b", "canonical_metric": "OCF", "period_type": "YTD_6M",
+         "fiscal_quarter": 2, "period_end": "2024-12-31", "value": 250.0, "unit": "USD", "as_known_at": "2025-01-29"},
+        {"canonical_fact_id": "c", "canonical_metric": "OCF", "period_type": "YTD_9M",
+         "fiscal_quarter": 3, "period_end": "2025-03-31", "value": 300.0, "unit": "USD", "as_known_at": "2025-04-29"},
+        {"canonical_fact_id": "d_old", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": "2025-06-30", "value": 400.0, "unit": "USD", "as_known_at": "2025-07-29"},
+        {"canonical_fact_id": "d_new", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": "2025-06-30", "value": 500.0, "unit": "USD", "as_known_at": "2025-08-29"},
+    ]
+    derived = derive_standalone_quarters(base, 2025, cal)
+    q4 = next(d for d in derived if d["fiscal_quarter"] == 4)
+    assert q4["value"] == pytest.approx(200.0)  # latest FY 500 - YTD9 300
+    assert q4["as_known_at"] == "2025-08-29"
+
+    # insertion order reversed -> identical result
+    reversed_facts = list(reversed(base))
+    derived_rev = derive_standalone_quarters(reversed_facts, 2025, cal)
+    q4_rev = next(d for d in derived_rev if d["fiscal_quarter"] == 4)
+    assert q4_rev["value"] == pytest.approx(200.0)
+
+
+@pytest.mark.parametrize("as_date", [False, True])
+def test_q4_derivation_accepts_date_and_iso_periods(as_date):
+    """D04: DuckDB date objects and ISO strings must select the same buckets."""
+    fy_end = date(2025, 6, 30) if as_date else "2025-06-30"
+    q3_end = date(2025, 3, 31) if as_date else "2025-03-31"
+    facts = [
+        {"canonical_fact_id": "fy", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": fy_end, "value": 400.0, "unit": "USD",
+         "as_known_at": "2025-07-30"},
+        {"canonical_fact_id": "ytd9", "canonical_metric": "OCF", "period_type": "YTD_9M",
+         "fiscal_quarter": 3, "period_end": q3_end, "value": 300.0, "unit": "USD",
+         "as_known_at": "2025-04-30"},
+    ]
+
+    result = derive_standalone_quarters(facts, 2025, make_calendar())
+
+    q4 = next(row for row in result if row["fiscal_quarter"] == 4)
+    assert q4["value"] == 100.0
+    assert q4["period_end"] == "2025-06-30"
+    assert q4["input_ids"] == ["ytd9", "fy"]
+
+
+def test_early_date_not_clamped_to_earliest_year():
+    """D03: dates before the earliest known year end use the fallback rule."""
+    cal = make_calendar()  # known FY2024..FY2026, fallback 06-30
+    p = cal.resolve_duration("2007-07-01", "2008-06-30")
+    assert p.period_type == "FY"
+    assert p.fiscal_year == 2008  # not clamped into FY2024
+
+
+def test_early_date_unresolved_without_reliable_fallback():
+    cal = FiscalCalendar(
+        year_ends={2024: date(2024, 6, 30), 2025: date(2025, 6, 30)},
+        quarter_ends={},
+        fallback_mm_dd=None,
+    )
+    p = cal.resolve_duration("2007-07-01", "2008-06-30")
+    assert p.fiscal_year is None  # explicitly unresolved, not clamped

@@ -15,13 +15,27 @@ Period semantics follow docs/04: Q_STANDALONE | YTD_6M | YTD_9M | FY | INSTANT.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 # span-day windows used to classify duration facts (13-week quarters, etc.)
 QUARTER_MIN, QUARTER_MAX = 70, 110
 HALF_MIN, HALF_MAX = 160, 200
 NINE_MIN, NINE_MAX = 250, 300
 YEAR_MIN = 350
+
+
+def _iso_date(value: object) -> str | None:
+    """Normalize supported database/date values before period comparison."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10]).isoformat()
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -110,7 +124,13 @@ class FiscalCalendar:
     # ---------------- resolution ----------------
 
     def fiscal_year_of(self, d: date) -> int | None:
-        """Fiscal year containing date d: smallest year_end >= d."""
+        """Fiscal year containing date d: smallest year_end >= d.
+
+        The submissions index only carries recent 10-Ks, so dates before the
+        earliest *known* fiscal year must not be silently clamped into that
+        year. Such dates are resolved via the fallback calendar rule when one is
+        available and reliable; otherwise they stay unresolved (None).
+        """
         if not self.year_ends:
             return None
         best_year: int | None = None
@@ -118,9 +138,15 @@ class FiscalCalendar:
         for y, end in self.year_ends.items():
             if end >= d and (best_end is None or end < best_end):
                 best_year, best_end = y, end
-        if best_year is not None:
-            return best_year
-        return self._heuristic_fiscal_year(d)
+        if best_year is None:
+            # d is after the latest known year end -> in-progress/future year.
+            return self._heuristic_fiscal_year(d)
+        earliest_year = min(self.year_ends)
+        if best_year == earliest_year and (earliest_year - 1) not in self.year_ends:
+            # The earliest known year's start is unbounded, so d could predate
+            # it. Do not clamp; resolve via the fallback rule or leave unknown.
+            return self._heuristic_fiscal_year(d)
+        return best_year
 
     def _heuristic_fiscal_year(self, d: date) -> int | None:
         if not self.fallback_mm_dd:
@@ -228,16 +254,17 @@ def derive_standalone_quarters(facts: list[dict], year: int, calendar: FiscalCal
         if end is None:
             return None
         candidates = [f for f in facts if f.get("period_type") == period_type
-                      and f.get("period_end") == end.isoformat()]
-        if not candidates:
-            # Q1 of a cash-flow series is reported as a 3-month period; the
-            # resolver already classifies it as Q_STANDALONE ending at q1_end.
-            candidates = [f for f in facts if f.get("period_type") == "Q_STANDALONE"
-                          and f.get("period_end") == end.isoformat()]
+                      and _iso_date(f.get("period_end")) == end.isoformat()]
         if not candidates:
             return None
-        # caller passes best-per-bucket facts; if several, prefer latest filed
+        # if several (e.g. restated filings for the same period), prefer the
+        # latest known (highest as_known_at) so derived quarters follow the
+        # latest restatement rather than insertion order.
         return max(candidates, key=lambda f: f.get("as_known_at") or "")
+
+    def max_known(*items: dict | None) -> str | None:
+        known = [f.get("as_known_at") for f in items if f and f.get("as_known_at")]
+        return max(known) if known else None
 
     q1_end = calendar.quarter_end(year, 1)
     q2_end = calendar.quarter_end(year, 2)
@@ -253,21 +280,27 @@ def derive_standalone_quarters(facts: list[dict], year: int, calendar: FiscalCal
             "fiscal_year": year,
             "fiscal_quarter": quarter,
             "period_type": "Q_STANDALONE",
-            "period_start": earlier.get("period_end"),
-            "period_end": later.get("period_end"),
+            "period_start": _iso_date(earlier.get("period_end")),
+            "period_end": _iso_date(later.get("period_end")),
             "value": float(later["value"]) - float(earlier["value"]),
             "unit": later.get("unit"),
             "status": "CALCULATED",
             "formula_id": "standalone_quarter.ytd_diff.v1",
             "input_ids": [earlier.get("canonical_fact_id"), later.get("canonical_fact_id")],
             "derivation": label,
+            # earliest moment the derived value could be known = latest input
+            "as_known_at": max_known(later, earlier),
         }
 
     q1_direct = pick("YTD_3M", q1_end)
     if q1_direct is None:
+        # Q1 of a cash-flow series is a 3-month standalone period; a Q_STANDALONE
+        # fact ending exactly at q1_end is equivalent to first-quarter cumulative.
         q1_direct = pick("Q_STANDALONE", q1_end)
     if 1 not in existing and q1_direct:
         derived.append(dict(q1_direct, period_type="Q_STANDALONE", fiscal_quarter=1,
+                            period_start=_iso_date(q1_direct.get("period_start")),
+                            period_end=_iso_date(q1_direct.get("period_end")),
                             status="CALCULATED", formula_id="standalone_quarter.direct.v1",
                             input_ids=[q1_direct.get("canonical_fact_id")], derivation="ytd-q1"))
     if 2 not in existing:
@@ -279,7 +312,8 @@ def derive_standalone_quarters(facts: list[dict], year: int, calendar: FiscalCal
         if q3:
             derived.append(q3)
     if 4 not in existing:
-        fy = next((f for f in facts if f.get("period_type") == "FY"), None)
+        # Q4 = FY - YTD_9M; prefer the latest-restated FY fact.
+        fy = pick("FY", calendar.quarter_end(year, 4))
         q4 = diff(fy, pick("YTD_9M", q3_end), 4, "q4=fy-ytd9")
         if q4:
             derived.append(q4)
