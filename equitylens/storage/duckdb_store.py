@@ -135,6 +135,15 @@ CREATE TABLE IF NOT EXISTS valuation_plan (
 );
 """
 
+# Idempotent additive migrations: add nullable columns to legacy tables so
+# existing rows are preserved and reads can distinguish legacy/incomplete rows.
+_MIGRATIONS = [
+    "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS input_fingerprint VARCHAR",
+    "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS scenarios_json JSON",
+    "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS sensitivity_json JSON",
+    "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS model_quality_json JSON",
+]
+
 
 class DuckDBStore:
     def __init__(self, path: Path | str = DB_PATH):
@@ -158,6 +167,8 @@ class DuckDBStore:
         for statement in self._split_statements(schema):
             self._conn.execute(statement)
         for statement in self._split_statements(EXTRA_SCHEMA):
+            self._conn.execute(statement)
+        for statement in _MIGRATIONS:
             self._conn.execute(statement)
 
     @staticmethod

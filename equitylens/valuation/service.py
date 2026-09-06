@@ -205,9 +205,11 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
         # meta must reflect the FINAL executed inputs, marking user overrides.
         _override_meta = {
             "wacc": "wacc", "terminal_growth": "terminal_growth",
-            "op_margin_end": "op_margin", "revenue_growth": "revenue_growth",
+            "op_margin_start": "op_margin_start", "op_margin_end": "op_margin",
+            "revenue_growth": "revenue_growth",
             "tax_rate": "tax_rate", "net_cash": "net_cash", "shares": "shares",
             "da_pct": "da_pct", "capex_pct": "capex_pct", "revenue_base": "revenue_base",
+            "nwc_pct": "nwc_pct",
         }
         for field, meta_key in _override_meta.items():
             if field in a:
@@ -218,10 +220,12 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
     # can never leave a half-written run behind (atomic write-after-compute).
     scenarios = scenario_valuation(base, ticker)
     sens = sensitivity(base)
+    mq_block = model_quality_block(meta, output, scenarios)
+    fingerprint = valuation_input_fingerprint(base)
     from equitylens.market.service import latest_quote_row
 
-    mq = latest_quote_row(store, company_id)
-    market_observation_id = mq["quote_id"] if mq else None
+    market_row = latest_quote_row(store, company_id)
+    market_observation_id = market_row["quote_id"] if market_row else None
     run = {
         "valuation_run_id": f"run_{uuid.uuid4().hex[:12]}",
         "company_id": company_id,
@@ -233,6 +237,10 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
         "fact_snapshot_json": json.dumps({"inputs": _inputs_dict(base), "meta": meta}, ensure_ascii=False),
         "output_json": json.dumps(_output_dict(output), ensure_ascii=False),
         "warnings_json": json.dumps(output.warnings, ensure_ascii=False),
+        "input_fingerprint": fingerprint,
+        "scenarios_json": json.dumps(scenarios, ensure_ascii=False),
+        "sensitivity_json": json.dumps(sens, ensure_ascii=False),
+        "model_quality_json": json.dumps(mq_block, ensure_ascii=False),
     }
     if persist:
         _persist_run(store, run)
@@ -241,7 +249,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
     return {
         "ticker": ticker,
         "valuation_run_id": run["valuation_run_id"] if persist else None,
-        "input_fingerprint": valuation_input_fingerprint(base),
+        "input_fingerprint": fingerprint,
         "model_version": dcf_mod.MODEL_VERSION,
         "run_at": run["run_at"],
         "risk_free": rf,
@@ -250,7 +258,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
         "result": _output_dict(output),
         "scenarios": scenarios,
         "sensitivity": sens,
-        "model_quality": model_quality_block(meta, output, scenarios),
+        "model_quality": mq_block,
         "warnings": output.warnings,
         "reproducible": True,
     }

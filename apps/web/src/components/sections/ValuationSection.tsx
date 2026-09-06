@@ -376,7 +376,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
         <div className="valuation-tags">
           <span>模型：{base.result.model_version}</span>
           <span>无风险利率 {base.risk_free ? `${(base.risk_free.value * 100).toFixed(2)}%（${base.risk_free.as_of ?? ""}）` : "—"}</span>
-          <span>{saved ? "已保存方案" : isDirty ? "未保存（预览已过期）" : "未保存（预览）"}</span>
+          <span>{saved && base.valuation_run_id ? `已保存 · run ${base.valuation_run_id}` : saved ? "已保存方案" : isDirty ? "未保存（预览已过期）" : "未保存（预览）"}</span>
           <button className="tab-btn" onClick={saveRun} disabled={!canSave}>
             保存本次运行
           </button>

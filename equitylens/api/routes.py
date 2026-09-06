@@ -617,14 +617,27 @@ def valuation_run_detail(ticker: str, run_id: str):
     )
     if row is None:
         raise HTTPException(404, f"run {run_id} not found for {ticker}")
+
+    input_fingerprint = row.get("input_fingerprint")
+    scenarios = _json.loads(row["scenarios_json"]) if row.get("scenarios_json") else None
+    sensitivity = _json.loads(row["sensitivity_json"]) if row.get("sensitivity_json") else None
+    model_quality = _json.loads(row["model_quality_json"]) if row.get("model_quality_json") else None
+    # A row without the new complete-run fields is a historical v1 run: return its
+    # stored output verbatim and mark it legacy/incomplete, never reinterpret it.
+    status = "legacy/incomplete" if (input_fingerprint is None or scenarios is None) else "complete"
     return {
         "valuation_run_id": row["valuation_run_id"],
+        "status": status,
+        "input_fingerprint": input_fingerprint,
         "model_name": row["model_name"],
         "model_version": row["model_version"],
         "run_at": row["run_at"],
         "market_observation_id": row.get("market_observation_id"),
         "assumptions": _json.loads(row["fact_snapshot_json"] or "{}"),
         "output": _json.loads(row["output_json"] or "{}"),
+        "scenarios": scenarios,
+        "sensitivity": sensitivity,
+        "model_quality": model_quality,
         "warnings": _json.loads(row["warnings_json"] or "[]"),
     }
 

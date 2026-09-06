@@ -298,6 +298,52 @@ def test_saved_run_reads_back_verbatim(client):
         r.json()["result"]["fair_value_per_share"])
 
 
+def test_saved_run_reads_back_full_scenarios_sensitivity(client):
+    """V05: a saved run persists the complete executed inputs, fingerprint,
+    scenarios, sensitivity, and model-quality block — read back verbatim."""
+    r = client.post("/api/v1/companies/AAPL/valuation/run",
+                    json={"persist": True, "assumptions": {"wacc": 0.12}})
+    assert r.status_code == 200
+    body = r.json()
+    run_id = body["valuation_run_id"]
+    assert run_id
+
+    detail = client.get(f"/api/v1/companies/AAPL/valuation/runs/{run_id}")
+    assert detail.status_code == 200
+    d = detail.json()
+    assert d["status"] == "complete"
+    assert d["input_fingerprint"] == body["input_fingerprint"]
+    # every scenario status/output, sensitivity cells, and model-quality survive
+    assert d["scenarios"]["base"]["result"] is not None
+    assert d["scenarios"]["bear"]["result"]["fair_value_per_share"] == pytest.approx(
+        body["scenarios"]["bear"]["result"]["fair_value_per_share"])
+    assert d["sensitivity"]["rows"], "sensitivity cells persisted"
+    assert d["model_quality"]["terminal_value_share"] is not None
+    assert d["model_version"] == "fcff_dcf.v1"
+
+
+def test_legacy_run_reads_as_incomplete(client, company_db):
+    """V05: a historical v1 run without the new columns is returned as
+    legacy/incomplete with its stored v1 output, never reinterpreted."""
+    company_db.connect()
+    company_db._conn.execute(
+        """INSERT INTO valuation_run
+           (valuation_run_id, company_id, model_name, model_version, run_at,
+            assumption_set_id, fact_snapshot_json, output_json, warnings_json)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ["run_legacy_v1", "0000320193", "FCFF_DCF", "fcff_dcf.v1",
+         "2026-01-01T00:00:00", "aset_legacy",
+         '{"inputs": {}, "meta": {}}',
+         '{"fair_value_per_share": 100.0}', "[]"],
+    )
+    detail = client.get("/api/v1/companies/AAPL/valuation/runs/run_legacy_v1")
+    assert detail.status_code == 200
+    d = detail.json()
+    assert d["status"] == "legacy/incomplete"
+    assert d["output"]["fair_value_per_share"] == 100.0
+    assert d["scenarios"] is None or d["scenarios"]["base"] is None
+
+
 def test_plan_reference_price_formula(client):
     """P06: 参考价 = 选定每股估值 × (1 − 安全边际)."""
     r = client.post("/api/v1/companies/AAPL/valuation/plans",

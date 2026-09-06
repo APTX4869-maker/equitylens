@@ -163,5 +163,9 @@ CREATE TABLE IF NOT EXISTS valuation_run (
   assumption_set_id VARCHAR NOT NULL,
   fact_snapshot_json JSON NOT NULL,
   output_json JSON NOT NULL,
-  warnings_json JSON
+  warnings_json JSON,
+  input_fingerprint VARCHAR,
+  scenarios_json JSON,
+  sensitivity_json JSON,
+  model_quality_json JSON
 );
