@@ -44,7 +44,7 @@ class MappingRegistry:
                 metric_type=spec["type"],
                 unit_family=spec["unit_family"],
                 concepts=concepts,
-                rule_id=f"{name.lower()}.usgaap.v1",
+                rule_id=f"{name.lower()}.usgaap.v{self.version}",
                 sign=spec.get("sign", "as_reported"),
                 derive_standalone_quarter=name in derive_set,
             )

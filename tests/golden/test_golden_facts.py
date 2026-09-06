@@ -145,26 +145,39 @@ def test_instant_facts_are_not_summed(company_db):
 
 
 def test_net_debt_uses_latest_instant_values(company_db):
-    """NET_DEBT must equal (ST debt + LT debt - cash - ST investments) computed
-    from the LATEST balance sheet — proving instant facts are not summed."""
+    """NET_DEBT = non-overlapping debt components - cash - ST investments, on
+    ONE balance-sheet date. us-gaap:LongTermDebt (total) must not double-count
+    the current portion against LONG_TERM_DEBT_CURRENT."""
     from equitylens.metrics.engine import MetricEngine
 
     engine = MetricEngine(company_db)
     points = engine.compute("NET_DEBT", CIK_MSFT, frequency="quarterly")
     assert points
 
-    def latest(metric: str) -> float:
+    def on_date(metric: str, d: str) -> float:
         r = company_db.query_one(
             """SELECT value FROM canonical_fact
                WHERE company_id=? AND canonical_metric=? AND period_type='INSTANT'
-               ORDER BY COALESCE(instant_date, period_end) DESC, as_known_at DESC LIMIT 1""",
-            [CIK_MSFT, metric],
+                 AND COALESCE(instant_date, period_end)=?
+               ORDER BY as_known_at DESC LIMIT 1""",
+            [CIK_MSFT, metric, d],
         )
-        assert r, f"missing instant {metric}"
+        assert r, f"missing instant {metric} on {d}"
         return float(r["value"])
 
-    expected = (
-        latest("SHORT_TERM_DEBT") + latest("LONG_TERM_DEBT")
-        - latest("CASH_AND_EQUIVALENTS") - latest("SHORT_TERM_INVESTMENTS")
-    )
+    latest = company_db.query_one(
+        """SELECT COALESCE(instant_date, period_end) d FROM canonical_fact
+           WHERE company_id=? AND canonical_metric='LONG_TERM_DEBT' AND period_type='INSTANT'
+           ORDER BY COALESCE(instant_date, period_end) DESC LIMIT 1""",
+        [CIK_MSFT],
+    )["d"]
+
+    total_debt = on_date("LONG_TERM_DEBT", latest) + on_date("LONG_TERM_DEBT_CURRENT", latest)
+    expected = total_debt - on_date("CASH_AND_EQUIVALENTS", latest) - on_date("SHORT_TERM_INVESTMENTS", latest)
     assert points[-1].value == pytest.approx(expected, rel=1e-9)
+
+    # MSFT total long-term debt = noncurrent + current portion; the bridge must
+    # not add the current portion a second time.
+    noncurrent = on_date("LONG_TERM_DEBT", latest)
+    current = on_date("LONG_TERM_DEBT_CURRENT", latest)
+    assert noncurrent + current == pytest.approx(40_294_000_000, rel=1e-6)

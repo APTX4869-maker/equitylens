@@ -125,7 +125,8 @@ def sync_management(
                                      form_type="4", accession_number=accn,
                                      filed_at=row.get("filingDate"), source_url=url,
                                      content_sha256=cached[1], local_path=str(directory / "form4.xml"),
-                                     fetched_at="", parser_version=PARSER_VERSION, company_id=cik)
+                                     fetched_at=str(datetime.now(timezone.utc).replace(microsecond=0).isoformat()),
+                                     parser_version=PARSER_VERSION, company_id=cik)
             docs_to_persist.append(doc)
             parsed = parse_form4(content)
             for i, t in enumerate(parsed.transactions):

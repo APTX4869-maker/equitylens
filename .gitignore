@@ -16,6 +16,7 @@ next-env.d.ts
 
 # Data (generated)
 data/equitylens.duckdb
+data/equitylens.duckdb.*
 data/parquet/
 data/raw/sec/*/companyfacts.json
 data/raw/sec/*/submissions.json

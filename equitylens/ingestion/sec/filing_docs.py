@@ -29,11 +29,15 @@ def _recent_filings(submissions: dict) -> list[dict]:
 
 
 def list_filing_docs(ticker: str, forms: tuple[str, ...] = FORMS_SUPPORTED,
-                     limit_per_form: int = 3) -> list[dict]:
-    """Pick recent filing metadata (no download)."""
+                     limit_per_form: int = 3, *, raw_dir=RAW_DIR) -> list[dict]:
+    """Pick recent filing metadata (no download), from the LATEST cached
+    submissions snapshot (via the raw-store manifest, never a fixed filename)."""
     company = get_company(ticker)
-    subs_path = RAW_DIR / "sec" / company.cik / "submissions.json"
-    submissions = json.loads(subs_path.read_text())
+    directory = raw_dir / "sec" / company.cik
+    cached = load_snapshot(directory, "submissions.json")
+    if cached is None:
+        raise FileNotFoundError(f"No cached submissions snapshot for {ticker}")
+    submissions = json.loads(cached[0])
     picked: list[dict] = []
     counts: dict[str, int] = {}
     for row in _recent_filings(submissions):
@@ -67,7 +71,7 @@ def fetch_filing_documents(
     docs: list[SourceDocument] = []
     own_client = client or SECClient()
     try:
-        for row in list_filing_docs(ticker, forms, limit_per_form):
+        for row in list_filing_docs(ticker, forms, limit_per_form, raw_dir=raw_dir):
             accn = row["accessionNumber"]
             accn_nodash = accn.replace("-", "")
             doc_name = "primary.html"

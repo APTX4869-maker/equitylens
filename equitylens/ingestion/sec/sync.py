@@ -212,7 +212,10 @@ def sync_segments(
 
     docs = fetch_filing_documents(ticker, forms=forms, limit_per_form=limit_per_form,
                                   fetch=fetch, store=store, client=client, raw_dir=raw_dir)
-    subs = json.loads((raw_dir / "sec" / cik / "submissions.json").read_text())
+    subs_cached = load_snapshot(raw_dir / "sec" / cik, DOC_SUBMISSIONS)
+    if subs_cached is None:
+        raise FileNotFoundError(f"No cached submissions snapshot for {ticker}")
+    subs = json.loads(subs_cached[0])
     calendar = FiscalCalendar.from_submissions(subs, fallback_mm_dd=company.fiscal_year_end)
     config = SegmentConfigRegistry().get(ticker)
     if config is None:

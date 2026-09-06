@@ -186,7 +186,7 @@ def normalize_companyfacts(
                         "mapping_version": mappings.mapping_version,
                         "source_raw_fact_ids": json.dumps(d.get("input_ids") or [], ensure_ascii=False),
                         "source_document_id": source_document_id,
-                        "as_known_at": None,
+                        "as_known_at": d.get("as_known_at"),
                         "created_at": created_at,
                         "warnings_json": json.dumps([f"derived: {d.get('derivation')}"], ensure_ascii=False),
                     })

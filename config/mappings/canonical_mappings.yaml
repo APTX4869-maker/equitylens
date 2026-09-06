@@ -1,7 +1,12 @@
 # Canonical fact mappings — versioned concept -> canonical metric rules.
 # V0.1 scope: the fact set required by CODEX_START_HERE.md for AAPL/MSFT.
 # Every rule id is versioned; changing a rule creates a new rule id.
-version: 1
+# v2: split long-term debt into its non-overlapping noncurrent portion (LongTermDebt
+#     was the total including the current portion and double-counted against
+#     SHORT_TERM_DEBT's LongTermDebtCurrent); add separate Depreciation and
+#     AmortizationOfIntangibleAssets concepts for issuers that do not report a
+#     single combined D&A line (MSFT).
+version: 2
 canonical_facts:
   REVENUE:
     type: duration
@@ -88,19 +93,31 @@ canonical_facts:
     unit_family: currency
     concepts:
       - us-gaap:LiabilitiesCurrent
-  SHORT_TERM_DEBT:
+  LONG_TERM_DEBT_CURRENT:
     type: instant
     unit_family: currency
     concepts:
+      # Current portion of long-term debt (distinct component, summed in the
+      # net-debt bridge; must never be lumped with a "total long-term debt" tag).
       - us-gaap:LongTermDebtCurrent
+  SHORT_TERM_BORROWINGS:
+    type: instant
+    unit_family: currency
+    concepts:
       - us-gaap:ShortTermBorrowings
+  COMMERCIAL_PAPER:
+    type: instant
+    unit_family: currency
+    concepts:
       - us-gaap:CommercialPaper
   LONG_TERM_DEBT:
     type: instant
     unit_family: currency
     concepts:
+      # Non-overlapping noncurrent portion only. us-gaap:LongTermDebt is the
+      # TOTAL (including the current portion), which would double-count against
+      # LONG_TERM_DEBT_CURRENT when summed in the net-debt bridge.
       - us-gaap:LongTermDebtNoncurrent
-      - us-gaap:LongTermDebt
   STOCKHOLDERS_EQUITY:
     type: instant
     unit_family: currency
@@ -128,6 +145,16 @@ canonical_facts:
     concepts:
       - us-gaap:DepreciationAmortizationAndAccretionNet
       - us-gaap:DepreciationDepletionAndAmortization
+  DEPRECIATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:Depreciation
+  AMORTIZATION_OF_INTANGIBLE_ASSETS:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:AmortizationOfIntangibleAssets
   SHARE_BASED_COMPENSATION:
     type: duration
     unit_family: currency

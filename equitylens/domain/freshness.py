@@ -7,6 +7,7 @@ modules are explicit (not synced), never replaced with older fallback data.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 # Per-module staleness windows (calendar days before the module is flagged stale)
@@ -29,6 +30,24 @@ def _days_ago(ts) -> int | None:
     except ValueError:
         return None
     return max(0, (datetime.now(timezone.utc) - dt).days)
+
+
+def _parse_observed_at(s: str) -> datetime | None:
+    """Parse a provider-reported observation time (e.g. 'Sep 3, 2026 9:58 AM ET'
+    or '2026-09-03 09:58:41') to a naive datetime. Returns None if unparseable."""
+    if not s:
+        return None
+    s = s.strip()
+    s = re.sub(r"\s+(ET|PT|CT|MT)\s*$", "", s)
+    for fmt in ("%b %d, %Y %I:%M %p", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _status(days: int | None, threshold: int, missing_hint: str) -> dict:
@@ -78,7 +97,8 @@ def freshness(store, company_id: str, ticker: str) -> dict:
     modules.append({"key": "segments", "label": "分部数据", "as_of": str(seg_at)[:10] if seg_at else None,
                     "detail": st["detail"], "status": st["status"], "days_ago": st["days_ago"]})
 
-    # ---- management: proxy year + latest Form 4 ----
+    # ---- management: governance is driven by the annual proxy (DEF 14A), not by
+    # frequent Form 4 insider filings — a new Form 4 must not mask an old proxy.
     proxy = store.query_one(
         "SELECT MAX(filed_at) AS at FROM source_document WHERE company_id = ? AND form_type = 'DEF 14A'",
         [company_id],
@@ -87,21 +107,19 @@ def freshness(store, company_id: str, ticker: str) -> dict:
         "SELECT MAX(filed_at) AS at FROM source_document WHERE company_id = ? AND form_type = '4'",
         [company_id],
     )
-    mgmt_ts = None
-    for cand in (proxy["at"] if proxy else None, f4["at"] if f4 else None):
-        if cand and (mgmt_ts is None or str(cand) > str(mgmt_ts)):
-            mgmt_ts = cand
-    st = _status(_days_ago(mgmt_ts), STALE_AFTER_DAYS["management"],
-                 "无代理声明/Form 4（运行 equitylens sync-management）")
-    modules.append({"key": "management", "label": "管理层/治理", "as_of": str(mgmt_ts)[:10] if mgmt_ts else None,
-                    "detail": st["detail"], "status": st["status"], "days_ago": st["days_ago"]})
+    proxy_at = proxy["at"] if proxy and proxy.get("at") else None
+    f4_at = f4["at"] if f4 and f4.get("at") else None
+    st = _status(_days_ago(proxy_at), STALE_AFTER_DAYS["management"],
+                 "无代理声明（运行 equitylens sync-management）")
+    detail = st["detail"]
+    if f4_at is not None:
+        detail += f"（最新 Form 4 {str(f4_at)[:10]}）"
+    modules.append({"key": "management", "label": "管理层/治理", "as_of": str(proxy_at)[:10] if proxy_at else None,
+                    "detail": detail, "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- market quote ----
     quote = store.latest_market_quote(company_id)
     if quote:
-        qat = str(quote["fetched_at"] or "")[:19]
-        days = _days_ago(qat)
-        st = _status(days, STALE_AFTER_DAYS["market_quote"], "")
         provider = quote.get("provider") or ""
         try:
             from equitylens.market.sources import get_config
@@ -109,7 +127,24 @@ def freshness(store, company_id: str, ticker: str) -> dict:
             provider_label = meta.label if meta is not None else provider
         except Exception:
             provider_label = provider
-        modules.append({"key": "market_quote", "label": "行情快照", "as_of": qat[:10],
+        # Staleness is judged by the provider-reported OBSERVATION time, not the
+        # fetch/replay time — a 30-day-old quote replayed today is still stale.
+        obs = _parse_observed_at(str(quote.get("observed_at") or ""))
+        if obs is not None:
+            obs = obs.replace(tzinfo=timezone.utc)
+            if obs > datetime.now(timezone.utc):
+                st = {"status": "stale", "detail": "观察时间在未来（异常）", "days_ago": None}
+                as_of = obs.isoformat()
+            else:
+                days = (datetime.now(timezone.utc) - obs).days
+                st = _status(days, STALE_AFTER_DAYS["market_quote"], "")
+                as_of = obs.strftime("%Y-%m-%d")
+        else:
+            qat = str(quote["fetched_at"] or "")[:19]
+            st = _status(_days_ago(qat), STALE_AFTER_DAYS["market_quote"], "")
+            as_of = qat[:10]
+            st["detail"] = f"{st['detail']}（观察时间无法解析）"
+        modules.append({"key": "market_quote", "label": "行情快照", "as_of": as_of,
                         "detail": (f"{provider_label} "
                                    f"${quote['price']:.2f} · {quote['observed_at']}"),
                         "status": st["status"], "days_ago": st["days_ago"]})

@@ -2,36 +2,109 @@
 
 Snapshots are saved before parsing and verified by SHA-256. An artifact is
 never overwritten: if content changes, a new hash-suffixed version is written.
+
+A per-directory manifest (`_manifest.json`) records the LATEST successful
+snapshot for each document name, so readers do not have to guess the newest
+version from directory file names or mtimes. The manifest pointer is only
+updated after a snapshot is fully written — a failed fetch never advances the
+"latest" pointer to a half-written artifact.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
+
+MANIFEST_NAME = "_manifest.json"
 
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _manifest_path(directory: Path) -> Path:
+    return directory / MANIFEST_NAME
+
+
+def _read_manifest(directory: Path) -> dict:
+    p = _manifest_path(directory)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_manifest(directory: Path, manifest: dict) -> None:
+    _manifest_path(directory).write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
+def _versioned_name(doc_name: str, sha: str) -> str:
+    p = Path(doc_name)
+    return f"{p.stem}.{sha[:8]}{p.suffix}"
+
+
 def save_snapshot(directory: Path, doc_name: str, content: bytes) -> tuple[Path, str]:
     """Save raw bytes to `directory/doc_name`.
 
     Returns (path, sha256). Idempotent when content is unchanged; otherwise a
-    new versioned file (stem.hash.ext) is created and the original is kept.
+    new versioned file (stem.hash.ext) is created and prior versions are kept.
+    The latest pointer is updated only after a successful write.
     """
     directory.mkdir(parents=True, exist_ok=True)
     sha = sha256_bytes(content)
-    path = directory / doc_name
-    if path.exists():
-        if sha256_bytes(path.read_bytes()) == sha:
-            return path, sha
-        path = directory / f"{Path(doc_name).stem}.{sha[:8]}{Path(doc_name).suffix}"
-    path.write_bytes(content)
+    base = directory / doc_name
+
+    if base.exists() and sha256_bytes(base.read_bytes()) == sha:
+        path = base
+    elif base.exists():
+        # content differs from the canonical fixed name: write a versioned copy
+        path = directory / _versioned_name(doc_name, sha)
+        if not path.exists():
+            path.write_bytes(content)
+    else:
+        path = base
+        path.write_bytes(content)
+
+    # commit the latest pointer only now (atomic-enough: file fully written)
+    manifest = _read_manifest(directory)
+    manifest[doc_name] = {"sha256": sha, "path": path.name}
+    _write_manifest(directory, manifest)
     return path, sha
 
 
-def load_snapshot(directory: Path, doc_name: str) -> tuple[bytes, str] | None:
+def load_snapshot(directory: Path, doc_name: str, sha: str | None = None) -> tuple[bytes, str] | None:
+    """Load a snapshot for `doc_name`.
+
+    Defaults to the latest successful snapshot recorded in the manifest; pass a
+    full or 8-char prefix of a `sha` to read a specific prior version. The
+    returned content is hash-verified against the recorded checksum.
+    """
+    if sha is not None:
+        # a specific version: find the hash-suffixed file, else the fixed name
+        for path in (directory / _versioned_name(doc_name, sha), directory / doc_name):
+            if path.exists():
+                content = path.read_bytes()
+                return content, sha256_bytes(content)
+        return None
+
+    manifest = _read_manifest(directory)
+    entry = manifest.get(doc_name)
+    if entry and entry.get("path"):
+        path = directory / entry["path"]
+        if path.exists():
+            content = path.read_bytes()
+            computed = sha256_bytes(content)
+            if entry.get("sha256") and computed != entry["sha256"]:
+                raise ValueError(
+                    f"snapshot {doc_name} is corrupted (hash {computed[:8]} != {entry['sha256'][:8]})"
+                )
+            return content, computed
+
+    # fallback: fixed name (pre-manifest / fixture layout)
     path = directory / doc_name
     if not path.exists():
         return None

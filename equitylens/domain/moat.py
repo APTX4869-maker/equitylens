@@ -51,6 +51,18 @@ def _id(p) -> str | None:
     return p.canonical_fact_id
 
 
+def _evidence_ids(points) -> list[str]:
+    """Evidence IDs for a series: canonical fact id for passthrough facts, or the
+    full input lineage for derived metrics (whose own id is None)."""
+    ids: list[str] = []
+    for p in points:
+        if p.canonical_fact_id:
+            ids.append(p.canonical_fact_id)
+        elif getattr(p, "input_fact_ids", None):
+            ids.extend(p.input_fact_ids)
+    return ids
+
+
 def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals)
 
@@ -58,7 +70,7 @@ def _mean(vals: list[float]) -> float:
 def moat_signals(store, company_id: str, ticker: str) -> dict:
     engine = MetricEngine(store)
     signals: list[Signal] = []
-    ev = lambda pts: [f.canonical_fact_id for f in pts if f.canonical_fact_id]  # noqa: E731
+    ev = _evidence_ids
 
     # ---- 1) pricing power: gross margin level + stability/trend (5Y annual) ----
     gm = _series(engine, company_id, "GROSS_MARGIN", "annual")[-6:]

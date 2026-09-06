@@ -72,7 +72,12 @@ def verify_promise(store, card: dict) -> dict:
                                                   frequency=spec["frequency"])
            if p.value and p.fiscal_year == spec["fiscal_year"]]
     disclosed = float(pts[-1].value) if pts else None
-    evidence_ids = [p.canonical_fact_id for p in pts if p.canonical_fact_id]
+    evidence_ids: list[str] = []
+    for p in pts:
+        if p.canonical_fact_id:
+            evidence_ids.append(p.canonical_fact_id)
+        elif getattr(p, "input_fact_ids", None):
+            evidence_ids.extend(p.input_fact_ids)
     target = spec["target"]
     if disclosed is None:
         # Fact not filed yet: OPEN while before deadline, else UNVERIFIED.
