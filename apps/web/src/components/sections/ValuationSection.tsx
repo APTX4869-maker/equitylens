@@ -82,6 +82,24 @@ type RunResponse = {
   risk_free?: { value: number; as_of?: string; source?: string };
 };
 
+type ValuationPlan = {
+  plan_id: string;
+  name: string;
+  valuation_run_id: string | null;
+  scenario_key: "base" | "bear" | "bull" | null;
+  reference_value: number | null;
+  reference_price: number | null;
+  reference_price_reason?: string | null;
+  margin_of_safety: number;
+  notes?: string | null;
+  conditions_to_verify: string[];
+  parent_plan_id?: string | null;
+  version: number | null;
+  review_status: string;
+  review_reason?: string | null;
+  assumptions_json?: Record<string, unknown>;
+};
+
 const RNG = {
   growth: { min: -100, max: 20, step: 0.5 },
   margin: { min: 5, max: 60, step: 0.5 },
@@ -102,7 +120,13 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const [saved, setSaved] = useState(false);
   const [marginOfSafety, setMarginOfSafety] = useState("");
   const [planName, setPlanName] = useState("");
-  const [plans, setPlans] = useState<{ plan_id: string; name: string; reference_price: number | null; margin_of_safety: number }[]>([]);
+  const [planScenario, setPlanScenario] = useState<"base" | "bear" | "bull">("base");
+  const [planNotes, setPlanNotes] = useState("");
+  const [planConditions, setPlanConditions] = useState("");
+  const [plans, setPlans] = useState<ValuationPlan[]>([]);
+  const [openedPlan, setOpenedPlan] = useState<ValuationPlan | null>(null);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [changedFields, setChangedFields] = useState<string[]>([]);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const reqSeq = useRef(0);
   const draftRef = useRef<DcfInputs | null>(null);
@@ -133,7 +157,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
 
   const loadPlans = useCallback(async () => {
     try {
-      const d = await api.fetchJson<{ plans: { plan_id: string; name: string; reference_price: number | null; margin_of_safety: number }[] }>(
+      const d = await api.fetchJson<{ plans: ValuationPlan[] }>(
         `/api/v1/companies/${ticker}/valuation/plans`
       );
       setPlans(d.plans ?? []);
@@ -226,9 +250,14 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       setPlanMsg("安全边际必须是 0–99 之间的百分比（0 表示无边际）");
       return;
     }
-    const refValue = base?.result.fair_value_per_share;
-    if (refValue == null) {
-      setPlanMsg("当前没有可用的参考估值");
+    const runId = base?.valuation_run_id;
+    const selected = base?.scenarios[planScenario];
+    if (!runId || !saved) {
+      setPlanMsg("请先保存当前估值运行，再创建可追溯方案");
+      return;
+    }
+    if (!selected?.result) {
+      setPlanMsg("所选情景当前不可用");
       return;
     }
     try {
@@ -239,10 +268,11 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: planName || undefined,
-            reference_value: refValue,
-            reference_source: "base_dcf",
+            valuation_run_id: runId,
+            scenario_key: planScenario,
             margin_of_safety: pct / 100,
-            assumptions: base?.assumptions.inputs ?? {},
+            notes: planNotes || undefined,
+            conditions_to_verify: planConditions.split("\n").map((item) => item.trim()).filter(Boolean),
           }),
         }
       );
@@ -250,11 +280,53 @@ export function ValuationSection({ ticker }: { ticker: string }) {
         ? `已保存方案：参考价 $${d.reference_price.toFixed(2)}`
         : `已保存（仅供研究）：${d.reference_price_reason ?? "不可买入"}`);
       setPlanName("");
+      setPlanNotes("");
+      setPlanConditions("");
       void loadPlans();
     } catch (e) {
       setPlanMsg(String(e));
     }
-  }, [ticker, marginOfSafety, planName, base, loadPlans]);
+  }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, base, saved, loadPlans]);
+
+  const openPlan = useCallback(async (planId: string) => {
+    try {
+      const plan = await api.fetchJson<ValuationPlan>(
+        `/api/v1/companies/${ticker}/valuation/plans/${planId}`
+      );
+      setOpenedPlan(plan);
+    } catch (e) {
+      setPlanMsg(String(e));
+    }
+  }, [ticker]);
+
+  const copyPlan = useCallback(async (planId: string) => {
+    try {
+      const copy = await api.fetchJson<ValuationPlan>(
+        `/api/v1/companies/${ticker}/valuation/plans/${planId}/copy`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }
+      );
+      setOpenedPlan(copy);
+      setPlanMsg(`已复制为版本 ${copy.version ?? "—"}`);
+      await loadPlans();
+    } catch (e) {
+      setPlanMsg(String(e));
+    }
+  }, [ticker, loadPlans]);
+
+  const comparePlans = useCallback(async () => {
+    if (compareIds.length < 2) {
+      setPlanMsg("请至少选择两个方案比较");
+      return;
+    }
+    try {
+      const result = await api.fetchJson<{ plans: ValuationPlan[]; changed_fields: string[] }>(
+        `/api/v1/companies/${ticker}/valuation/plans/compare?ids=${encodeURIComponent(compareIds.join(","))}`
+      );
+      setChangedFields(result.changed_fields);
+    } catch (e) {
+      setPlanMsg(String(e));
+    }
+  }, [ticker, compareIds]);
 
   const runReverse = useCallback(async () => {
     const price = parseFloat(targetPrice);
@@ -283,6 +355,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const bear = base?.scenarios.bear.result?.fair_value_per_share;
   const bull = base?.scenarios.bull.result?.fair_value_per_share;
   const refRange = fair != null && bear != null && bull != null ? [Math.min(bear, bull), Math.max(bear, bull)] : null;
+  const selectedPlanValue = base?.scenarios[planScenario]?.result?.fair_value_per_share ?? null;
 
   const growthPct = draft ? draft.revenue_growth[0] * 100 : 0;
   const marginPct = draft ? draft.op_margin_end * 100 : 0;
@@ -593,27 +666,50 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           </div>
         </div>
         <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <label className="card-sub">安全边际 %</label>
+          <label className="card-sub" htmlFor="plan-scenario">参考情景</label>
+          <select id="plan-scenario" value={planScenario}
+            onChange={(e) => setPlanScenario(e.target.value as "base" | "bear" | "bull")}
+            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}>
+            <option value="bear">悲观 Bear</option>
+            <option value="base">中性 Base</option>
+            <option value="bull">乐观 Bull</option>
+          </select>
+          <label className="card-sub" htmlFor="plan-margin">安全边际 %</label>
           <input
+            id="plan-margin"
             type="number" min="0" max="99" step="1" placeholder="0"
             value={marginOfSafety}
             onChange={(e) => setMarginOfSafety(e.target.value)}
             style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}
           />
-          <label className="card-sub">方案名</label>
+          <label className="card-sub" htmlFor="plan-name">方案名</label>
           <input
+            id="plan-name"
             value={planName}
             onChange={(e) => setPlanName(e.target.value)}
             placeholder="未命名方案"
             style={{ width: 160, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}
           />
-          <button className="tab-btn" onClick={savePlan} disabled={loading || fair == null}>
+          <button className="tab-btn" onClick={savePlan}
+            disabled={loading || !saved || !base.valuation_run_id || selectedPlanValue == null}>
             保存参考价方案
           </button>
         </div>
-        {marginOfSafety !== "" && fair != null ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+          <textarea aria-label="方案备注" value={planNotes} onChange={(e) => setPlanNotes(e.target.value)}
+            placeholder="备注：为什么选择这个情景？"
+            style={{ minHeight: 64, padding: 8, borderRadius: 8, border: "1px solid var(--line)" }} />
+          <textarea aria-label="待验证条件" value={planConditions} onChange={(e) => setPlanConditions(e.target.value)}
+            placeholder={"每行一个待验证条件\n例如：下一季服务收入继续增长"}
+            style={{ minHeight: 64, padding: 8, borderRadius: 8, border: "1px solid var(--line)" }} />
+        </div>
+        {!saved || !base.valuation_run_id ? (
+          <div className="card-sub" style={{ marginTop: 8 }}>先点击“保存本次运行”，方案才能绑定不可变输入与情景。</div>
+        ) : null}
+        {marginOfSafety !== "" && selectedPlanValue != null ? (
           <div className="card-sub" style={{ marginTop: 8 }}>
-            预览：参考价 ≈ ${(fair * (1 - (parseFloat(marginOfSafety) || 0) / 100)).toFixed(2)}（Base DCF ${fair.toFixed(0)} × 边际 {marginOfSafety || "0"}%）
+            预览：参考价 ≈ ${(selectedPlanValue * (1 - (parseFloat(marginOfSafety) || 0) / 100)).toFixed(2)}
+            （{planScenario} ${selectedPlanValue.toFixed(2)} × 边际 {marginOfSafety || "0"}%）
           </div>
         ) : null}
         {planMsg ? <div className="card-sub" style={{ marginTop: 8 }}>{planMsg}</div> : null}
@@ -622,9 +718,35 @@ export function ValuationSection({ ticker }: { ticker: string }) {
             <div className="card-sub">已保存方案</div>
             {plans.slice(0, 5).map((p) => (
               <div key={p.plan_id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 12 }}>
-                {p.name}：参考价 {p.reference_price != null ? `$${p.reference_price.toFixed(2)}` : "—（不可买入）"} · 边际 {Math.round(p.margin_of_safety * 100)}%
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <input type="checkbox" aria-label={`比较 ${p.name}`} checked={compareIds.includes(p.plan_id)}
+                    onChange={(e) => setCompareIds((ids) => e.target.checked
+                      ? [...ids, p.plan_id]
+                      : ids.filter((id) => id !== p.plan_id))} />
+                  {p.name}：参考价 {p.reference_price != null ? `$${p.reference_price.toFixed(2)}` : "—（不可买入）"}
+                  · {p.scenario_key ?? "旧来源"} · 边际 {Math.round(p.margin_of_safety * 100)}%
+                  · {p.review_status}
+                </label>
+                <button className="text-link" style={{ marginLeft: 8 }} onClick={() => void openPlan(p.plan_id)}>打开</button>
+                <button className="text-link" style={{ marginLeft: 8 }} onClick={() => void copyPlan(p.plan_id)}>复制</button>
               </div>
             ))}
+            <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => void comparePlans()}
+              disabled={compareIds.length < 2}>比较所选方案</button>
+            {changedFields.length ? (
+              <div className="card-sub" data-testid="plan-comparison" style={{ marginTop: 8 }}>
+                差异字段：{changedFields.join("、")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {openedPlan ? (
+          <div className="plain-box" data-testid="plan-detail" style={{ marginTop: 12 }}>
+            <strong>{openedPlan.name} · v{openedPlan.version ?? "—"} · {openedPlan.review_status}</strong>
+            <div>来源：run {openedPlan.valuation_run_id ?? "缺失"} / {openedPlan.scenario_key ?? "旧方案"}</div>
+            <div>备注：{openedPlan.notes || "—"}</div>
+            <div>待验证：{openedPlan.conditions_to_verify.length ? openedPlan.conditions_to_verify.join("；") : "—"}</div>
+            {openedPlan.review_reason ? <div>{openedPlan.review_reason}</div> : null}
           </div>
         ) : null}
       </Card>

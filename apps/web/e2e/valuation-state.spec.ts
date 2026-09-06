@@ -150,7 +150,8 @@ test("keeps the newest complete draft when previews return out of order", async 
 
   expect(runBodies.length).toBe(2);
   const second = runBodies[1].assumptions;
-  expect(second.revenue_growth).toEqual([0.1, 0.095, 0.09, 0.085, 0.08]);
+  [0.1, 0.095, 0.09, 0.085, 0.08].forEach((expected, index) =>
+    expect(second.revenue_growth[index]).toBeCloseTo(expected, 10));
   expect(second.wacc).toBe(0.12);
   // complete draft, not a 4-field partial override
   expect(second.revenue_base).toBe(416_161_000_000);

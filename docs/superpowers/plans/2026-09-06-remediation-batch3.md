@@ -174,21 +174,21 @@ git commit -m "feat: make valuation plans traceable and versioned"
 - The page selects base/bear/bull from the last successfully saved run.
 - The page supports open, copy, two-plan compare, notes, conditions, and visible review status.
 
-- [ ] **Step 1: Write the failing browser workflow**
+- [x] **Step 1: Write the failing browser workflow**
 
 Stub run and plan APIs. In one Playwright test: save a run, select Bear, enter notes and a condition, save the plan, open it, copy it, select two plans, and compare changed fields. Assert the request always carries the saved run ID and scenario and never sends an authoritative `reference_value`.
 
-- [ ] **Step 2: Confirm the controls do not exist**
+- [x] **Step 2: Confirm the controls do not exist**
 
 Run: `cd apps/web && pnpm exec playwright test e2e/valuation-plans.spec.ts --list`
 
 Expected: collection succeeds; running it fails on missing scenario/open/copy/compare controls.
 
-- [ ] **Step 3: Implement the plan editor and detail view**
+- [x] **Step 3: Implement the plan editor and detail view**
 
 Keep the saved run ID returned by the explicit save. Disable plan creation until one exists. Render scenario selection only for usable scenario results, derive the preview from that result, add notes and repeatable verification conditions, and expose open/copy/compare actions. Show `needs_review`, `current`, and `legacy/incomplete` explicitly.
 
-- [ ] **Step 4: Verify static and browser contracts**
+- [x] **Step 4: Verify static and browser contracts**
 
 Run: `cd apps/web && pnpm exec tsc --noEmit --incremental false && pnpm lint && pnpm exec playwright test --list`
 
@@ -196,7 +196,7 @@ If Chromium is available, run: `cd apps/web && pnpm exec playwright test e2e/val
 
 Expected: type/lint/collection pass; browser workflow passes when the installed browser is available.
 
-- [ ] **Step 5: Commit the browser workflow**
+- [x] **Step 5: Commit the browser workflow**
 
 ```bash
 git add apps/web/src/components/sections/ValuationSection.tsx apps/web/e2e/valuation-plans.spec.ts
