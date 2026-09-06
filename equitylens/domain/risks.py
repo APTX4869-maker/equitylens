@@ -29,9 +29,21 @@ def _yoy_change(vals: list[float | None]) -> float | None:
     return vals[-1] / vals[-2] - 1.0
 
 
+def _evs(points) -> list[str]:
+    """Evidence IDs: canonical fact id, or the input lineage for derived metrics."""
+    ids: list[str] = []
+    for p in points:
+        if p.canonical_fact_id:
+            ids.append(p.canonical_fact_id)
+        elif getattr(p, "input_fact_ids", None):
+            ids.extend(p.input_fact_ids)
+    return ids
+
+
 def risk_signals(store, company_id: str, ticker: str) -> dict:
     engine = MetricEngine(store)
     risks: list[dict] = []
+    checks: list[dict] = []
 
     def add(category, severity, title, desc, evidence_ids=None, monitoring=None, confidence="MEDIUM"):
         risks.append({
@@ -41,78 +53,114 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
             "confidence": confidence, "generated_by": "deterministic-rules.v1",
         })
 
+    def record_check(key, fn):
+        """Run one risk module and record its coverage/failure explicitly.
+
+        A module returns (status, reason, evidence_ids); an exception is a module
+        ERROR and must never be silently swallowed as "checked".
+        """
+        try:
+            status, reason, evidence_ids = fn()
+        except Exception as exc:  # noqa: BLE001 - per-module isolation is the point
+            status, reason, evidence_ids = "ERROR", str(exc), []
+        checks.append({"key": key, "status": status, "reason": reason, "evidence_ids": evidence_ids})
+
     # ---- growth / execution ----
-    growth = _series(engine, company_id, "REVENUE_GROWTH_YOY")
-    if len(growth) >= 3:
+    def _growth():
+        growth = _series(engine, company_id, "REVENUE_GROWTH_YOY")
+        if len(growth) < 3:
+            return "INCOMPLETE_PERIOD", "收入同比序列不足 3 个季度", []
         recent = [p.value for p in growth[-3:] if p.value is not None]
-        if len(recent) >= 2 and recent[-1] is not None:
-            decel = recent[-1] - recent[-2]
-            if decel < -0.05:
-                add("cyclical", "MEDIUM", "收入增速明显放缓",
-                    f"最近季度收入同比 {recent[-1]*100:.1f}%，较上季度 {recent[-2]*100:.1f}% 回落 {(recent[-2]-recent[-1])*100:.1f}pp。",
-                    evidence_ids=[f.canonical_fact_id for f in growth[-2:] if f.canonical_fact_id],
-                    monitoring="未来 2 个季度的收入同比是否企稳")
-            elif recent[-1] is not None and recent[-1] < 0.03:
-                add("execution", "MEDIUM", "增长动能偏弱",
-                    f"最近季度收入同比仅 {recent[-1]*100:.1f}%（低于 3% 阈值）。",
-                    monitoring="下季度收入同比是否回升至 3% 以上")
+        if len(recent) < 2 or recent[-1] is None:
+            return "INCOMPLETE_PERIOD", "收入同比缺失近期值", []
+        decel = recent[-1] - recent[-2]
+        if decel < -0.05:
+            add("cyclical", "MEDIUM", "收入增速明显放缓",
+                f"最近季度收入同比 {recent[-1]*100:.1f}%，较上季度 {recent[-2]*100:.1f}% 回落 {(recent[-2]-recent[-1])*100:.1f}pp。",
+                evidence_ids=_evs(growth[-2:]),
+                monitoring="未来 2 个季度的收入同比是否企稳")
+        elif recent[-1] < 0.03:
+            add("execution", "MEDIUM", "增长动能偏弱",
+                f"最近季度收入同比仅 {recent[-1]*100:.1f}%（低于 3% 阈值）。",
+                monitoring="下季度收入同比是否回升至 3% 以上")
+        return "OK", None, _evs(growth[-2:])
+    record_check("growth", _growth)
 
     # ---- profitability ----
-    opm = _series(engine, company_id, "OPERATING_MARGIN")
-    if len(opm) >= 5:
+    def _profitability():
+        opm = _series(engine, company_id, "OPERATING_MARGIN")
+        if len(opm) < 5:
+            return "INCOMPLETE_PERIOD", "营业利润率序列不足 5 个季度", []
         vals = [p.value for p in opm[-5:] if p.value is not None]
-        if len(vals) >= 3 and vals[-1] is not None and vals[0]:
-            delta = vals[-1] - vals[0]
-            if delta < -0.02:
-                add("financial", "MEDIUM", "营业利润率走低",
-                    f"营业利润率近 5 季从 {vals[0]*100:.1f}% 降至 {vals[-1]*100:.1f}%（{(vals[0]-vals[-1])*100:.1f}pp）。",
-                    evidence_ids=[p.canonical_fact_id for p in opm[-1:] if p.canonical_fact_id],
-                    monitoring="下季度利润率能否止跌")
+        if len(vals) < 3 or vals[-1] is None or not vals[0]:
+            return "INCOMPLETE_PERIOD", "营业利润率缺失近期值", []
+        delta = vals[-1] - vals[0]
+        if delta < -0.02:
+            add("financial", "MEDIUM", "营业利润率走低",
+                f"营业利润率近 5 季从 {vals[0]*100:.1f}% 降至 {vals[-1]*100:.1f}%（{(vals[0]-vals[-1])*100:.1f}pp）。",
+                evidence_ids=_evs(opm[-1:]),
+                monitoring="下季度利润率能否止跌")
+        return "OK", None, _evs(opm[-1:])
+    record_check("profitability", _profitability)
 
-    # ---- cash conversion / capital intensity ----
-    ocf = _series(engine, company_id, "OPERATING_CASH_FLOW")
-    capex = _series(engine, company_id, "CAPITAL_EXPENDITURES")
-    if len(ocf) >= 4 and len(capex) >= 4:
-        ocf_ttm = sum(p.value for p in ocf[-4:] if p.value) 
-        capex_ttm = sum(p.value for p in capex[-4:] if p.value)
-        if ocf_ttm and capex_ttm / ocf_ttm > 0.5:
+    # ---- cash conversion / capital intensity (shared TTM contract) ----
+    def _cash_flow():
+        ocf = engine.current("OPERATING_CASH_FLOW", company_id, "ttm")
+        if ocf.status != "OK":
+            return ocf.status, ocf.missing_reason, []
+        capex = engine.current("CAPITAL_EXPENDITURES", company_id, "ttm")
+        if capex.status != "OK":
+            return capex.status, capex.missing_reason, []
+        evidence = list(ocf.input_fact_ids or []) + list(capex.input_fact_ids or [])
+        if ocf.value and capex.value / ocf.value > 0.5:
             add("financial", "HIGH", "资本开支强度显著上升",
-                f"TTM CapEx {capex_ttm/1e9:.0f}B 占 TTM 经营现金流 {ocf_ttm/1e9:.0f}B 的 {capex_ttm/ocf_ttm*100:.0f}%（>50% 阈值）。若新增资本回报不足，自由现金流转化将受压。",
+                f"TTM CapEx {capex.value/1e9:.0f}B 占 TTM 经营现金流 {ocf.value/1e9:.0f}B 的 {capex.value/ocf.value*100:.0f}%（>50% 阈值）。若新增资本回报不足，自由现金流转化将受压。",
+                evidence_ids=evidence,
                 monitoring="下季度 CapEx/OCF 比例与 FCF 转化率")
+        return "OK", None, evidence
+    record_check("cash_flow", _cash_flow)
 
     # ---- balance sheet ----
-    nd = _series(engine, company_id, "NET_DEBT")
-    if nd and nd[-1].value is not None:
+    def _balance_sheet():
+        nd = _series(engine, company_id, "NET_DEBT")
+        if not nd or nd[-1].value is None:
+            return "INCOMPLETE_PERIOD", "净债务缺失", []
         net_debt = nd[-1].value
-        fcf_pts = _series(engine, company_id, "FCF")
-        fcf_ttm = sum(p.value for p in fcf_pts[-4:] if p.value) if len(fcf_pts) >= 4 else None
-        if net_debt > 0 and fcf_ttm:
-            ratio = net_debt / fcf_ttm
+        fcf = engine.current("FCF", company_id, "ttm")
+        if fcf.status != "OK":
+            return fcf.status, fcf.missing_reason, []
+        evidence = list(fcf.input_fact_ids or [])
+        if nd[-1].canonical_fact_id:
+            evidence.insert(0, nd[-1].canonical_fact_id)
+        if net_debt > 0 and fcf.value:
+            ratio = net_debt / fcf.value
             if ratio > 1.5:
                 add("financial", "HIGH", "净债务相对自由现金流偏高",
-                    f"净债务 {net_debt/1e9:.0f}B 是 TTM FCF {fcf_ttm/1e9:.0f}B 的 {ratio:.1f} 倍（>1.5x）。",
+                    f"净债务 {net_debt/1e9:.0f}B 是 TTM FCF {fcf.value/1e9:.0f}B 的 {ratio:.1f} 倍（>1.5x）。",
+                    evidence_ids=evidence,
                     monitoring="下一期净债务与 FCF 比值")
+        return "OK", None, evidence
+    record_check("balance_sheet", _balance_sheet)
 
     # ---- valuation risk (data-driven, no market price needed) ----
-    from equitylens.valuation.service import default_valuation
-    from equitylens.valuation.service import reverse_dcf
+    def _valuation():
+        from equitylens.valuation.service import default_valuation
 
-    try:
         dv = default_valuation(store, company_id, ticker)
-        base_fair = dv["result"]["fair_value_per_share"]
         tv_share = dv["result"]["terminal_value_share"]
         if tv_share > 0.80:
             add("valuation", "MEDIUM", "DCF 价值对终值假设高度敏感",
                 f"终值占企业价值 {tv_share*100:.0f}%（>80%）。永续增长或 WACC 的小幅变动会显著改变结论。",
                 evidence_ids=["valuation_model:fcff_dcf.v1"],
                 monitoring="敏感性矩阵中心格附近波动幅度")
-    except Exception:
-        pass
+        return "OK", None, ["valuation_model:fcff_dcf.v1"]
+    record_check("valuation", _valuation)
 
     # ---- concentration (segment AND product views) ----
-    try:
+    def _concentration():
         from equitylens.api.segments_service import get_segments
 
+        evidence: list[str] = []
         checked: list[str] = []
         for kind, kind_label in (("segment", "分部"), ("product", "产品类别")):
             seg = get_segments(store, ticker, kind=kind, frequency="annual")
@@ -128,15 +176,16 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
                     f"{kind_label}维度最大项「{top['name']}」占收入 {(top['share'] or 0)*100:.0f}%（>45% 阈值）。单一市场/客户/产品波动会显著影响整体。",
                     evidence_ids=[f"segment:{top['name']}"],
                     monitoring="下一年度集中度变化")
+                evidence.append(f"segment:{top['name']}")
             elif kind == "segment" and len(seg["segments"]) <= 3:
                 add("structural", "LOW", "分部数量少，多元化有限",
                     f"仅 {len(seg['segments'])} 个报告分部。",
                     monitoring="是否新增高增长分部")
-    except Exception:
-        pass
+        return "OK", None, evidence
+    record_check("concentration", _concentration)
 
     # ---- governance / management (from M6 scorecard gaps) ----
-    try:
+    def _management():
         from equitylens.domain.management_score import management_scorecard
 
         sc = management_scorecard(store, company_id, ticker)
@@ -144,10 +193,10 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
             add("execution", "LOW", "管理层可验证证据不足",
                 f"管理评分证据覆盖率 {sc['coverage']*100:.0f}%（<{sc['minimum_coverage']*100:.0f}%），战略/治理维度暂不可量化。",
                 monitoring="接入更多 DEF 14A 章节与 Earnings Call 证据")
-    except Exception:
-        pass
+        return "OK", None, []
+    record_check("management", _management)
 
     # severity ordering
     order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     risks.sort(key=lambda r: (order.get(r["severity"], 3), r["category"]))
-    return {"ticker": ticker, "generated_by": "deterministic-rules.v1", "risks": risks}
+    return {"ticker": ticker, "generated_by": "deterministic-rules.v1", "risks": risks, "checks": checks}

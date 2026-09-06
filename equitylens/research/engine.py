@@ -85,6 +85,16 @@ def _claim(claim: str, confidence: str, evidence_ids: list[str]) -> dict:
     return {"claim": claim, "confidence": confidence, "evidence_ids": evidence_ids}
 
 
+def _ev(p) -> list[str]:
+    """Evidence IDs for a metric point: the input lineage for derived metrics
+    (whose own canonical_fact_id is None), else the point's canonical fact."""
+    if getattr(p, "input_fact_ids", None):
+        return list(p.input_fact_ids)
+    if getattr(p, "canonical_fact_id", None):
+        return [p.canonical_fact_id]
+    return []
+
+
 def _metric_explain(q: str) -> dict:
     return {
         "answer": "指标的定义/公式/常见误区在财务分析页的指标解释抽屉中（点击任意指标卡）。本助手可回答：收入增长、利润率、现金流与回购、风险、估值、业务构成等真实数据问题。",
@@ -94,19 +104,46 @@ def _metric_explain(q: str) -> dict:
     }
 
 
+_RISK_CHECK_LABELS = {
+    "growth": "收入增长",
+    "profitability": "利润率",
+    "cash_flow": "现金流",
+    "balance_sheet": "资产负债表",
+    "valuation": "估值敏感性",
+    "concentration": "集中度",
+    "management": "管理层/治理",
+}
+
+
 def _answer_risks(store, company_id: str, ticker: str) -> dict:
     data = risk_signals(store, company_id, ticker)
     claims = []
     for r in data["risks"][:4]:
+        # severity and confidence are separate: a HIGH-severity risk is not
+        # automatically HIGH-confidence (P05).
         claims.append(_claim(
             f"[{r['severity']}] {r['title']}：{r['description']}",
-            "HIGH" if r["severity"] == "HIGH" else "MEDIUM",
+            r.get("confidence", "MEDIUM"),
             r["evidence_ids"],
         ))
     if not claims:
         claims.append(_claim("当前规则未命中显著风险信号。", "LOW", []))
+
+    # coverage is derived from the actual check statuses, never an unconditional
+    # "all modules were checked" stock phrase (D06/U03/P05).
+    checks = data.get("checks", [])
+    ok = [_RISK_CHECK_LABELS.get(c["key"], c["key"]) for c in checks if c["status"] == "OK"]
+    failed = [c for c in checks if c["status"] != "OK"]
+    if failed:
+        failed_txt = "、".join(
+            f"{_RISK_CHECK_LABELS.get(c['key'], c['key'])}（{c['status']}）" for c in failed
+        )
+        coverage = f"已完成 {len(ok)} 项检查（{'、'.join(ok) or '无'}）；以下模块未能完成检查：{failed_txt}。"
+    else:
+        coverage = f"已完成 {len(ok)} 项检查（{'、'.join(ok)}）。"
+
     return {
-        "answer": f"基于确定性规则（{data['generated_by']}）检查了增长、利润率、现金流、资产负债表、集中度与估值敏感性，共识别 {len(data['risks'])} 项风险信号：",
+        "answer": f"基于确定性规则（{data['generated_by']}）{coverage}共识别 {len(data['risks'])} 项风险信号：",
         "claims": claims,
         "metric_ids": [],
         "limitations": ["风险为数据信号，不构成投资建议；结构性/监管等定性风险需人工研究补充"],
@@ -114,7 +151,7 @@ def _answer_risks(store, company_id: str, ticker: str) -> dict:
 
 
 def _answer_compare(store, company_id: str, ticker: str, q: str) -> dict:
-    rev = _num(store, company_id, "REVENUE")
+    rev = _num(store, company_id, "REVENUE", freq="ttm")  # TTM, not a single quarter
     opp = _num(store, company_id, "OPERATING_MARGIN")
     fcf = _num(store, company_id, "FCF_MARGIN")
     growth = _num(store, company_id, "REVENUE_GROWTH_YOY")
@@ -122,14 +159,14 @@ def _answer_compare(store, company_id: str, ticker: str, q: str) -> dict:
     claims = []
     if lr and lr.value:
         claims.append(_claim(f"{ticker} TTM 收入约 ${lr.value/1e9:.0f}B（截至 {lr.period_label}）。",
-                             "HIGH", [lr.canonical_fact_id]))
+                             "HIGH", lr.input_fact_ids or [lr.canonical_fact_id]))
     if lo and lo.value:
         claims.append(_claim(f"营业利润率 {lo.value*100:.1f}%（{lo.period_label}）。",
-                             "HIGH", [lo.canonical_fact_id]))
+                             "HIGH", _ev(lo)))
     if lf and lf.value:
-        claims.append(_claim(f"FCF 率 {lf.value*100:.1f}%。", "HIGH", [lf.canonical_fact_id]))
+        claims.append(_claim(f"FCF 率 {lf.value*100:.1f}%。", "HIGH", _ev(lf)))
     if lg and lg.value:
-        claims.append(_claim(f"最新季度收入同比 {lg.value*100:.1f}%。", "HIGH", [lg.canonical_fact_id]))
+        claims.append(_claim(f"最新季度收入同比 {lg.value*100:.1f}%。", "HIGH", _ev(lg)))
     claims.append(_claim("对比分析需要先在总览页切换到另一家公司；本回答给出当前公司真实指标基线。", "MEDIUM", []))
     return {"answer": f"这是 {ticker} 的真实财务基线（用于比较的起点）：",
             "claims": claims, "metric_ids": [], "limitations": ["跨公司对比请手动切换公司后自行对照，或后续版本提供并排视图"]}
@@ -142,12 +179,12 @@ def _answer_margin(store, company_id: str, ticker: str) -> dict:
     lg, lo, ln = _latest(gm), _latest(om), _latest(nm)
     claims = []
     if lg and lg.value:
-        claims.append(_claim(f"毛利率 {lg.value*100:.1f}%（{lg.period_label}）。", "HIGH", [lg.canonical_fact_id]))
+        claims.append(_claim(f"毛利率 {lg.value*100:.1f}%（{lg.period_label}）。", "HIGH", _ev(lg)))
     if lo and lo.value:
         trend = "，" + _margin_trend_text(om)
-        claims.append(_claim(f"营业利润率 {lo.value*100:.1f}%（{lo.period_label}）{trend}。", "HIGH", [lo.canonical_fact_id]))
+        claims.append(_claim(f"营业利润率 {lo.value*100:.1f}%（{lo.period_label}）{trend}。", "HIGH", _ev(lo)))
     if ln and ln.value:
-        claims.append(_claim(f"净利率 {ln.value*100:.1f}%。", "HIGH", [ln.canonical_fact_id]))
+        claims.append(_claim(f"净利率 {ln.value*100:.1f}%。", "HIGH", _ev(ln)))
     return {"answer": f"{ticker} 最新利润率（全部来自 SEC 规范化事实）：",
             "claims": claims, "metric_ids": ["GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN"],
             "limitations": ["利润率口径为 us-gaap 标准化事实；跨期可比性需注意一次性项目"]}
@@ -162,24 +199,23 @@ def _margin_trend_text(pts) -> str:
 
 
 def _answer_cash(store, company_id: str, ticker: str) -> dict:
-    ocf = _num(store, company_id, "OPERATING_CASH_FLOW")
-    capex = _num(store, company_id, "CAPITAL_EXPENDITURES")
-    fcfm = _num(store, company_id, "FCF_MARGIN")
-    ocf_ttm = sum(p.value for p in ocf[-4:] if p.value) if len(ocf) >= 4 else None
-    capex_ttm = sum(p.value for p in capex[-4:] if p.value) if len(capex) >= 4 else None
-    lf = _latest(fcfm)
+    ocf = _num(store, company_id, "OPERATING_CASH_FLOW", freq="ttm")
+    capex = _num(store, company_id, "CAPITAL_EXPENDITURES", freq="ttm")
+    fcf = _num(store, company_id, "FCF", freq="ttm")
+    ocf_last = _latest(ocf); capex_last = _latest(capex); fcf_last = _latest(fcf)
     claims = []
-    if ocf_ttm:
-        claims.append(_claim(f"TTM 经营现金流约 ${ocf_ttm/1e9:.0f}B。", "HIGH",
-                             [p.canonical_fact_id for p in ocf[-4:] if p.canonical_fact_id]))
-    if capex_ttm is not None:
-        claims.append(_claim(f"TTM 资本开支约 ${capex_ttm/1e9:.0f}B（占经营现金流 {(capex_ttm/ocf_ttm*100) if ocf_ttm else 0:.0f}%）。", "HIGH",
-                             [p.canonical_fact_id for p in capex[-4:] if p.canonical_fact_id]))
-    if lf and lf.value:
-        claims.append(_claim(f"FCF 率 {lf.value*100:.1f}%。", "HIGH", [lf.canonical_fact_id]))
+    if ocf_last and ocf_last.value:
+        claims.append(_claim(f"TTM 经营现金流约 ${ocf_last.value/1e9:.0f}B。", "HIGH",
+                             ocf_last.input_fact_ids or [ocf_last.canonical_fact_id]))
+    if capex_last and capex_last.value and ocf_last and ocf_last.value:
+        claims.append(_claim(f"TTM 资本开支约 ${capex_last.value/1e9:.0f}B（占经营现金流 {capex_last.value/ocf_last.value*100:.0f}%）。", "HIGH",
+                             capex_last.input_fact_ids or [capex_last.canonical_fact_id]))
+    if fcf_last and fcf_last.value:
+        claims.append(_claim(f"TTM 自由现金流约 ${fcf_last.value/1e9:.0f}B。", "HIGH",
+                             fcf_last.input_fact_ids or [fcf_last.canonical_fact_id]))
     return {"answer": f"{ticker} 现金创造情况（TTM，来自 10-K/10-Q 现金流表）：",
-            "claims": claims, "metric_ids": ["OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "FCF_MARGIN"],
-            "limitations": ["季度现金流为独立季度（非 YTD 累计）；Q2/Q3/Q4 由 YTD 链推导"]}
+            "claims": claims, "metric_ids": ["OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "FCF"],
+            "limitations": ["TTM 为连续四个独立季度合计；缺失季度不参与（不凑数）"]}
 
 
 def _answer_growth(store, company_id: str, ticker: str) -> dict:
@@ -192,14 +228,14 @@ def _answer_growth(store, company_id: str, ticker: str) -> dict:
             d = "加快" if a[-1] >= a[0] else "放缓"
             claims.append(_claim(
                 f"最近两季度收入同比分别为 {a[0]*100:.1f}% → {a[-1]*100:.1f}%，增速{d}。",
-                "HIGH", [p.canonical_fact_id for p in growth[-2:] if p.canonical_fact_id]))
+                "HIGH", _ev(growth[-1]) + _ev(growth[-2])))
     if len(rev) >= 5:
         q = rev[-1]
         y = next((p for p in rev if p.fiscal_year == (q.fiscal_year or 1) - 1 and p.fiscal_quarter == q.fiscal_quarter), None)
         if q.value and y and y.value:
             claims.append(_claim(
                 f"最新季度收入 ${q.value/1e9:.0f}B（{q.period_label}），去年同期 ${y.value/1e9:.0f}B。",
-                "HIGH", [q.canonical_fact_id, y.canonical_fact_id]))
+                "HIGH", _ev(q) + _ev(y)))
     return {"answer": f"{ticker} 增长轨迹（真实数据）：",
             "claims": claims, "metric_ids": ["REVENUE", "REVENUE_GROWTH_YOY"],
             "limitations": ["增长解释如需拆分到分部/驱动，请询问业务构成"]}
@@ -264,9 +300,9 @@ def _answer_overview(store, company_id: str, ticker: str) -> dict:
     lr, lo = _latest(rev), _latest(opp)
     claims = []
     if lr and lr.value:
-        claims.append(_claim(f"{ticker} 最新季度收入 ${lr.value/1e9:.0f}B（{lr.period_label}）。", "HIGH", [lr.canonical_fact_id]))
+        claims.append(_claim(f"{ticker} 最新季度收入 ${lr.value/1e9:.0f}B（{lr.period_label}）。", "HIGH", _ev(lr)))
     if lo and lo.value:
-        claims.append(_claim(f"营业利润率 {lo.value*100:.1f}%。", "HIGH", [lo.canonical_fact_id]))
+        claims.append(_claim(f"营业利润率 {lo.value*100:.1f}%。", "HIGH", _ev(lo)))
     return {
         "answer": "你可以问我：收入增长为什么放缓/加快？利润率现状？现金流与回购？有哪些风险？估值如何？业务构成？",
         "claims": claims,
