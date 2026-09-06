@@ -32,15 +32,15 @@
 - Consumes: fact dictionaries whose `period_start` and `period_end` may be `date`, `datetime`, or ISO strings.
 - Produces: `_iso_date(value: object) -> str | None`, used by `derive_standalone_quarters` for matching and emitted period fields.
 
-- [ ] **Step 1: Write the failing date-equivalence regression**
+- [x] **Step 1: Write the failing date-equivalence regression**
 
 Add a parametrized test that passes the same FY and YTD facts once with ISO strings and once with `datetime.date` values. Use literal inputs FY=400 and YTD9=300 and assert both derive FY2025Q4 value `100`, the same input IDs, and ISO `period_end`.
 
 ```python
 @pytest.mark.parametrize("as_date", [False, True])
 def test_q4_derivation_accepts_date_and_iso_periods(as_date):
-    end = date(2025, 12, 31) if as_date else "2025-12-31"
-    q3 = date(2025, 9, 30) if as_date else "2025-09-30"
+    end = date(2025, 6, 30) if as_date else "2025-06-30"
+    q3 = date(2025, 3, 31) if as_date else "2025-03-31"
     facts = [
         {"canonical_fact_id": "fy", "canonical_metric": "OCF", "period_type": "FY",
          "fiscal_quarter": None, "period_end": end, "value": 400.0, "unit": "USD",
@@ -52,17 +52,17 @@ def test_q4_derivation_accepts_date_and_iso_periods(as_date):
     result = derive_standalone_quarters(facts, 2025, make_calendar())
     q4 = next(row for row in result if row["fiscal_quarter"] == 4)
     assert q4["value"] == 100.0
-    assert q4["period_end"] == "2025-12-31"
+    assert q4["period_end"] == "2025-06-30"
     assert q4["input_ids"] == ["ytd9", "fy"]
 ```
 
-- [ ] **Step 2: Verify the regression fails for `date` values**
+- [x] **Step 2: Verify the regression fails for `date` values**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_fiscal_periods.py -k date_and_iso -q -p no:cacheprovider`
 
 Expected: the string case passes and the `date` case has no Q4 result.
 
-- [ ] **Step 3: Add one date normalization boundary**
+- [x] **Step 3: Add one date normalization boundary**
 
 Implement `_iso_date` with explicit support for `datetime`, `date`, and ISO-compatible strings. Use it in `pick`, `diff`, and emitted derived period fields; do not compare database objects directly to strings.
 
@@ -80,13 +80,13 @@ def _iso_date(value: object) -> str | None:
         return None
 ```
 
-- [ ] **Step 4: Verify all fiscal-period regressions**
+- [x] **Step 4: Verify all fiscal-period regressions**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_fiscal_periods.py -q -p no:cacheprovider`
 
 Expected: all tests pass, including existing missing-bucket and restatement cases.
 
-- [ ] **Step 5: Commit the focused change**
+- [x] **Step 5: Commit the focused change**
 
 ```bash
 git add equitylens/normalization/fiscal_periods.py tests/unit/test_fiscal_periods.py
@@ -106,7 +106,7 @@ git commit -m "fix: normalize fiscal period date inputs"
 - Produces: `estimate_depreciation(store, company_id: str, fiscal_year: int, unit: str = "USD") -> float | None`.
 - Produces: metadata identifying combined, split, or estimated D&A and the selected fiscal year.
 
-- [ ] **Step 1: Write the failing base-period selection regression**
+- [x] **Step 1: Write the failing base-period selection regression**
 
 Build a temporary store with FY2020 combined D&A `3`, FY2026 depreciation `34.3`, FY2026 amortization `4.7`, and FY2026 revenue. Assert the target-period call returns `39`, while a call for FY2020 returns `3`.
 
@@ -122,13 +122,13 @@ def test_depreciation_uses_requested_valuation_fiscal_year(db):
 
 Add separate literal cases where split components have different years or units; both must return `None`.
 
-- [ ] **Step 2: Verify the old combined value wins incorrectly**
+- [x] **Step 2: Verify the old combined value wins incorrectly**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -k requested_valuation_fiscal_year -q -p no:cacheprovider`
 
 Expected: FAIL because the current function returns the latest combined value without constraining it to FY2026.
 
-- [ ] **Step 3: Query annual observations by period and unit**
+- [x] **Step 3: Query annual observations by period and unit**
 
 Replace separate latest-value/latest-year calls with a helper returning a selected `MetricPoint` for an exact fiscal year. Within the target year, prefer the reliable combined metric; otherwise require both split metrics in the same year and unit before summing.
 
@@ -143,13 +143,13 @@ def _annual_point(store, company_id: str, metric: str, fiscal_year: int):
 
 Call `estimate_depreciation(store, company_id, fiscal_year=fy)` from `default_assumption_set`. Populate `da_pct` metadata with the exact selected fiscal year and whether the source was `combined`, `split`, or `assumption`.
 
-- [ ] **Step 4: Verify focused and real-fixture valuation tests**
+- [x] **Step 4: Verify focused and real-fixture valuation tests**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -q -p no:cacheprovider`
 
 Expected: all tests pass; the MSFT fixture still derives 34.3B + 4.7B for the FY2026 base.
 
-- [ ] **Step 5: Commit the focused change**
+- [x] **Step 5: Commit the focused change**
 
 ```bash
 git add equitylens/valuation/defaults.py tests/golden/test_golden_valuation.py
