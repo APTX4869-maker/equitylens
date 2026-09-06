@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { CompanyInfo, MarketQuote } from "@/lib/types";
 
 export type TabKey =
@@ -78,15 +79,37 @@ export function Topbar({
   mode,
   onMode,
   realData,
+  onCompany,
 }: {
   mode: "beginner" | "pro";
   onMode: (m: "beginner" | "pro") => void;
   realData: boolean;
+  onCompany: (c: string) => void;
 }) {
+  const [q, setQ] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const search = () => {
+    const t = q.trim().toUpperCase();
+    if (!t) return;
+    if ((COMPANIES as readonly string[]).includes(t)) {
+      onCompany(t);
+      setQ("");
+      setMsg(null);
+    } else {
+      setMsg(`暂不支持 ${t}（当前支持 ${COMPANIES.join(" / ")}）`);
+    }
+  };
   return (
     <div className="topbar">
       <div className="searchbox">
-        ⌕ <input aria-label="search" placeholder="搜索公司、Ticker（当前支持 AAPL / MSFT）" readOnly />
+        ⌕ <input
+          aria-label="search"
+          placeholder="搜索公司、Ticker（当前支持 AAPL / MSFT）"
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setMsg(null); }}
+          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
+        />
+        {msg ? <span className="tool-value" style={{ marginLeft: 8 }}>{msg}</span> : null}
       </div>
       <div className="top-actions">
         <div className="mode-switch">

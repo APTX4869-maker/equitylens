@@ -21,7 +21,7 @@ export type Fact = {
   value: number;
   unit: string;
   status: string;
-  canonical_fact_id: string;
+  canonical_fact_id: string | null;
   provenance: {
     source_document_id?: string | null;
     provider?: string | null;
@@ -109,8 +109,14 @@ export type MarketQuote = {
   };
   derived?: {
     market_cap?: number;
-    pe_ttm?: number;
+    pe_ttm?: number | null;
     pe_ttm_formula?: string;
+    pe_ttm_reason?: string;
+    pfcf_ttm?: number | null;
+    fcf_yield_ttm?: number | null;
+    pfcf_ttm_formula?: string;
+    fcf_yield_ttm_formula?: string;
+    pfcf_ttm_reason?: string;
     price_vs_fair_pct?: number;
     price_vs_fair_formula?: string;
     fair_value_per_share?: number;

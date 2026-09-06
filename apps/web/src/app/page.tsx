@@ -34,6 +34,8 @@ export default function Home() {
   const [metricKey, setMetricKey] = useState<string | null>(null);
   const [metricFact, setMetricFact] = useState<Fact | null>(null);
   const [sourceEntity, setSourceEntity] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
   useEffect(() => {
     document.body.classList.toggle("pro", mode === "pro");
@@ -51,26 +53,27 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Fetch per company into a cache; state is only set in async callbacks.
+  // Fetch per company into a cache; each module settles independently so an
+  // optional module (market quote / freshness) failure never hides the core
+  // company + overview data (U05).
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const [info, overview, mq, fresh] = await Promise.all([
-          api.company(company),
-          api.overview(company),
-          api.marketQuote(company),
-          api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness`),
-        ]);
-        if (!cancelled) {
-          setCache((prev) => ({ ...prev, [company]: { info, overview } }));
-          setMarket((prev) => ({ ...prev, [company]: mq }));
-          setFreshness((prev) => ({ ...prev, [company]: fresh }));
-          setError(null);
-        }
-      } catch (e) {
-        if (!cancelled) setError(String(e));
+      const [infoR, overviewR, mqR, freshR] = await Promise.allSettled([
+        api.company(company),
+        api.overview(company),
+        api.marketQuote(company),
+        api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness`),
+      ]);
+      if (cancelled) return;
+      if (infoR.status === "fulfilled" && overviewR.status === "fulfilled") {
+        setCache((prev) => ({ ...prev, [company]: { info: infoR.value, overview: overviewR.value } }));
+        setError(null);
+      } else {
+        setError("公司或财务总览加载失败");
       }
+      setMarket((prev) => ({ ...prev, [company]: mqR.status === "fulfilled" ? mqR.value : null }));
+      setFreshness((prev) => ({ ...prev, [company]: freshR.status === "fulfilled" ? freshR.value : null }));
     })();
     return () => {
       cancelled = true;
@@ -87,13 +90,31 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const d = await api.fetchJson<{ modules: Record<string, { status: string; reason?: string }> }>(
+        `/api/v1/companies/${company}/refresh`,
+        { method: "POST" }
+      );
+      const parts = Object.entries(d.modules ?? {}).map(([k, m]) => `${k}:${m.status === "ok" ? "成功" : "失败"}`);
+      setRefreshMsg(`刷新完成：${parts.join("、")}`);
+      setReloadKey((k) => k + 1);  // re-fetch the company's data
+    } catch (e) {
+      setRefreshMsg(`刷新失败：${String(e)}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [company]);
+
   const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai", "moat"];
 
   return (
     <div className="app">
       <Sidebar company={company} tab={tab} onCompany={setCompany} onTab={setTab} />
       <main>
-        <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} />
+        <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} onCompany={setCompany} />
         <div className="content">
           <Hero company={entry?.info ?? null} market={market[company] ?? null} />
           <div className="research-toolbar">
@@ -131,6 +152,10 @@ export default function Home() {
               </div>
             </div>
             <div className="tool-right">
+              {refreshMsg ? <span className="tool-value" style={{ marginRight: 8 }}>{refreshMsg}</span> : null}
+              <button className="tool-chip" onClick={() => void refresh()} disabled={refreshing}>
+                {refreshing ? "刷新中…" : "↻ 刷新数据"}
+              </button>
               <button className="tool-chip" onClick={() => setTab("ai")}>✦ 问 AI</button>
             </div>
           </div>
@@ -143,42 +168,43 @@ export default function Home() {
                 error={error}
                 onRetry={() => setReloadKey((k) => k + 1)}
                 onGotoTab={setTab}
+                onOpenMetric={openMetric}
               />
             </section>
           ) : null}
           {tab === "business" ? (
             <section className="section active" id="section-business">
-              <BusinessSection ticker={company} />
+              <BusinessSection key={company} ticker={company} />
             </section>
           ) : null}
           {tab === "financials" ? (
             <section className="section active" id="section-financials">
-              <FinancialsSection ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
+              <FinancialsSection key={company} ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
             </section>
           ) : null}
           {tab === "moat" ? (
             <section className="section active" id="section-moat">
-              <MoatSection ticker={company} onOpenSource={openSource} />
+              <MoatSection key={company} ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "management" ? (
             <section className="section active" id="section-management">
-              <ManagementSection ticker={company} />
+              <ManagementSection key={company} ticker={company} />
             </section>
           ) : null}
           {tab === "valuation" ? (
             <section className="section active" id="section-valuation">
-              <ValuationSection ticker={company} />
+              <ValuationSection key={company} ticker={company} />
             </section>
           ) : null}
           {tab === "risks" ? (
             <section className="section active" id="section-risks">
-              <RisksSection ticker={company} />
+              <RisksSection key={company} ticker={company} />
             </section>
           ) : null}
           {tab === "ai" ? (
             <section className="section active" id="section-ai">
-              <AiSection ticker={company} />
+              <AiSection key={company} ticker={company} />
             </section>
           ) : null}
         </div>

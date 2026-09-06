@@ -56,9 +56,13 @@ export function MetricDrawer({
                 {statusLabel(fact.status)}
               </span>
               <span className="card-sub">当前公司值：{Number(fact.value).toLocaleString("en-US")} {fact.unit}</span>
-              <button className="text-link" onClick={() => onViewSource(fact.canonical_fact_id)}>
-                查看来源 →
-              </button>
+              {fact.canonical_fact_id ? (
+                <button className="text-link" onClick={() => onViewSource(fact.canonical_fact_id!)}>
+                  查看来源 →
+                </button>
+              ) : fact.input_fact_ids?.length ? (
+                <span className="card-sub">派生自 {fact.input_fact_ids.length} 个 SEC 事实</span>
+              ) : null}
             </div>
           ) : null}
         </div>

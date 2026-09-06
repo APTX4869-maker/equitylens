@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { MarketQuote, MetricPoint, Fact } from "@/lib/types";
-import { demoData } from "@/lib/demo";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
@@ -30,7 +29,7 @@ const ANNUAL_METRICS: { key: string; label: string; kind: "currency" | "ratio" }
 ];
 
 const CARD_DEFS: { key: string; metric: string; label: string; note: string; k?: string }[] = [
-  { key: "revenue", metric: "REVENUE", label: "营业收入", note: "TTM · 真实", k: "revenue" },
+  { key: "revenue", metric: "REVENUE", label: "营业收入", note: "TTM", k: "revenue" },
   { key: "grossMargin", metric: "GROSS_MARGIN", label: "毛利率", note: "最近季度", k: "grossMargin" },
   { key: "opMargin", metric: "OPERATING_MARGIN", label: "营业利润率", note: "最近季度", k: "opMargin" },
   { key: "netMargin", metric: "NET_MARGIN", label: "净利率", note: "最近季度", k: "netMargin" },
@@ -39,6 +38,8 @@ const CARD_DEFS: { key: string; metric: string; label: string; note: string; k?:
   { key: "netCash", metric: "NET_DEBT", label: "净现金 / 净债务", note: "最新资产负债表", k: "netCash" },
   { key: "roic", metric: "ROIC", label: "投入资本回报率 ROIC", note: "V0.1 暂不提供", k: "roic" },
   { key: "pe", metric: "P_E", label: "市盈率 P/E", note: "行情未同步", k: "pe" },
+  { key: "pfcf", metric: "P_FCF", label: "市现率 P/FCF", note: "行情未同步", k: "pfcf" },
+  { key: "fcfYield", metric: "FCF_YIELD", label: "FCF 收益率", note: "行情未同步", k: "fcfYield" },
 ];
 
 export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
@@ -46,6 +47,7 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
   const [activeMetric, setActiveMetric] = useState("REVENUE");
   const [quarterly, setQuarterly] = useState<Record<string, MetricPoint[]>>({});
   const [annual, setAnnual] = useState<Record<string, MetricPoint[]>>({});
+  const [ttm, setTtm] = useState<Record<string, MetricPoint[]>>({});
   const [statement, setStatement] = useState<Fact[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -57,9 +59,11 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
       try {
         const qKeys = [...new Set([...QUARTER_METRICS.map((m) => m.key), "NET_MARGIN", "FCF_MARGIN", "NET_DEBT"])];
         const aKeys = ANNUAL_METRICS.map((m) => m.key);
-        const [qRes, aRes, sRes] = await Promise.all([
+        const ttmKeys = ["REVENUE", "FCF", "GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN", "FCF_MARGIN"];
+        const [qRes, aRes, tRes, sRes] = await Promise.all([
           api.metrics(ticker, qKeys, "quarterly", 12),
           api.metrics(ticker, aKeys, "annual", 10),
+          api.metrics(ticker, ttmKeys, "ttm", 8),
           api.facts(
             ticker,
             ["REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"],
@@ -72,8 +76,11 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
         for (const m of qRes.metrics) (qMap[m.metric] ??= []).push(m);
         const aMap: Record<string, MetricPoint[]> = {};
         for (const m of aRes.metrics) (aMap[m.metric] ??= []).push(m);
+        const tMap: Record<string, MetricPoint[]> = {};
+        for (const m of tRes.metrics) (tMap[m.metric] ??= []).push(m);
         setQuarterly(qMap);
         setAnnual(aMap);
+        setTtm(tMap);
         setStatement(sRes.facts);
         setError(null);
       } catch (e) {
@@ -125,21 +132,36 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
       if (def.key === "pe") {
         // M8: P/E(TTM) = 行情市值 / 净利润TTM（确定性公式 pe_ttm.v1，后端计算）
         const pe = market?.status === "OK" ? market.derived?.pe_ttm : undefined;
-        out[def.key] = pe
+        out[def.key] = pe != null
           ? { value: pe.toFixed(1), note: `P/E(TTM) · ${market?.quote?.provider_label ?? ""} · 确定性`, fact: null }
+          : { value: "—", note: market?.derived?.pe_ttm_reason ?? "行情未同步", fact: null };
+        continue;
+      }
+      if (def.key === "pfcf") {
+        const pfcf = market?.status === "OK" ? market.derived?.pfcf_ttm : undefined;
+        out[def.key] = pfcf != null
+          ? { value: `${pfcf.toFixed(1)}×`, note: "P/FCF(TTM) · 确定性", fact: null }
+          : { value: "—", note: market?.derived?.pfcf_ttm_reason ?? "行情未同步", fact: null };
+        continue;
+      }
+      if (def.key === "fcfYield") {
+        const fy = market?.status === "OK" ? market.derived?.fcf_yield_ttm : undefined;
+        out[def.key] = fy != null
+          ? { value: `${(fy * 100).toFixed(1)}%`, note: "FCF 收益率(TTM) · 确定性", fact: null }
           : { value: "—", note: "行情未同步", fact: null };
         continue;
       }
-      if (def.key === "revenue") {
-        const pts = quarterly.REVENUE ?? [];
-        const last4 = pts.slice(-4).map((p) => p.value ?? 0);
-        const ttm = last4.length === 4 ? last4.reduce((a, b) => a + b, 0) : null;
-        const yago4 = pts.slice(-8, -4).map((p) => p.value ?? 0);
-        const ttmPrev = yago4.length === 4 ? yago4.reduce((a, b) => a + b, 0) : null;
+      if (def.key === "revenue" || def.key === "fcf") {
+        // TTM-labeled cards read the backend TTM series (4 consecutive quarters),
+        // never a front-end sum of quarterly points that would treat null as 0.
+        const pts = ttm[def.metric] ?? [];
+        const last = pts[pts.length - 1];
+        const yago = pts[pts.length - 5]; // TTM 4 quarters earlier
         out[def.key] = {
-          value: fmtMoney(ttm),
-          note: ttm && ttmPrev ? `${signedPct(ttm / ttmPrev - 1)} YoY（TTM）` : def.note,
-          fact: pts.length ? { ...(pts[pts.length - 1] as unknown as Fact), value: ttm ?? 0 } : null,
+          value: last?.value != null ? fmtMoney(last.value) : "—",
+          note: last?.value != null && yago?.value != null && yago.value !== 0
+            ? `${signedPct(last.value / yago.value - 1)} YoY（TTM）` : def.note,
+          fact: last ? (last as unknown as Fact) : null,
         };
         continue;
       }
@@ -157,7 +179,7 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
       };
     }
     return out;
-  }, [quarterly, market]);
+  }, [quarterly, ttm, market]);
 
   const annualRows = useMemo(() => {
     const byMetric: Record<string, Fact[]> = {};
@@ -174,8 +196,6 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
     return { years, rows };
   }, [statement]);
 
-  const score = demoData[ticker].scores["财务质量"];
-
   return (
     <>
       <div className="section-head">
@@ -184,7 +204,7 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
           <div className="card-sub beginner-only">默认先看最近 8-12 个季度：增长、利润率、现金流是否同向改善。</div>
           <div className="card-sub pro-only">SEC 规范化事实 · 季度/年度/TTM 切换 · 点击指标查看定义与来源</div>
         </div>
-        <Pill tone="good">财务质量 {score}/100（Demo）· 数字为 SEC 真实数据</Pill>
+        <Pill tone="good">SEC 真实数据 · 不提供模拟质量分</Pill>
       </div>
 
       {error ? <ErrorBox message={error} onRetry={reload} /> : null}

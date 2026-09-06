@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useMemo } from "react";
-import type { CompanyInfo, OverviewResponse } from "@/lib/types";
-import { demoData, demoV2 } from "@/lib/demo";
+import { useMemo, useState } from "react";
+import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
 import { Card, Pill } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
@@ -14,24 +13,28 @@ type Props = {
   error: string | null;
   onRetry: () => void;
   onGotoTab: (tab: import("@/components/Shell").TabKey) => void;
+  onOpenMetric: (key: string, fact: Fact | null) => void;
 };
 
-type KpiItem = { label: string; value: string; note: string; tone?: string };
-function KpiCard({ label, value, note, tone }: KpiItem) {
+type KpiItem = { label: string; value: string; note: string; tone?: string; metricKey?: string };
+function KpiCard({ label, value, note, tone, metricKey, onOpenMetric }: KpiItem & { onOpenMetric: (k: string) => void }) {
   return (
-    <div className="brief-card">
+    <button
+      className="brief-card"
+      onClick={() => metricKey && onOpenMetric(metricKey)}
+      disabled={!metricKey}
+      style={{ textAlign: "left", border: "none", background: "inherit", cursor: metricKey ? "pointer" : "default" }}
+    >
       <div className="brief-label">{label}</div>
       <div className="brief-value">{value}</div>
       <div className={`brief-note ${tone ?? ""}`}>{note}</div>
-    </div>
+    </button>
   );
 }
 
-export function OverviewSection({ company, overview, error, onRetry, onGotoTab }: Props) {
-  const ticker = company?.ticker ?? "AAPL";
-  const demo = demoData[ticker];
-  const demoBusiness = demoV2[ticker];
+export function OverviewSection({ company, overview, error, onRetry, onGotoTab, onOpenMetric }: Props) {
   const trend = useMemo(() => overview?.trend ?? {}, [overview]);
+  const [activeChart, setActiveChart] = useState("revenue");
 
   const kpis = useMemo<{ items: KpiItem[] } | null>(() => {
     if (!overview) return null;
@@ -55,18 +58,20 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
           value: fmtMoney(revTtm),
           note: revTtm && revTtmPrev ? `${signedPct(revTtm / revTtmPrev - 1)} YoY` : "—",
           tone: revTtm && revTtmPrev && revTtm >= revTtmPrev ? "good" : "",
+          metricKey: "revenue",
         },
         {
           label: "最近季度收入增速",
           value: latestGrowth !== null && latestGrowth !== undefined ? signedPct(latestGrowth) : "—",
           note: "同比（真实数据）",
           tone: latestGrowth !== null && latestGrowth !== undefined && latestGrowth > 0 ? "good" : "warn",
+          metricKey: "revenue",
         },
-        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: "最近季度", tone: opLast != null && opLast > 0.2 ? "good" : "" },
-        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "" },
-        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn" },
-        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "TTM", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "" },
-        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good" },
+        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: "最近季度", tone: opLast != null && opLast > 0.2 ? "good" : "", metricKey: "opMargin" },
+        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin" },
+        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf" },
+        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "最近季度", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin" },
+        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash" },
         {
           label: "最新财报期",
           value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",
@@ -134,7 +139,6 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
     );
   }
 
-  const seg = demoBusiness.segments[0];
   const chartKeys: [string, string][] = [
     ["revenue", "收入"],
     ["revenueGrowth", "同比"],
@@ -142,30 +146,32 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
     ["opMargin", "营业利润率"],
     ["fcf", "FCF"],
   ];
-  const activeChart = "revenue";
   const active = trend[activeChart];
 
   return (
     <>
       <div className="grid grid-2">
         <Card className="thesis-card">
-          <h2>一句话理解公司（模拟）</h2>
-          <div className="big">{demo.thesis}</div>
-          <div className="thesis-meta">{demo.tags.map((t: any) => <span key={t}>{t}</span>)}</div>
+          <h2>公司概况</h2>
+          <div className="big">{company?.name ?? "—"}</div>
+          <div className="thesis-meta">
+            {[company?.ticker, company?.exchange, company?.fiscal_year_end ? `财年 ${company.fiscal_year_end}` : null]
+              .filter(Boolean)
+              .map((t) => <span key={t as string}>{t}</span>)}
+          </div>
         </Card>
         <Card className="score-wrap">
-          <div className="card-sub">综合质量评分 · Demo framework（模拟）</div>
+          <div className="card-sub">综合质量评分 · 待核实</div>
           <div className="summary-score">
-            <strong>{demo.overall}</strong>
-            <span>/ 100</span>
+            <strong>—</strong>
+            <span>暂不评分</span>
           </div>
-          {Object.entries(demo.scores).map(([k, v]: [string, any]) => (
-            <div className="score-row" key={k}>
-              <div className="score-name">{k}</div>
-              <div className="score-track"><div className="score-fill" style={{ width: `${v}%` }} /></div>
-              <div className="score-num">{v}</div>
-            </div>
-          ))}
+          <p className="card-sub" style={{ marginTop: 10 }}>
+            不编造综合分数：各维度的真实证据请分别查看业务构成、财务、风险、护城河、管理层页面。
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <button className="text-link" onClick={() => onGotoTab("risks")}>查看风险证据 →</button>
+          </div>
         </Card>
       </div>
 
@@ -178,7 +184,8 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
       </div>
       <div className="briefing-grid">
         {kpis?.items.map((k: KpiItem) => (
-          <KpiCard key={k.label} label={k.label} value={k.value} note={k.note} tone={k.tone} />
+          <KpiCard key={k.label} label={k.label} value={k.value} note={k.note} tone={k.tone}
+            metricKey={k.metricKey} onOpenMetric={(key) => onOpenMetric(key, null)} />
         ))}
       </div>
 
@@ -186,27 +193,13 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
         <Card className="donut-card">
           <div className="section-head">
             <div>
-              <h2>业务构成（模拟）</h2>
-              <div className="card-sub">分部数据接入为后续阶段（M4）；当前显示 V3 原型数据。</div>
+              <h2>业务构成</h2>
+              <div className="card-sub">来自 SEC 分部披露（真实）；概览只做入口，完整数据在业务构成页。</div>
             </div>
             <button className="text-link" onClick={() => onGotoTab("business")}>完整下钻 →</button>
           </div>
-          <div className="donut-layout">
-            <div className="donut-wrap">
-              <div className="donut-fallback">
-                <strong>{seg.share}%</strong>
-                <span>{seg.name}</span>
-              </div>
-              <div className="donut-legend">
-                {demoBusiness.segments.map((s: any) => (
-                  <div className="segment-btn" key={s.key}>
-                    <span className="legend-swatch" style={{ background: s.color }} />
-                    <span><strong>{s.name}</strong><br /><span>${s.revenue}B · YoY {s.yoy > 0 ? "+" : ""}{s.yoy}%</span></span>
-                    <span className="segment-share">{s.share}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="card-sub" style={{ padding: 16 }}>
+            分部收入与营业利润按 10-K/10-Q 披露口径解析，每项可溯源到原始文件；未单独披露的维度会显式标注。
           </div>
         </Card>
         <Card className="quarter-chart-wrap">
@@ -217,7 +210,7 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
             </div>
             <div className="seg">
               {chartKeys.map(([key, label]) => (
-                <button key={key} className={activeChart === key ? "active" : ""}>{label}</button>
+                <button key={key} className={activeChart === key ? "active" : ""} onClick={() => setActiveChart(key)}>{label}</button>
               ))}
             </div>
           </div>
@@ -275,15 +268,11 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab }
           </div>
         </Card>
         <Card className="card-pad">
-          <div className="card-title">下一步重点跟踪（模拟）</div>
-          <div className="card-sub">把研究从“看完报告”变成持续验证投资逻辑。</div>
-          <div className="watch-list">
-            {demoBusiness.watch.map((w: any, i: number) => (
-              <div className="watch-item" key={i}>
-                <div className="watch-num">{i + 1}</div>
-                <div><strong>{w[0]}</strong><p>{w[1]}</p></div>
-              </div>
-            ))}
+          <div className="card-title">下一步重点跟踪</div>
+          <div className="card-sub">基于真实信号与承诺追踪，而不是模拟清单。</div>
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <button className="text-link" onClick={() => onGotoTab("risks")}>查看确定性风险信号 →</button>
+            <button className="text-link" onClick={() => onGotoTab("management")}>查看管理层承诺追踪 →</button>
           </div>
         </Card>
       </div>
