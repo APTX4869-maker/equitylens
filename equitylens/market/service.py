@@ -189,19 +189,70 @@ def _derived(store: DuckDBStore, company_id: str, row: dict) -> dict:
 
     derived: dict = {}
     if row.get("market_cap"):
-        derived["market_cap"] = float(row["market_cap"])
+        mcap = float(row["market_cap"])
+        derived["market_cap"] = mcap
+        engine = MetricEngine(store)
         try:
-            ni = [p for p in MetricEngine(store).compute("NET_INCOME", company_id, frequency="ttm") if p.value]
-            if ni:
-                derived["pe_ttm"] = round(float(row["market_cap"]) / float(ni[-1].value), 2)
+            ni = engine.current("NET_INCOME", company_id, frequency="ttm")
+            if ni.status != "OK":
+                derived.update(
+                    pe_ttm=None,
+                    pe_ttm_status=ni.status,
+                    pe_ttm_reason=ni.missing_reason,
+                )
+            elif ni.value is None or ni.value <= 0:
+                derived.update(
+                    pe_ttm=None,
+                    pe_ttm_status="UNSUPPORTED",
+                    pe_ttm_reason="TTM 净利润为负或零，P/E 不适用",
+                )
+            else:
+                derived["pe_ttm"] = round(mcap / float(ni.value), 2)
+                derived["pe_ttm_status"] = "OK"
                 derived["pe_ttm_formula"] = PE_FORMULA
                 derived["pe_ttm_evidence"] = {
                     "market_cap_source": f"market_quote:{row['provider']}:{row['observed_at']}",
-                    "ni_ttm_evidence_ids": ni[-1].input_fact_ids or [],
-                    "ni_ttm_period": ni[-1].period_label,
+                    "ni_ttm_evidence_ids": ni.input_fact_ids or [],
+                    "ni_ttm_period": ni.period_label,
                 }
-        except ValueError:
-            pass
+
+            fcf = engine.current("FCF", company_id, frequency="ttm")
+            if fcf.status != "OK":
+                derived.update(
+                    pfcf_ttm=None,
+                    fcf_yield_ttm=None,
+                    pfcf_ttm_status=fcf.status,
+                    pfcf_ttm_reason=fcf.missing_reason,
+                )
+            elif fcf.value is None or fcf.value <= 0:
+                derived.update(
+                    pfcf_ttm=None,
+                    fcf_yield_ttm=None,
+                    pfcf_ttm_status="UNSUPPORTED",
+                    pfcf_ttm_reason="TTM 自由现金流为负或零，P/FCF 不适用",
+                )
+            else:
+                fcf_val = float(fcf.value)
+                derived["pfcf_ttm"] = round(mcap / fcf_val, 2)
+                derived["fcf_yield_ttm"] = round(fcf_val / mcap, 4)
+                derived["pfcf_ttm_status"] = "OK"
+                derived["pfcf_ttm_formula"] = "pfcf_ttm.v1"
+                derived["fcf_yield_ttm_formula"] = "fcf_yield_ttm.v1"
+                derived["pfcf_ttm_evidence"] = {
+                    "market_cap_source": f"market_quote:{row['provider']}:{row['observed_at']}",
+                    "fcf_ttm_evidence_ids": fcf.input_fact_ids or [],
+                    "fcf_ttm_period": fcf.period_label,
+                }
+        except ValueError as exc:
+            derived.update(
+                pe_ttm=None,
+                pe_ttm_status="ERROR",
+                pe_ttm_reason=str(exc),
+                pfcf_ttm=None,
+                fcf_yield_ttm=None,
+                pfcf_ttm_status="ERROR",
+                pfcf_ttm_reason=str(exc),
+            )
     return derived
 
 
