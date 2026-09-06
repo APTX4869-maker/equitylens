@@ -40,6 +40,21 @@ def _utc_compact() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _fetch_time_from_snapshot_name(name: str) -> str | None:
+    """Recover the original fetch time encoded in a snapshot filename like
+    'nasdaq_20260903T140349Z.json' (D10: replay must not rewrite fetched_at)."""
+    import re
+
+    m = re.search(r"(\d{8}T\d{6}Z)", name)
+    if not m:
+        return None
+    try:
+        dt = datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        return dt.replace(microsecond=0).isoformat()
+    except ValueError:
+        return None
+
+
 # Replay parsers keyed by provider for --no-fetch
 _REPLAY = {
     "nasdaq": lambda snap, ticker: parse_nasdaq_snapshot(snap, ticker),
@@ -141,7 +156,8 @@ def _replay_latest(store: DuckDBStore, company_id: str, ticker: str, raw_dir,
             continue
         try:
             quote = parser(snap, ticker)
-            row = quote.to_row(company_id, None, _now())
+            fetched_at = _fetch_time_from_snapshot_name(files[-1].name) or _now()
+            row = quote.to_row(company_id, None, fetched_at)
             store.insert_market_quote(row)
             out.append({"provider": name, "price": quote.price, "observed_at": quote.observed_at})
         except ProviderError as exc:
@@ -174,8 +190,16 @@ def quote_block(store: DuckDBStore, company_id: str, ticker: str) -> dict:
         "source_label": row["source_label"], "source_url": row["source_url"],
         "fetched_at": str(row["fetched_at"] or "")[:19],
     }
+    from equitylens.market.age import quote_observation_status
+
+    age = quote_observation_status(str(row.get("observed_at") or ""))
+    status = "OK" if age["status"] == "ok" else "STALE"
     derived = _derived(store, company_id, row)
-    return {"status": "OK", "configured": True, "synced": True,
+    return {"status": status,
+            "stale": age["status"] != "ok",
+            "stale_reason": age["detail"] if age["status"] != "ok" else None,
+            "quote_age_days": age["days_ago"],
+            "configured": True, "synced": True,
             "quote": quote, "derived": derived}
 
 

@@ -57,12 +57,64 @@ def test_new_form4_does_not_refresh_old_proxy(db):
     assert "Form 4" in mgmt["detail"]
 
 
+def test_ingest_today_does_not_refresh_old_filing(db):
+    """D10: a 10-K disclosed 2020-01-01 must stay old even when ingested today —
+    SEC financial age is the disclosure date, never the ingestion completion."""
+    now = datetime.now(timezone.utc)
+    db.upsert_source_documents([{
+        "source_document_id": "doc_old_10k", "company_id": AAPL_CIK,
+        "provider": "SEC", "document_type": "FILING_DOCUMENT",
+        "form_type": "10-K", "filed_at": "2020-01-01T00:00:00",
+        "source_url": "https://x", "fetched_at": "2020-01-01T00:00:00",
+        "content_sha256": "a" * 64,
+    }])
+    db.insert_ingestion_run({
+        "run_id": "run_today", "company_id": AAPL_CIK, "provider": "SEC",
+        "command": "sync", "started_at": now.isoformat(),
+        "finished_at": now.isoformat(), "status": "ok",
+    })
+    d = freshness(db, AAPL_CIK, "AAPL")
+    sec = next(m for m in d["modules"] if m["key"] == "sec_financials")
+    assert sec["status"] == "stale"
+    assert sec["days_ago"] is not None and sec["days_ago"] >= 2000  # ~2020 -> now
+
+
+def test_quote_block_marks_stale_observation(db):
+    """D10: the quote-comparison block reports the same status as freshness — a
+    stale quote is STALE (not OK) yet remains viewable with its price/date."""
+    from equitylens.market.service import quote_block
+
+    now = datetime.now(timezone.utc)
+    old_obs = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    db.insert_market_quote({
+        "quote_id": "mq_stale_blk", "company_id": AAPL_CIK, "ticker": "AAPL",
+        "provider": "nasdaq", "observed_at": old_obs, "price": 300.0,
+        "currency": "USD", "market_cap": 3e12, "name": "Apple Inc.",
+        "source_label": "Nasdaq", "source_url": "https://x",
+        "fetched_at": now.isoformat(),
+    })
+    block = quote_block(db, AAPL_CIK, "AAPL")
+    assert block["status"] == "STALE"
+    assert block["quote"]["price"] == 300.0
+    assert block["quote"]["observed_at"]
+
+
+def test_replay_keeps_original_fetch_time_from_name():
+    """D10: replay parses the original fetch time from the snapshot filename."""
+    from equitylens.market.service import _fetch_time_from_snapshot_name
+
+    ts = _fetch_time_from_snapshot_name("nasdaq_20260903T140349Z.json")
+    assert ts.startswith("2026-09-03T14:03:49")
+    assert _fetch_time_from_snapshot_name("no_timestamp.json") is None
+
+
 def test_market_quote_freshness_ok_and_stale(db):
     now = datetime.now(timezone.utc)
-    # old quote only -> stale
+    # old observation (400 days ago) only -> stale, judged by observed_at
+    old_obs = (now - timedelta(days=400)).strftime("%Y-%m-%d %H:%M:%S")
     db.insert_market_quote({
         "quote_id": "mq_old1", "company_id": AAPL_CIK, "ticker": "AAPL",
-        "provider": "nasdaq", "observed_at": "2026-01-01 10:00 AM ET", "price": 300.0,
+        "provider": "nasdaq", "observed_at": old_obs, "price": 300.0,
         "currency": "USD", "source_label": "Nasdaq", "source_url": "https://x",
         "fetched_at": (now - timedelta(days=400)).isoformat(),
     })
@@ -71,10 +123,11 @@ def test_market_quote_freshness_ok_and_stale(db):
     assert mkt["status"] == "stale"
     assert mkt["days_ago"] >= 365
 
-    # then a recent quote -> ok (latest wins)
+    # then a recent observation -> ok (latest fetched wins)
+    recent_obs = (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     db.insert_market_quote({
         "quote_id": "mq_fresh1", "company_id": AAPL_CIK, "ticker": "AAPL",
-        "provider": "nasdaq", "observed_at": "2026-09-03 10:00 AM ET", "price": 326.0,
+        "provider": "nasdaq", "observed_at": recent_obs, "price": 326.0,
         "currency": "USD", "market_cap": 1e12, "name": "Apple Inc.",
         "source_label": "Nasdaq", "source_url": "https://x",
         "fetched_at": now.isoformat(),

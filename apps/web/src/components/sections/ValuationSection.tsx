@@ -52,6 +52,9 @@ type RunResponse = {
   market?: {
     status: string;
     reason?: string;
+    stale?: boolean;
+    stale_reason?: string | null;
+    quote_age_days?: number | null;
     quote?: {
       price: number;
       currency: string;
@@ -304,16 +307,19 @@ export function ValuationSection({ ticker }: { ticker: string }) {
 
   const i = draft ?? base.assumptions.inputs;
   const meta = base.assumptions.meta;
-  const mkt = base.market?.status === "OK" && base.market.quote ? base.market : null;
+  const mkt = base.market && base.market.quote ? base.market : null;
   const mktQuote = mkt?.quote ?? null;
-  const premiumPct = mkt?.derived?.price_vs_fair_pct ?? null;
+  const mktStale = base.market?.status === "STALE";
+  const premiumPct = !mktStale ? (mkt?.derived?.price_vs_fair_pct ?? null) : null;
 
   return (
     <>
       <div className="demo-banner real">
         <strong>✓ 估值</strong> — FCFF DCF 由确定性引擎计算（公式版本 {base.result.model_version}），保存后记录完整不可变输入快照。
         {mktQuote
-          ? ` 行情已同步（${mktQuote.provider_label} · ${mktQuote.observed_at}）：现价与公允价对比为确定性计算，非买卖建议。`
+          ? (mktStale
+            ? ` 行情已同步但过期（${mktQuote.observed_at}），不参与现价与公允价对比。`
+            : ` 行情已同步（${mktQuote.provider_label} · ${mktQuote.observed_at}）：现价与公允价对比为确定性计算，非买卖建议。`)
           : " 行情未同步：本地快照模式（运行 equitylens sync-quotes AAPL MSFT 后价格对比自动出现），DCF 与 reverse DCF 可先用假设探索。"}
         {" "}该 FCFF DCF 适用于当前支持的高质量科技公司；银行/REIT/亏损成长等类型不直接套用此模型。
       </div>
@@ -323,8 +329,8 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           <div className="card-sub beginner-only">估值不是寻找一个“精确目标价”，而是回答：当前假设下价值在什么区间？</div>
           <div className="card-sub pro-only">5Y FCFF DCF · 情景 · 敏感性矩阵 · Reverse DCF（确定性重算）</div>
         </div>
-        <Pill tone={mktQuote ? "good" : "warn"}>
-          {mktQuote ? "行情已同步 · 现价 vs 公允价" : "行情未同步"}
+        <Pill tone={mktStale ? "warn" : mktQuote ? "good" : "warn"}>
+          {mktStale ? "行情已过期" : mktQuote ? "行情已同步 · 现价 vs 公允价" : "行情未同步"}
         </Pill>
       </div>
 
@@ -337,7 +343,11 @@ export function ValuationSection({ ticker }: { ticker: string }) {
               <>
                 <div className="big-number" style={{ fontSize: 22 }}>${mktQuote.price.toFixed(2)}</div>
                 <small className="muted">{mktQuote.provider_label} · {mktQuote.observed_at}</small>
-                {premiumPct != null ? (
+                {mktStale ? (
+                  <div style={{ fontSize: 12, marginTop: 6, color: "#b58900", fontWeight: 600 }}>
+                    行情已过期 · 不参与现价对比{base.market?.stale_reason ? `（${base.market.stale_reason}）` : ""}
+                  </div>
+                ) : premiumPct != null ? (
                   <div style={{ fontSize: 12, marginTop: 6 }}>
                     <span style={{ color: premiumPct > 5 ? "#c0392b" : premiumPct < -5 ? "#2c8b72" : "inherit", fontWeight: 600 }}>
                       较公允价 {premiumPct >= 0 ? "+" : ""}{premiumPct.toFixed(1)}%

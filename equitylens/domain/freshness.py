@@ -7,7 +7,6 @@ modules are explicit (not synced), never replaced with older fallback data.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta, timezone
 
 # Per-module staleness windows (calendar days before the module is flagged stale)
@@ -30,24 +29,6 @@ def _days_ago(ts) -> int | None:
     except ValueError:
         return None
     return max(0, (datetime.now(timezone.utc) - dt).days)
-
-
-def _parse_observed_at(s: str) -> datetime | None:
-    """Parse a provider-reported observation time (e.g. 'Sep 3, 2026 9:58 AM ET'
-    or '2026-09-03 09:58:41') to a naive datetime. Returns None if unparseable."""
-    if not s:
-        return None
-    s = s.strip()
-    s = re.sub(r"\s+(ET|PT|CT|MT)\s*$", "", s)
-    for fmt in ("%b %d, %Y %I:%M %p", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _status(days: int | None, threshold: int, missing_hint: str) -> dict:
@@ -73,13 +54,15 @@ def freshness(store, company_id: str, ticker: str) -> dict:
         "SELECT MAX(finished_at) AS at FROM ingestion_run WHERE company_id = ? AND status = 'ok'",
         [company_id],
     )
-    base = ingest["at"] if ingest and ingest.get("at") else None
-    for f in filings:
-        if base is None or (f["latest"] and str(f["latest"]) > str(base)):
-            base = f["latest"]
+    # SEC financial age is the latest applicable FILED/PUBLISHED disclosure, never
+    # the ingestion completion time (D10): a fresh ingest must not refresh an old
+    # filing.
     latest_filing = filings[0] if filings else None
+    base = latest_filing["latest"] if latest_filing else None
     detail = (f"最近披露 {latest_filing['form_type']} "
               f"{str(latest_filing['latest'])[:10]}" if latest_filing else "未同步（运行 equitylens sync）")
+    if ingest and ingest.get("at"):
+        detail += f"；最近一次同步完成 {str(ingest['at'])[:19]}"
     days = _days_ago(base)
     st = _status(days, STALE_AFTER_DAYS["sec_financials"], detail)
     modules.append({"key": "sec_financials", "label": "SEC 财务事实", "as_of": str(base)[:10] if base else None,
@@ -118,6 +101,8 @@ def freshness(store, company_id: str, ticker: str) -> dict:
                     "detail": detail, "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- market quote ----
+    from equitylens.market.age import quote_observation_status
+
     quote = store.latest_market_quote(company_id)
     if quote:
         provider = quote.get("provider") or ""
@@ -127,27 +112,14 @@ def freshness(store, company_id: str, ticker: str) -> dict:
             provider_label = meta.label if meta is not None else provider
         except Exception:
             provider_label = provider
-        # Staleness is judged by the provider-reported OBSERVATION time, not the
-        # fetch/replay time — a 30-day-old quote replayed today is still stale.
-        obs = _parse_observed_at(str(quote.get("observed_at") or ""))
-        if obs is not None:
-            obs = obs.replace(tzinfo=timezone.utc)
-            if obs > datetime.now(timezone.utc):
-                st = {"status": "stale", "detail": "观察时间在未来（异常）", "days_ago": None}
-                as_of = obs.isoformat()
-            else:
-                days = (datetime.now(timezone.utc) - obs).days
-                st = _status(days, STALE_AFTER_DAYS["market_quote"], "")
-                as_of = obs.strftime("%Y-%m-%d")
-        else:
-            qat = str(quote["fetched_at"] or "")[:19]
-            st = _status(_days_ago(qat), STALE_AFTER_DAYS["market_quote"], "")
-            as_of = qat[:10]
-            st["detail"] = f"{st['detail']}（观察时间无法解析）"
-        modules.append({"key": "market_quote", "label": "行情快照", "as_of": as_of,
-                        "detail": (f"{provider_label} "
-                                   f"${quote['price']:.2f} · {quote['observed_at']}"),
-                        "status": st["status"], "days_ago": st["days_ago"]})
+        # Staleness is judged by the provider-reported OBSERVATION time (shared
+        # with quote comparison), never the fetch/replay time (D10).
+        age = quote_observation_status(str(quote.get("observed_at") or ""))
+        module_status = "ok" if age["status"] == "ok" else "stale"
+        modules.append({"key": "market_quote", "label": "行情快照", "as_of": age["as_of"],
+                        "detail": (f"{provider_label} ${quote['price']:.2f} · "
+                                   f"{quote['observed_at']} · {age['detail']}"),
+                        "status": module_status, "days_ago": age["days_ago"]})
     else:
         modules.append({"key": "market_quote", "label": "行情快照", "as_of": None,
                         "detail": "行情未同步（运行 equitylens sync-quotes）",

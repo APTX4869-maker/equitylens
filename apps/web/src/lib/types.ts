@@ -91,7 +91,10 @@ export type OverviewResponse = {
 
 /** M8: latest synced market quote + deterministic derived facts. */
 export type MarketQuote = {
-  status: "OK" | "UNAVAILABLE";
+  status: "OK" | "STALE" | "UNAVAILABLE";
+  stale?: boolean;
+  stale_reason?: string | null;
+  quote_age_days?: number | null;
   configured: boolean;
   synced: boolean;
   reason?: string;
