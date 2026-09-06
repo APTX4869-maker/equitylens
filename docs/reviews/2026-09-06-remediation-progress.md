@@ -10,41 +10,20 @@
 - `docs/reviews/2026-09-06-remediation-quality-review.md`
 - `docs/superpowers/specs/2026-09-06-remediation-rework-design.md`
 - `docs/superpowers/plans/2026-09-06-remediation-batch1.md`
+- `docs/reviews/2026-09-06-remediation-batch1-rework.md`
 
 ## 当前状态
 
-Batch 1 已完成 2/9 个任务。当前完成的是季度日期输入和估值 D&A 基期选择。TTM、市场倍数、风险覆盖、DCF 边界、API 输入身份和前端乱序仍在本批后续任务中。
+**Batch 1 已完成（9/9 任务）**。修复了审查记录中所有“会算出错误数字或把结果关联到错误输入”的路径：当前 TTM 契约、市场倍数回退、风险/研究失败覆盖、DCF 边界（−100% 增长、负 CapEx、非法 WACC、非有限终值）、估值输入指纹与结构化错误、前端完整草稿身份。
 
-## 已完成
+批次证据与逐项状态见 `docs/reviews/2026-09-06-remediation-batch1-rework.md`。
 
-### Task 1 / D04：季度日期输入统一
+## 验证
 
-- 在财务期间边界统一处理 `datetime`、`date` 和 ISO 日期字符串。
-- 季度桶匹配与派生结果输出均使用规范化 ISO 日期。
-- 新回归先复现：字符串用例通过、DuckDB 风格 `date` 对象无法得到 Q4。
-- 修复后：`tests/unit/test_fiscal_periods.py` 共 12 项通过。
-- 提交：`d645d13 fix: normalize fiscal period date inputs`。
+- 后端：180 passed，1 条 Starlette/httpx 弃用警告。
+- 前端：TypeScript `--noEmit` 与 ESLint 通过。
+- Playwright：2 个受控乱序用例已编写并通过收集/类型检查；Chromium 二进制因网络受限未安装，浏览器测试未执行。
 
-结论：审查记录中的 D04 `date` 对象缺陷已修复。D04 的跨快照/期间边界完整验收仍随 D05 和后续批次继续核对，因此暂不把整项标为完全闭环。
+## 下一批次
 
-### Task 2 / D02：D&A 与估值收入基期对齐
-
-- `estimate_depreciation` 现在要求明确目标财年，并只在该财年选择合并值或相加分项。
-- 合并值只在目标财年和目标单位一致时优先。
-- 分项必须同财年、同单位且两项齐全；否则返回缺失，由默认假设路径显式降级。
-- 默认估值使用收入基准的财年选择 D&A，并记录 `combined`、`split` 或 `assumption` 来源类型。
-- 新回归先复现：FY2020 合并值错误覆盖 FY2026 分项；函数也无法接收目标财年。
-- 修复后：`tests/golden/test_golden_valuation.py` 共 30 项通过，包括 MSFT FY2026 34.3B + 4.7B。
-- 提交：`0a68ffa fix: align depreciation with valuation base period`。
-
-结论：审查记录中的“历史 combined 覆盖当前 split”已修复；租赁摊销是否属于最终公司口径仍属于原 D02 的披露定义核对，不用代码猜测，因此整项仍保留“部分完成”直至来源核验闭环。
-
-## 基线验证
-
-- 后端全量：163 passed，1 条 Starlette/httpx 弃用警告，49.46 秒。
-- 前端：TypeScript `--noEmit --incremental false` 通过；ESLint 通过。
-- 所有新增测试使用临时测试数据库，没有写入真实 `data/equitylens.duckdb`。
-
-## 下一步
-
-执行 Task 3–5：建立当前 TTM 完整性契约，让市场倍数、风险和研究统一消费该契约，消除最新值为零或缺季时回退旧窗口的问题，并将失败覆盖状态返回给页面。
+Batch 2（可复现/来源/新鲜度）：D08 快照 SHA 严格匹配、D10 新鲜度降级、V05 完整估值 run 持久化、D09 派生结果来源。相关未提交的半成品（`raw_store.py`、`freshness.py`）已在工作区，将在 Batch 2 中完成并提交。
