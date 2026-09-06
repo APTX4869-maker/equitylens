@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Batch 3 的 P02 已完成；P06、P08 按顺序执行中。
+Batch 3 的 P02、P06 已完成；P08 执行中。
 
 ## P02 `fcff_dcf.v2`
 
@@ -21,4 +21,15 @@ Batch 3 的 P02 已完成；P06、P08 按顺序执行中。
 - `test_all_new_valuation_paths_report_v2_terminal_contract`：默认、预览、情景和反推统一报告 v2；保存读取保留相同终值块。
 - 估值 golden + API：74 passed；前端 TypeScript、ESLint 与 2 个 Playwright 用例收集通过。
 
-浏览器执行限制：本机缺少 Playwright Chromium；再次下载 182.1 MiB 运行时后仍停在 0%，因此实际浏览器执行尚无通过证据。
+## P06 个人估值方案
+
+- 创建普通参考价方案必须绑定同公司完整保存的 v2 run 与 `base|bear|bull` 情景；任意 `reference_value`/文字来源不再被信任。
+- 服务端从已保存情景输出派生参考值与安全边际价格；非正结果保留研究原因，不生成普通买入参考价。
+- 方案持久化 run ID、情景、输入指纹、财报/行情时间、注释、待验证条件、父版本、版本号与复核状态；关闭并重新打开 DuckDB 后字段保持。
+- API 支持打开、复制与 2–5 个同公司方案比较；前端完成对应操作，并在未保存估值运行时禁用方案创建。
+
+回归证据：
+
+- API `plan_` 聚焦测试 4 passed，覆盖任意价格拒绝、服务端派生、非正结果、公司隔离、复制、比较与重启读取。
+- TypeScript、ESLint、Playwright 收集通过。
+- 通过 `PLAYWRIGHT_CHROME_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` 使用系统 Chrome 实际执行 3 个浏览器用例，结果 **3 passed**。
