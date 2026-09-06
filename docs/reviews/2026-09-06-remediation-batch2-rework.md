@@ -2,16 +2,16 @@
 
 日期：2026-09-06。分支：`codex/remediation-rework`。依据 `docs/superpowers/specs/2026-09-06-remediation-rework-design.md` Batch 2 章节，对照 `docs/reviews/2026-09-06-remediation-quality-review.md` 的 D08/D09/D10/V05 四项审查结论。
 
-结论：Batch 2 的四项验收目标（可复现、来源、新鲜度、完整估值记录）均已实现并有回归测试。后端 189 项通过；前端 TypeScript 与 ESLint 通过。
+结论：初次提交通过已有测试，但复核发现四个未覆盖边界；提交 `599ab10` 返工后，Batch 2 的四项验收目标才达到当前设计要求。后端 197 项通过；前端 TypeScript 与 ESLint 通过。
 
 ## 逐项状态
 
 | ID | 本轮实现 | 回归测试 | 剩余限制 |
 | --- | --- | --- | --- |
-| D08 快照 SHA 严格匹配 | `load_snapshot(sha=...)` 仅当字节 SHA 匹配请求的完整/8 字符前缀时才返回；未知 SHA 返回 None（不回退旧固定文件）；版本化文件名与内容不匹配即报损坏；manifest 用临时文件 + `os.replace` 原子替换 | `test_load_unknown_sha_returns_none_not_legacy`、`test_load_corrupted_versioned_sha_raises`、`test_load_8char_prefix_matches_versioned`（tests/unit/test_raw_store.py） | 无 |
-| D10 新鲜度语义 | SEC 财务年龄改用最近披露（filed/published）日期，ingest 完成时间仅作“最近同步”附注；行情观察时间解析下沉到共享 `market/age.py`，顶层 freshness 与 quote_block 返回同一状态；`quote_block` 对过期/降级观察返回 STALE（`valuation_market_block` 因此不再对过期行情算现价溢价）；回放保留快照文件名中的原始抓取时间 | `test_ingest_today_does_not_refresh_old_filing`、`test_quote_block_marks_stale_observation`、`test_replay_keeps_original_fetch_time_from_name`（tests/unit/test_freshness.py） | 前端仅估值页显示过期警告；Topbar/财务页仍按 `status==="OK"` 排除过期行情（方向正确但无独立警告） |
-| V05 完整估值 run 持久化 | `valuation_run` 新增可空 `input_fingerprint`/`scenarios_json`/`sensitivity_json`/`model_quality_json` 列（幂等 additive 迁移）；`run_custom` 保存完整执行快照（指纹、全部情景状态/输出、敏感性单元、模型质量块）；override meta 覆盖 `op_margin_start`/`nwc_pct`；读取原样返回，缺新字段的旧 run 标记 `legacy/incomplete` 并保留 v1 输出 | `test_saved_run_reads_back_full_scenarios_sensitivity`、`test_legacy_run_reads_as_incomplete`（tests/integration/test_api.py） | 真实库 `data/equitylens.duckdb` 的 ALTER 迁移按设计留待单独评审后执行（当前只读） |
-| D09 派生结果来源身份 | `MetricPoint` 增加可逆 `result_id`（`derived:{company}:{metric}:{freq}:{period_end}`）；`/metrics` 返回 `result_id`；`/provenance/{result_id}` 解析出 `metric_value` 根（携带结果值/频率/单位/状态/公式 + 完整有序输入列表，每个输入可展开到 canonical fact + source document）；MetricDrawer 把“派生自 N 个事实”展开为可点击来源列表 | `test_derived_metric_has_resolvable_result_identity`（tests/integration/test_api.py） | 总览页 KPI 卡点击仍传 `null`（未携带结果身份），属 UI 收敛项 |
+| D08 快照 SHA 严格匹配 | `load_snapshot(sha=...)` 仅接受完整 SHA 或 8 字符十六进制前缀；未知 SHA 返回 None；版本化文件名与内容不匹配即报损坏；快照和 manifest 写入后 `fsync`，manifest 原子替换；发布过程按目录加锁 | `test_load_unknown_sha_returns_none_not_legacy`、`test_load_corrupted_versioned_sha_raises`、`test_load_rejects_malformed_sha_selectors`（tests/unit/test_raw_store.py） | 8 字符前缀发生真实 SHA 碰撞时会以文件名冲突显式失败，不会覆盖旧内容 |
+| D10 新鲜度语义 | SEC 财务年龄改用最近披露日期；行情观察时间由共享模块按 IANA 时区转换到 UTC；顶层 freshness 与 quote_block 使用同一状态；过期/降级报价不参与现价比较；回放保留原抓取时间 | `test_ingest_today_does_not_refresh_old_filing`、`test_quote_block_marks_stale_observation`、`test_provider_timezone_is_converted_to_utc`、`test_replay_keeps_original_fetch_time_from_name`（tests/unit/test_freshness.py） | 前端各页面的独立过期说明随 Batch 4 统一 |
+| V05 完整估值 run 持久化 | `valuation_run` 保存输入指纹、情景、敏感性、质量块，并在 `fact_snapshot_json.source_fact_ids` 冻结所有事实派生输入的 canonical ID；覆盖项清除不再适用的事实身份；旧 run 原样读取并标记 `legacy/incomplete` | `test_saved_run_reads_back_full_scenarios_sensitivity` 同时验证所有冻结 ID 可在 canonical 表解析；`test_legacy_run_reads_as_incomplete`（tests/integration/test_api.py） | 真实库只在应用正常打开时执行幂等加列；历史行不会补造缺失身份 |
+| D09 派生结果来源身份 | `result_id` 是带 SHA-256 校验的自包含结果身份，绑定公司、指标、值、频率、单位、状态、期间、公式和完整有序输入；来源读取不重新计算当前值，因此重述不会改写旧链接；每个输入可继续展开到 canonical fact 与 source document | `test_derived_metric_has_resolvable_result_identity`、`test_derived_result_identity_binds_value_formula_and_inputs`（tests/integration/test_api.py） | 总览 KPI 仍需在 Batch 4 改为传递实际 `result_id` |
 
 ## 关键提交
 
@@ -22,7 +22,7 @@
 
 ## 验证
 
-- 后端：`.venv/bin/python -m pytest -q -p no:cacheprovider` → **189 passed**，1 条 Starlette/httpx 弃用警告。
+- 后端：`.venv/bin/python -m pytest -q -p no:cacheprovider` → **197 passed**，1 条 Starlette/httpx 弃用警告。
 - 前端：`pnpm exec tsc --noEmit --incremental false` 与 `pnpm lint` 均通过。
 - 新增测试均使用临时数据库/夹具，未写入真实 `data/equitylens.duckdb`。
 
