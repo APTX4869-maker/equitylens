@@ -352,7 +352,7 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
     if depth <= 0 or entity_id in visited:
         return None
     visited = visited | {entity_id}
-    if entity_id.startswith("derived:"):
+    if entity_id.startswith("derived.v2.") or entity_id.startswith("derived:"):
         return _build_derived_node(store, entity_id, depth, visited)
     cf = store.query_one("SELECT * FROM canonical_fact WHERE canonical_fact_id = ?", [entity_id])
     if cf:
@@ -417,6 +417,28 @@ def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict
     COMPLETE ordered input list, each input expandable to canonical fact and
     source document — so the source tree exactly matches the card.
     """
+    from equitylens.metrics.engine import decode_derived_result_id
+
+    payload = decode_derived_result_id(entity_id)
+    if payload is not None:
+        input_ids = payload.get("input_fact_ids") or []
+        if not isinstance(input_ids, list):
+            return None
+        parents = []
+        for fid in input_ids:
+            parent = _build_provenance(store, str(fid), depth - 1, visited)
+            if parent:
+                parents.append(parent)
+        return {
+            "entity_id": entity_id,
+            "kind": "metric_value",
+            "label": payload.get("metric"),
+            "fields": payload,
+            "parents": parents,
+        }
+
+    # Read legacy period-only identities while existing links age out. They are
+    # recomputed and are not issued by the current API.
     parts = entity_id.split(":")
     if len(parts) != 5 or parts[0] != "derived":
         return None

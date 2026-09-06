@@ -43,6 +43,20 @@ def test_load_unknown_sha_returns_none_not_legacy(tmp_path):
     assert load_snapshot(d, "companyfacts.json", sha="deadbeef") is None
 
 
+@pytest.mark.parametrize("bad_sha", ["", "a", "abcdefg", "not-a-sha", "a" * 9, "a" * 63])
+def test_load_rejects_malformed_sha_selectors(tmp_path, bad_sha):
+    """D08: only an 8-hex prefix or a full SHA-256 is a supported identity.
+
+    Empty and arbitrarily short prefixes must not match unrelated bytes through
+    ``computed.startswith(requested)``.
+    """
+    d = tmp_path / "snap"
+    save_snapshot(d, "companyfacts.json", b"v1-content")
+
+    with pytest.raises(ValueError, match="8 hexadecimal|64 hexadecimal"):
+        load_snapshot(d, "companyfacts.json", sha=bad_sha)
+
+
 def test_load_8char_prefix_matches_versioned(tmp_path):
     d = tmp_path / "snap"
     save_snapshot(d, "companyfacts.json", b"v1")

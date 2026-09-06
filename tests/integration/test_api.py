@@ -298,7 +298,7 @@ def test_saved_run_reads_back_verbatim(client):
         r.json()["result"]["fair_value_per_share"])
 
 
-def test_saved_run_reads_back_full_scenarios_sensitivity(client):
+def test_saved_run_reads_back_full_scenarios_sensitivity(client, company_db):
     """V05: a saved run persists the complete executed inputs, fingerprint,
     scenarios, sensitivity, and model-quality block — read back verbatim."""
     r = client.post("/api/v1/companies/AAPL/valuation/run",
@@ -320,6 +320,18 @@ def test_saved_run_reads_back_full_scenarios_sensitivity(client):
     assert d["sensitivity"]["rows"], "sensitivity cells persisted"
     assert d["model_quality"]["terminal_value_share"] is not None
     assert d["model_version"] == "fcff_dcf.v1"
+    source_ids = d["assumptions"].get("source_fact_ids")
+    assert source_ids, "complete run must freeze the canonical fact identities used"
+    assert source_ids["revenue_base"]
+    assert source_ids["op_margin"]
+    assert source_ids["shares"]
+    frozen_ids = sorted({fact_id for ids in source_ids.values() for fact_id in ids})
+    resolved = company_db.query(
+        f"SELECT canonical_fact_id FROM canonical_fact WHERE canonical_fact_id IN "
+        f"({','.join('?' for _ in frozen_ids)})",
+        frozen_ids,
+    )
+    assert {row["canonical_fact_id"] for row in resolved} == set(frozen_ids)
 
 
 def test_legacy_run_reads_as_incomplete(client, company_db):
@@ -365,6 +377,38 @@ def test_derived_metric_has_resolvable_result_identity(client):
     assert fields["input_fact_ids"] == m["input_fact_ids"]
     assert len(node["parents"]) == len(m["input_fact_ids"])
     assert node["parents"][0]["kind"] == "canonical_fact"
+
+
+def test_derived_result_identity_binds_value_formula_and_inputs(client):
+    """D09: an identity must change if any part of the derived result changes.
+
+    Period-only identities collide across restatements and can later resolve to a
+    different card. The identity payload therefore binds value, formula and the
+    complete ordered input list.
+    """
+    from equitylens.metrics.engine import MetricPoint, derived_result_id
+
+    base = MetricPoint(
+        metric="FCF_MARGIN", value=0.25, unit="ratio", status="CALCULATED",
+        formula_id="fcf_margin.v2", formula_version="fcf_margin.v2",
+        input_fact_ids=["ocf-a", "capex-a", "revenue-a"],
+        period_label="FY2026Q2", frequency="ttm", period_start="2025-07-01",
+        period_end="2026-06-30", fiscal_year=2026, fiscal_quarter=2,
+    )
+    restated = MetricPoint(**{**base.__dict__, "value": 0.24,
+                              "input_fact_ids": ["ocf-b", "capex-a", "revenue-a"]})
+
+    first = derived_result_id("0000320193", base)
+    second = derived_result_id("0000320193", restated)
+    assert first != second
+
+    # The self-contained identity resolves the original root without asking the
+    # metric engine to recompute today's latest-restated result.
+    p = client.get(f"/api/v1/provenance/{first}")
+    assert p.status_code == 200
+    fields = p.json()["tree"]["fields"]
+    assert fields["value"] == pytest.approx(0.25)
+    assert fields["input_fact_ids"] == ["ocf-a", "capex-a", "revenue-a"]
 
 
 def test_plan_reference_price_formula(client):

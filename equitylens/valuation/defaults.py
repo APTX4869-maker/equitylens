@@ -23,12 +23,15 @@ def _load_wacc_config() -> dict:
     return yaml.safe_load(Path(WACC_CONFIG_PATH).read_text())
 
 
-def _latest_annual_value(store, company_id: str, metric: str) -> float | None:
+def _latest_annual_point(store, company_id: str, metric: str):
     engine = MetricEngine(store)
     pts = engine.compute(metric, company_id, frequency="annual")
-    if not pts or pts[-1].value is None:
-        return None
-    return float(pts[-1].value)
+    return pts[-1] if pts and pts[-1].value is not None else None
+
+
+def _latest_annual_value(store, company_id: str, metric: str) -> float | None:
+    point = _latest_annual_point(store, company_id, metric)
+    return float(point.value) if point is not None else None
 
 
 def _latest_fy(store, company_id: str, metric: str) -> int | None:
@@ -48,16 +51,19 @@ def _annual_point(store, company_id: str, metric: str, fiscal_year: int):
 
 
 def _depreciation_selection(store, company_id: str, fiscal_year: int,
-                            unit: str = "USD") -> tuple[float | None, str]:
+                            unit: str = "USD") -> tuple[float | None, str, list[str]]:
     combined = _annual_point(store, company_id, "DEPRECIATION_AMORTIZATION", fiscal_year)
     if combined is not None and combined.unit == unit:
-        return float(combined.value), "combined"
+        ids = [combined.canonical_fact_id] if combined.canonical_fact_id else list(combined.input_fact_ids or [])
+        return float(combined.value), "combined", ids
 
     dep = _annual_point(store, company_id, "DEPRECIATION", fiscal_year)
     amort = _annual_point(store, company_id, "AMORTIZATION_OF_INTANGIBLE_ASSETS", fiscal_year)
     if dep is None or amort is None or dep.unit != unit or amort.unit != unit:
-        return None, "missing"
-    return float(dep.value) + float(amort.value), "split"
+        return None, "missing", []
+    dep_ids = [dep.canonical_fact_id] if dep.canonical_fact_id else list(dep.input_fact_ids or [])
+    amort_ids = [amort.canonical_fact_id] if amort.canonical_fact_id else list(amort.input_fact_ids or [])
+    return float(dep.value) + float(amort.value), "split", dep_ids + amort_ids
 
 
 def estimate_depreciation(store, company_id: str, fiscal_year: int,
@@ -69,7 +75,7 @@ def estimate_depreciation(store, company_id: str, fiscal_year: int,
     (MSFT reports them separately). Returns None when no reliable,
     non-overlapping estimate exists — never a silent fallback here.
     """
-    value, _ = _depreciation_selection(store, company_id, fiscal_year, unit)
+    value, _, _ = _depreciation_selection(store, company_id, fiscal_year, unit)
     return value
 
 
@@ -94,15 +100,31 @@ def default_assumption_set(store, company_id: str, ticker: str,
         "debt_cost": {"value": debt_cost, "source": issuer["debt_cost_source"]},
     }
 
-    revenue = _latest_annual_value(store, company_id, "REVENUE")
-    op_income = _latest_annual_value(store, company_id, "OPERATING_INCOME")
-    pretax = _latest_annual_value(store, company_id, "PRETAX_INCOME")
-    tax = _latest_annual_value(store, company_id, "INCOME_TAX_EXPENSE")
-    capex = _latest_annual_value(store, company_id, "CAPITAL_EXPENDITURES")
-    net_debt = _latest_annual_value(store, company_id, "NET_DEBT")
-    shares = _latest_annual_value(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES")
+    revenue_point = _latest_annual_point(store, company_id, "REVENUE")
+    op_income_point = _latest_annual_point(store, company_id, "OPERATING_INCOME")
+    pretax_point = _latest_annual_point(store, company_id, "PRETAX_INCOME")
+    tax_point = _latest_annual_point(store, company_id, "INCOME_TAX_EXPENSE")
+    capex_point = _latest_annual_point(store, company_id, "CAPITAL_EXPENDITURES")
+    net_debt_point = _latest_annual_point(store, company_id, "NET_DEBT")
+    shares_point = _latest_annual_point(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES")
+    revenue = float(revenue_point.value) if revenue_point is not None else None
+    op_income = float(op_income_point.value) if op_income_point is not None else None
+    pretax = float(pretax_point.value) if pretax_point is not None else None
+    tax = float(tax_point.value) if tax_point is not None else None
+    capex = float(capex_point.value) if capex_point is not None else None
+    net_debt = float(net_debt_point.value) if net_debt_point is not None else None
+    shares = float(shares_point.value) if shares_point is not None else None
     fy = _latest_fy(store, company_id, "REVENUE")
-    da, da_source_kind = _depreciation_selection(store, company_id, fy) if fy is not None else (None, "missing")
+    da, da_source_kind, da_fact_ids = (
+        _depreciation_selection(store, company_id, fy) if fy is not None else (None, "missing", [])
+    )
+
+    def fact_ids(point) -> list[str]:
+        if point is None:
+            return []
+        if point.canonical_fact_id:
+            return [point.canonical_fact_id]
+        return list(point.input_fact_ids or [])
 
     if not revenue:
         raise ValueError("no revenue facts; run `equitylens sync` first")
@@ -149,19 +171,26 @@ def default_assumption_set(store, company_id: str, ticker: str,
         shares=shares,
     )
     meta.update({
-        "revenue_base": {"value": revenue, "fiscal_year": fy, "source": "SEC 10-K canonical fact"},
+        "revenue_base": {"value": revenue, "fiscal_year": fy, "source": "SEC 10-K canonical fact",
+                         "fact_ids": fact_ids(revenue_point)},
         "revenue_growth": {"value": growth, "source": issuer.get("growth_path_source") or "assumption (hand-versioned)"},
-        "op_margin": {"value": op_margin, "fiscal_year": fy, "source": "OPERATING_INCOME / REVENUE"},
+        "op_margin": {"value": op_margin, "fiscal_year": fy, "source": "OPERATING_INCOME / REVENUE",
+                      "fact_ids": fact_ids(op_income_point) + fact_ids(revenue_point)},
         "tax_rate": {"value": tax_rate,
+                     "fact_ids": fact_ids(tax_point) + fact_ids(pretax_point),
                      "source": "INCOME_TAX / PRETAX_INCOME (latest FY)" if (tax is not None and pretax)
                                else "assumption (normalized 17% tax rate)"},
         "da_pct": {"value": da_pct,
                    "fiscal_year": fy,
+                   "fact_ids": da_fact_ids + fact_ids(revenue_point) if da is not None else [],
                    "source_kind": da_source_kind if da is not None else "assumption",
                    "source": "canonical D&A / revenue" if da is not None else "assumption (D&A tag absent)"},
-        "capex_pct": {"value": capex_pct, "source": "CAPITAL_EXPENDITURES / REVENUE" if capex is not None else "assumption (CapEx absent)"},
-        "net_cash": {"value": net_cash, "source": "NET_DEBT sign flip (latest balance sheet)"},
-        "shares": {"value": shares, "basis": "FY diluted weighted-average", "source": "SEC canonical fact"},
+        "capex_pct": {"value": capex_pct, "fact_ids": fact_ids(capex_point) + fact_ids(revenue_point) if capex is not None else [],
+                      "source": "CAPITAL_EXPENDITURES / REVENUE" if capex is not None else "assumption (CapEx absent)"},
+        "net_cash": {"value": net_cash, "fact_ids": fact_ids(net_debt_point),
+                     "source": "NET_DEBT sign flip (latest balance sheet)"},
+        "shares": {"value": shares, "basis": "FY diluted weighted-average",
+                   "fact_ids": fact_ids(shares_point), "source": "SEC canonical fact"},
         "wacc": {"value": wacc, "formula": "E/(D+E)*CoE + D/(D+E)*CoD_after_tax, weights documented"},
     })
     return inputs, meta

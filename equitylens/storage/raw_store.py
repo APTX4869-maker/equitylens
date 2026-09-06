@@ -15,6 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 MANIFEST_NAME = "_manifest.json"
@@ -40,11 +43,59 @@ def _read_manifest(directory: Path) -> dict:
 
 
 def _write_manifest(directory: Path, manifest: dict) -> None:
-    """Atomically replace the manifest (temp file + os.replace on same fs)."""
+    """Durably replace the manifest after writing it on the same filesystem."""
     path = _manifest_path(directory)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    os.replace(tmp, path)
+    payload = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=directory)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        _fsync_directory(directory)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a completed rename durable where directory fsync is supported."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+@contextmanager
+def _manifest_lock(directory: Path):
+    """Serialize snapshot publication so concurrent writers cannot lose pointers."""
+    import fcntl
+
+    lock_path = directory / ".manifest.lock"
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _write_immutable(path: Path, content: bytes) -> None:
+    """Create immutable snapshot bytes and make the directory entry durable."""
+    try:
+        with path.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _fsync_directory(path.parent)
+    except FileExistsError:
+        if sha256_bytes(path.read_bytes()) != sha256_bytes(content):
+            raise ValueError(f"snapshot filename collision for {path.name}")
 
 
 def _versioned_name(doc_name: str, sha: str) -> str:
@@ -63,21 +114,20 @@ def save_snapshot(directory: Path, doc_name: str, content: bytes) -> tuple[Path,
     sha = sha256_bytes(content)
     base = directory / doc_name
 
-    if base.exists() and sha256_bytes(base.read_bytes()) == sha:
-        path = base
-    elif base.exists():
-        # content differs from the canonical fixed name: write a versioned copy
-        path = directory / _versioned_name(doc_name, sha)
-        if not path.exists():
-            path.write_bytes(content)
-    else:
-        path = base
-        path.write_bytes(content)
+    with _manifest_lock(directory):
+        if base.exists() and sha256_bytes(base.read_bytes()) == sha:
+            path = base
+        elif base.exists():
+            path = directory / _versioned_name(doc_name, sha)
+            _write_immutable(path, content)
+        else:
+            path = base
+            _write_immutable(path, content)
 
-    # commit the latest pointer only now (atomic-enough: file fully written)
-    manifest = _read_manifest(directory)
-    manifest[doc_name] = {"sha256": sha, "path": path.name}
-    _write_manifest(directory, manifest)
+        # Publish only after the immutable bytes are durable.
+        manifest = _read_manifest(directory)
+        manifest[doc_name] = {"sha256": sha, "path": path.name}
+        _write_manifest(directory, manifest)
     return path, sha
 
 
@@ -102,6 +152,8 @@ def _load_by_sha(directory: Path, doc_name: str, sha: str) -> tuple[bytes, str] 
     hash differently is corruption and raises.
     """
     requested = sha.lower()
+    if len(requested) not in (8, 64) or re.fullmatch(r"[0-9a-f]+", requested) is None:
+        raise ValueError("snapshot sha must be 8 hexadecimal characters or 64 hexadecimal characters")
     versioned = directory / _versioned_name(doc_name, requested)
     if versioned.exists():
         content = versioned.read_bytes()

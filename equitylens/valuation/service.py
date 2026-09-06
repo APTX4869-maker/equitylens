@@ -45,6 +45,15 @@ def valuation_input_fingerprint(inputs: DcfInputs | dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _source_fact_ids(meta: dict) -> dict[str, list[str]]:
+    """Freeze the exact canonical identities behind every fact-derived input."""
+    return {
+        key: list(value.get("fact_ids") or [])
+        for key, value in meta.items()
+        if isinstance(value, dict) and value.get("fact_ids")
+    }
+
+
 def default_valuation(store, company_id: str, ticker: str) -> dict:
     rf = risk_free_rate()
     inputs, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
@@ -215,6 +224,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
             if field in a:
                 meta.setdefault(meta_key, {})["value"] = a[field]
                 meta[meta_key]["source"] = "user_override"
+                meta[meta_key]["fact_ids"] = []
     output = run_dcf(base)
     # Build the complete response before persisting so an invalid sub-scenario
     # can never leave a half-written run behind (atomic write-after-compute).
@@ -234,7 +244,10 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
         "run_at": _now(),
         "market_observation_id": market_observation_id,
         "assumption_set_id": payload.get("assumption_set_id") or f"aset_{uuid.uuid4().hex[:8]}",
-        "fact_snapshot_json": json.dumps({"inputs": _inputs_dict(base), "meta": meta}, ensure_ascii=False),
+        "fact_snapshot_json": json.dumps({
+            "inputs": _inputs_dict(base), "meta": meta,
+            "source_fact_ids": _source_fact_ids(meta),
+        }, ensure_ascii=False),
         "output_json": json.dumps(_output_dict(output), ensure_ascii=False),
         "warnings_json": json.dumps(output.warnings, ensure_ascii=False),
         "input_fingerprint": fingerprint,

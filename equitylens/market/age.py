@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 QUOTE_STALE_AFTER_DAYS = 7
 
 
 def parse_observed_at(s: str) -> datetime | None:
-    """Parse a provider-reported observation time to a naive UTC datetime.
+    """Parse a provider-reported observation time to an aware UTC datetime.
 
     Accepts e.g. 'Sep 3, 2026 9:58 AM ET' or '2026-09-03 09:58:41'. Returns
     None when unparseable (which the caller treats as degraded, never as fetch
@@ -24,14 +25,26 @@ def parse_observed_at(s: str) -> datetime | None:
     if not s:
         return None
     s = s.strip()
-    s = re.sub(r"\s+(ET|PT|CT|MT)\s*$", "", s)
+    match = re.search(r"\s+(ET|PT|CT|MT)\s*$", s)
+    zone = match.group(1) if match else None
+    if match:
+        s = s[:match.start()]
+    zones = {
+        "ET": "America/New_York", "PT": "America/Los_Angeles",
+        "CT": "America/Chicago", "MT": "America/Denver",
+    }
     for fmt in ("%b %d, %Y %I:%M %p", "%Y-%m-%d %H:%M:%S"):
         try:
-            return datetime.strptime(s, fmt)
+            parsed = datetime.strptime(s, fmt)
+            localized = parsed.replace(tzinfo=ZoneInfo(zones[zone])) if zone else parsed.replace(tzinfo=timezone.utc)
+            return localized.astimezone(timezone.utc)
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
 
@@ -50,7 +63,6 @@ def quote_observation_status(observed_at: str) -> dict:
             "detail": "观察时间无法解析（降级处理）",
             "as_of": str(observed_at or "")[:10] or None,
         }
-    obs = obs.replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     if obs > now:
         return {

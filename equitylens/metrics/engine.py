@@ -12,22 +12,14 @@ Period semantics (docs/04):
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from dataclasses import dataclass, replace
 
 from equitylens.config import METRIC_ENGINE_VERSION
 
 PERIOD_TYPE_RANK = {"Q_STANDALONE": 0, "YTD_6M": 1, "YTD_9M": 2, "FY": 3, "INSTANT": 4}
-
-
-def _derived_result_id(company_id: str, metric: str, frequency: str,
-                       period_end: str | None) -> str:
-    """Stable, reversible identity for a derived (non-canonical) metric result.
-
-    Derived metrics have no canonical fact id; this id lets the provenance API
-    resolve the result back to its value/formula/ordered inputs (D09).
-    """
-    return f"derived:{company_id}:{metric}:{frequency}:{period_end or ''}"
 
 
 @dataclass
@@ -70,6 +62,53 @@ class MetricPoint:
             "warnings": self.warnings or [],
             "missing_reason": self.missing_reason,
         }
+
+
+def derived_result_id(company_id: str, point: MetricPoint) -> str:
+    """Content-address a complete derived result without writing during a GET.
+
+    The signed payload freezes the card's value, formula, period and ordered
+    canonical inputs. A later restatement therefore gets a different identity,
+    while the old identity can still resolve its original root.
+    """
+    payload = {
+        "company_id": company_id,
+        "metric": point.metric,
+        "frequency": point.frequency,
+        "period_label": point.period_label,
+        "period_start": point.period_start,
+        "period_end": point.period_end,
+        "value": point.value,
+        "unit": point.unit,
+        "status": point.status,
+        "formula_id": point.formula_id,
+        "formula_version": point.formula_version,
+        "input_fact_ids": list(point.input_fact_ids or []),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                     allow_nan=False).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    digest = hashlib.sha256(raw).hexdigest()
+    return f"derived.v2.{encoded}.{digest}"
+
+
+def decode_derived_result_id(entity_id: str) -> dict | None:
+    """Verify and decode a v2 derived-result identity."""
+    parts = entity_id.split(".")
+    if len(parts) != 4 or parts[:2] != ["derived", "v2"]:
+        return None
+    encoded, expected = parts[2], parts[3]
+    try:
+        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    except (ValueError, TypeError):
+        return None
+    if hashlib.sha256(raw).hexdigest() != expected:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 class MetricEngine:
@@ -260,13 +299,15 @@ class MetricEngine:
 
         first_fact = series[dependencies[0]][required[0]]
         period_start = first_fact.get("period_start") or first_fact.get("period_end")
-        return replace(
+        current = replace(
             point,
             status="OK",
             frequency="ttm",
             period_start=str(period_start)[:10] if period_start else None,
             missing_reason=None,
+            result_id=None,
         )
+        return replace(current, result_id=derived_result_id(company_id, current))
 
     # ---------------- standalone quarter series ----------------
 
@@ -586,7 +627,7 @@ class MetricEngine:
         points.sort(key=lambda p: (p.fiscal_year or 0, p.fiscal_quarter or 0))
         for p in points:
             if p.canonical_fact_id is None and p.input_fact_ids:
-                p.result_id = _derived_result_id(company_id, p.metric, p.frequency, p.period_end)
+                p.result_id = derived_result_id(company_id, p)
         if limit:
             points = points[-limit:]
         return points

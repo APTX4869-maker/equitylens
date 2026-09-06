@@ -108,6 +108,17 @@ def test_replay_keeps_original_fetch_time_from_name():
     assert _fetch_time_from_snapshot_name("no_timestamp.json") is None
 
 
+def test_provider_timezone_is_converted_to_utc():
+    """D10: an ET observation is an eastern-market timestamp, not UTC text."""
+    from equitylens.market.age import parse_observed_at
+
+    summer = parse_observed_at("Sep 3, 2026 9:58 AM ET")
+    winter = parse_observed_at("Jan 3, 2026 9:58 AM ET")
+
+    assert summer is not None and summer.isoformat() == "2026-09-03T13:58:00+00:00"
+    assert winter is not None and winter.isoformat() == "2026-01-03T14:58:00+00:00"
+
+
 def test_market_quote_freshness_ok_and_stale(db):
     now = datetime.now(timezone.utc)
     # old observation (400 days ago) only -> stale, judged by observed_at
