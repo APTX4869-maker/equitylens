@@ -131,31 +131,31 @@ git commit -m "feat: route valuation workflows through v2"
 - `GET /valuation/plans/{plan_id}` preserves `reference_price_reason`, source identity, notes, conditions, version, and review state.
 - `GET /valuation/plans/compare?ids=...` returns same-company plan inputs and changed fields.
 
-- [ ] **Step 1: Add failing validation and restart-safe read tests**
+- [x] **Step 1: Add failing validation and restart-safe read tests**
 
 Assert arbitrary `reference_value`/`reference_source` fields without a valid saved run return 400. Save a v2 run, create plans for base and bear, and assert the backend derives the selected stored scenario value rather than trusting a client price. Close/reopen a temporary store and verify all fields survive. Assert nonpositive selected values preserve a reason and no normal reference price.
 
-- [ ] **Step 2: Verify the current endpoint accepts arbitrary prices**
+- [x] **Step 2: Verify the current endpoint accepts arbitrary prices**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k 'plan_' -q -p no:cacheprovider`
 
 Expected: the arbitrary-price request currently succeeds and copy/compare routes are absent.
 
-- [ ] **Step 3: Add an additive plan schema**
+- [x] **Step 3: Add an additive plan schema**
 
 Add nullable legacy-compatible columns: `valuation_run_id`, `scenario_key`, `reference_price_reason`, `conditions_json`, `parent_plan_id`, `version`, `review_status`, `review_reason`, `source_filing_as_of`, and `source_quote_observed_at`. Add the same idempotent migrations in `duckdb_store.py`. Existing rows read as `legacy/incomplete` and are not assigned invented run identities.
 
-- [ ] **Step 4: Resolve all new plan values from saved runs**
+- [x] **Step 4: Resolve all new plan values from saved runs**
 
 Load the same-company run, require `status=complete`, select only `base|bear|bull`, read the stored result, and calculate `reference_price = selected_value * (1 - margin)`. Persist the run ID, scenario, immutable input fingerprint, source dates, notes and conditions. Copy creates a new row and increments version; compare returns field differences without mutating either plan.
 
-- [ ] **Step 5: Verify plan API behavior**
+- [x] **Step 5: Verify plan API behavior**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k 'plan_' -q -p no:cacheprovider`
 
 Expected: traceability, nonpositive-state, open, copy, compare, company isolation and restart tests pass.
 
-- [ ] **Step 6: Commit the plan domain**
+- [x] **Step 6: Commit the plan domain**
 
 ```bash
 git add spec/schema.sql equitylens/storage/duckdb_store.py equitylens/valuation/service.py equitylens/api/routes.py tests/integration/test_api.py

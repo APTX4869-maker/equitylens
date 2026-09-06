@@ -441,47 +441,145 @@ def test_derived_result_identity_binds_value_formula_and_inputs(client):
     assert fields["input_fact_ids"] == ["ocf-a", "capex-a", "revenue-a"]
 
 
-def test_plan_reference_price_formula(client):
-    """P06: 参考价 = 选定每股估值 × (1 − 安全边际)."""
-    r = client.post("/api/v1/companies/AAPL/valuation/plans",
-                    json={"name": "保守", "reference_value": 100.0,
-                          "reference_source": "base_dcf", "margin_of_safety": 0.2})
-    assert r.status_code == 200
-    assert r.json()["reference_price"] == pytest.approx(80.0)
+def _save_v2_run(client, assumptions=None):
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        json={"persist": True, "assumptions": assumptions or {}},
+    )
+    assert response.status_code == 200
+    return response.json()
 
-    r = client.post("/api/v1/companies/AAPL/valuation/plans",
-                    json={"reference_value": 100.0, "margin_of_safety": 0.0})
-    assert r.json()["reference_price"] == pytest.approx(100.0)
+
+def test_plan_requires_traceable_run_and_derives_reference(client):
+    """P06: the server derives a plan value from one saved run/scenario."""
+    arbitrary = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={"reference_value": 100.0, "reference_source": "base_dcf",
+              "margin_of_safety": 0.2},
+    )
+    assert arbitrary.status_code == 400
+
+    run = _save_v2_run(client)
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"], "scenario_key": "base",
+            "name": "保守", "margin_of_safety": 0.2,
+            "notes": "等待服务收入验证", "conditions_to_verify": ["下一季服务收入继续增长"],
+        },
+    )
+    assert response.status_code == 200
+    plan = response.json()
+    expected = run["scenarios"]["base"]["result"]["fair_value_per_share"]
+    assert plan["reference_value"] == pytest.approx(expected)
+    assert plan["reference_price"] == pytest.approx(expected * 0.8)
+    assert plan["valuation_run_id"] == run["valuation_run_id"]
+    assert plan["scenario_key"] == "base"
+    assert plan["conditions_to_verify"] == ["下一季服务收入继续增长"]
+    assert plan["review_status"] == "current"
+    assert plan["source_filing_as_of"]
+    assert plan["source_quote_observed_at"]
+
+    detail = client.get(f"/api/v1/companies/AAPL/valuation/plans/{plan['plan_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["notes"] == "等待服务收入验证"
+    assert detail.json()["conditions_to_verify"] == ["下一季服务收入继续增长"]
 
 
 def test_plan_margin_validation_and_nonpositive_value(client):
-    """P06: margin < 0 or >= 100% is rejected; zero/negative value -> no price."""
+    run = _save_v2_run(client)
+    common = {"valuation_run_id": run["valuation_run_id"], "scenario_key": "base"}
     assert client.post("/api/v1/companies/AAPL/valuation/plans",
-                       json={"reference_value": 100.0, "margin_of_safety": -0.1}).status_code == 400
+                       json={**common, "margin_of_safety": -0.1}).status_code == 400
     assert client.post("/api/v1/companies/AAPL/valuation/plans",
-                       json={"reference_value": 100.0, "margin_of_safety": 1.0}).status_code == 400
+                       json={**common, "margin_of_safety": 1.0}).status_code == 400
 
-    r = client.post("/api/v1/companies/AAPL/valuation/plans",
-                    json={"reference_value": 0.0, "margin_of_safety": 0.2})
-    assert r.status_code == 200
-    assert r.json()["reference_price"] is None
-    assert "不生成可买入参考价" in r.json()["reference_price_reason"]
+    negative = _save_v2_run(client, {
+        "op_margin_start": -0.5, "op_margin_end": -0.5,
+        "da_pct": 0.0, "capex_pct": 0.1, "net_cash": 0.0,
+    })
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={"valuation_run_id": negative["valuation_run_id"],
+              "scenario_key": "base", "margin_of_safety": 0.2},
+    )
+    assert response.status_code == 200
+    assert response.json()["reference_price"] is None
+    assert "不生成可买入参考价" in response.json()["reference_price_reason"]
+    detail = client.get(
+        f"/api/v1/companies/AAPL/valuation/plans/{response.json()['plan_id']}"
+    ).json()
+    assert detail["reference_price_reason"] == response.json()["reference_price_reason"]
 
 
-def test_plans_are_company_isolated_and_readable(client):
-    """P06: plans are per-company and persist across reads."""
-    client.post("/api/v1/companies/AAPL/valuation/plans",
-                json={"reference_value": 100.0, "margin_of_safety": 0.2})
-    aapl = client.get("/api/v1/companies/AAPL/valuation/plans").json()["plans"]
-    msft = client.get("/api/v1/companies/MSFT/valuation/plans").json()["plans"]
-    assert len(aapl) >= 1
-    assert all(p["company_id"] == "0000320193" for p in aapl)
-    assert all(p["company_id"] == "0000789019" for p in msft)
-    # open the saved plan verbatim
-    pid = aapl[0]["plan_id"]
-    detail = client.get(f"/api/v1/companies/AAPL/valuation/plans/{pid}")
-    assert detail.status_code == 200
-    assert detail.json()["reference_price"] == pytest.approx(80.0)
+def test_plan_copy_compare_and_company_isolation(client):
+    run = _save_v2_run(client)
+    first = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={"valuation_run_id": run["valuation_run_id"], "scenario_key": "base",
+              "margin_of_safety": 0.2, "name": "原方案"},
+    ).json()
+    copied_response = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{first['plan_id']}/copy",
+        json={"name": "复制方案", "margin_of_safety": 0.3},
+    )
+    assert copied_response.status_code == 200
+    copied = copied_response.json()
+    assert copied["parent_plan_id"] == first["plan_id"]
+    assert copied["version"] == first["version"] + 1
+    assert copied["reference_price"] == pytest.approx(copied["reference_value"] * 0.7)
+
+    compared = client.get(
+        "/api/v1/companies/AAPL/valuation/plans/compare",
+        params={"ids": f"{first['plan_id']},{copied['plan_id']}"},
+    )
+    assert compared.status_code == 200
+    assert "margin_of_safety" in compared.json()["changed_fields"]
+
+    assert client.get(
+        f"/api/v1/companies/MSFT/valuation/plans/{first['plan_id']}"
+    ).status_code == 404
+
+
+def test_plan_fields_survive_store_restart(tmp_path):
+    """P06: plan source, notes, conditions and review state are persisted data."""
+    import json as _json
+
+    from equitylens.valuation.service import create_plan, get_plan
+
+    path = tmp_path / "plans.duckdb"
+    store = DuckDBStore(path)
+    store.connect()
+    store.init_schema()
+    store._conn.execute(
+        """INSERT INTO valuation_run
+           (valuation_run_id, company_id, model_name, model_version, run_at,
+            assumption_set_id, fact_snapshot_json, output_json, warnings_json,
+            input_fingerprint, scenarios_json, sensitivity_json, model_quality_json)
+           VALUES (?, ?, 'FCFF_DCF', 'fcff_dcf.v2', CURRENT_TIMESTAMP,
+                   'aset-restart', ?, '{}', '[]', ?, ?, '{}', '{}')""",
+        ["run-restart", "TEST", _json.dumps({"source_fact_ids": {}}), "fp-restart",
+         _json.dumps({"base": {"status": "OK", "inputs": {"wacc": 0.1},
+                                "result": {"fair_value_per_share": 100.0}}})],
+    )
+    created = create_plan(store, "TEST", "TEST", {
+        "valuation_run_id": "run-restart", "scenario_key": "base",
+        "margin_of_safety": 0.25, "notes": "restart note",
+        "conditions_to_verify": ["condition A"],
+    })
+    store.close()
+
+    reopened = DuckDBStore(path)
+    reopened.connect()
+    reopened.init_schema()
+    loaded = get_plan(reopened, "TEST", created["plan_id"])
+    reopened.close()
+    assert loaded is not None
+    assert loaded["reference_price"] == pytest.approx(75.0)
+    assert loaded["notes"] == "restart note"
+    assert loaded["conditions_to_verify"] == ["condition A"]
+    assert loaded["source_input_fingerprint"] == "fp-restart"
+    assert loaded["review_status"] == "current"
 
 
 def test_refresh_endpoint_serialized_with_module_status(client, monkeypatch):

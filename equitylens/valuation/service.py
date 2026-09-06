@@ -369,9 +369,26 @@ def create_plan(store, company_id: str, ticker: str, payload: dict) -> dict:
     output) times (1 - margin_of_safety). A zero/negative reference value is
     kept for research but produces no buyable reference price.
     """
-    if payload.get("reference_value") is None:
-        raise ValueError("必须选择一个参考值（reference_value）")
-    ref = float(payload["reference_value"])
+    run_id = payload.get("valuation_run_id")
+    scenario_key = payload.get("scenario_key")
+    if not run_id:
+        raise ValueError("必须选择一个已保存估值运行（valuation_run_id）")
+    if scenario_key not in ("base", "bear", "bull"):
+        raise ValueError("scenario_key 必须是 base、bear 或 bull")
+    run = store.query_one(
+        "SELECT * FROM valuation_run WHERE valuation_run_id = ? AND company_id = ?",
+        [run_id, company_id],
+    )
+    if run is None:
+        raise ValueError("估值运行不存在或不属于当前公司")
+    if not run.get("input_fingerprint") or not run.get("scenarios_json"):
+        raise ValueError("历史估值运行缺少完整输入，不能创建普通参考价方案")
+    scenarios = json.loads(run["scenarios_json"])
+    scenario = scenarios.get(scenario_key)
+    result = scenario.get("result") if isinstance(scenario, dict) else None
+    if not result or result.get("fair_value_per_share") is None:
+        raise ValueError("所选情景不可用，不能创建参考价方案")
+    ref = float(result["fair_value_per_share"])
     if payload.get("margin_of_safety") is None:
         raise ValueError("必须显式设置安全边际（margin_of_safety，0 表示无边际）")
     margin = float(payload["margin_of_safety"])
@@ -385,16 +402,49 @@ def create_plan(store, company_id: str, ticker: str, payload: dict) -> dict:
     else:
         reason = "参考值为 0 或负数，不生成可买入参考价（仅供研究）"
 
+    snapshot = json.loads(run.get("fact_snapshot_json") or "{}")
+    source_ids = sorted({
+        fact_id
+        for ids in (snapshot.get("source_fact_ids") or {}).values()
+        for fact_id in ids
+    })
+    filing_as_of = None
+    if source_ids:
+        row = store.query_one(
+            f"SELECT MAX(COALESCE(as_known_at, period_end)) AS at FROM canonical_fact "
+            f"WHERE canonical_fact_id IN ({','.join('?' for _ in source_ids)})",
+            source_ids,
+        )
+        filing_as_of = row.get("at") if row else None
+    quote_observed_at = None
+    if run.get("market_observation_id"):
+        quote = store.query_one(
+            "SELECT observed_at FROM market_quote WHERE quote_id = ?",
+            [run["market_observation_id"]],
+        )
+        quote_observed_at = str(quote["observed_at"]) if quote else None
+
     plan_id = f"plan_{uuid.uuid4().hex[:12]}"
     row = {
         "plan_id": plan_id, "company_id": company_id, "ticker": ticker,
         "name": payload.get("name") or "未命名方案",
         "reference_value": ref,
-        "reference_source": payload.get("reference_source"),
+        "reference_source": f"valuation_run:{run_id}:{scenario_key}",
         "margin_of_safety": margin,
         "reference_price": price,
         "notes": payload.get("notes"),
-        "assumptions_json": json.dumps(payload.get("assumptions") or {}, ensure_ascii=False),
+        "assumptions_json": json.dumps(scenario.get("inputs") or {}, ensure_ascii=False),
+        "valuation_run_id": run_id,
+        "scenario_key": scenario_key,
+        "source_input_fingerprint": run["input_fingerprint"],
+        "reference_price_reason": reason,
+        "conditions_json": json.dumps(payload.get("conditions_to_verify") or [], ensure_ascii=False),
+        "parent_plan_id": payload.get("_parent_plan_id"),
+        "version": int(payload.get("_version") or 1),
+        "review_status": "current",
+        "review_reason": None,
+        "source_filing_as_of": filing_as_of,
+        "source_quote_observed_at": quote_observed_at,
         "created_at": _now(),
     }
     store.connect()
@@ -405,9 +455,19 @@ def create_plan(store, company_id: str, ticker: str, payload: dict) -> dict:
         [row[c] for c in cols],
     )
     out = dict(row)
-    out["assumptions_json"] = payload.get("assumptions") or {}
-    if reason:
-        out["reference_price_reason"] = reason
+    return _plan_out(row)
+
+
+def _plan_out(row: dict) -> dict:
+    out = dict(row)
+    assumptions = out.get("assumptions_json")
+    out["assumptions_json"] = json.loads(assumptions or "{}") if isinstance(assumptions, str) else (assumptions or {})
+    conditions = out.get("conditions_json")
+    out["conditions_to_verify"] = json.loads(conditions or "[]") if isinstance(conditions, str) else (conditions or [])
+    out.pop("conditions_json", None)
+    if not out.get("valuation_run_id"):
+        out["review_status"] = "legacy/incomplete"
+        out["review_reason"] = out.get("review_reason") or "历史方案缺少估值运行身份"
     return out
 
 
@@ -417,9 +477,7 @@ def list_plans(store, company_id: str) -> list[dict]:
         "SELECT * FROM valuation_plan WHERE company_id = ? ORDER BY created_at DESC",
         [company_id],
     )
-    for r in rows:
-        r["assumptions_json"] = json.loads(r.get("assumptions_json") or "{}")
-    return rows
+    return [_plan_out(row) for row in rows]
 
 
 def get_plan(store, company_id: str, plan_id: str) -> dict | None:
@@ -429,5 +487,36 @@ def get_plan(store, company_id: str, plan_id: str) -> dict | None:
         [plan_id, company_id],
     )
     if row:
-        row["assumptions_json"] = json.loads(row.get("assumptions_json") or "{}")
-    return row
+        return _plan_out(row)
+    return None
+
+
+def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) -> dict:
+    original = get_plan(store, company_id, plan_id)
+    if original is None:
+        raise ValueError("方案不存在或不属于当前公司")
+    if not original.get("valuation_run_id"):
+        raise ValueError("历史不完整方案不能直接复制为普通参考价方案")
+    return create_plan(store, company_id, ticker, {
+        "valuation_run_id": original["valuation_run_id"],
+        "scenario_key": payload.get("scenario_key", original["scenario_key"]),
+        "margin_of_safety": payload.get("margin_of_safety", original["margin_of_safety"]),
+        "name": payload.get("name", f"{original['name']} 副本"),
+        "notes": payload.get("notes", original.get("notes")),
+        "conditions_to_verify": payload.get("conditions_to_verify", original.get("conditions_to_verify") or []),
+        "_parent_plan_id": plan_id,
+        "_version": int(original.get("version") or 1) + 1,
+    })
+
+
+def compare_plans(store, company_id: str, plan_ids: list[str]) -> dict:
+    if len(plan_ids) < 2 or len(plan_ids) > 5:
+        raise ValueError("请选择 2 到 5 个方案比较")
+    plans = [get_plan(store, company_id, plan_id) for plan_id in plan_ids]
+    if any(plan is None for plan in plans):
+        raise ValueError("比较列表包含不存在或跨公司的方案")
+    fields = ("scenario_key", "reference_value", "margin_of_safety", "reference_price",
+              "notes", "conditions_to_verify", "review_status")
+    changed = [field for field in fields if len({json.dumps(plan.get(field), sort_keys=True, ensure_ascii=False)
+                                                 for plan in plans}) > 1]
+    return {"plans": plans, "changed_fields": changed}

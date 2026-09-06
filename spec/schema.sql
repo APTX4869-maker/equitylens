@@ -169,3 +169,28 @@ CREATE TABLE IF NOT EXISTS valuation_run (
   sensitivity_json JSON,
   model_quality_json JSON
 );
+
+CREATE TABLE IF NOT EXISTS valuation_plan (
+  plan_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL,
+  ticker VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  reference_value DOUBLE,
+  reference_source VARCHAR,
+  margin_of_safety DOUBLE,
+  reference_price DOUBLE,
+  reference_price_reason VARCHAR,
+  notes VARCHAR,
+  assumptions_json JSON,
+  valuation_run_id VARCHAR,
+  scenario_key VARCHAR,
+  source_input_fingerprint VARCHAR,
+  conditions_json JSON,
+  parent_plan_id VARCHAR,
+  version INTEGER,
+  review_status VARCHAR,
+  review_reason VARCHAR,
+  source_filing_as_of TIMESTAMP,
+  source_quote_observed_at VARCHAR,
+  created_at TIMESTAMP NOT NULL
+);

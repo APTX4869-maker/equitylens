@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS valuation_plan (
   reference_price DOUBLE,
   notes VARCHAR,
   assumptions_json JSON,
+  valuation_run_id VARCHAR,
+  scenario_key VARCHAR,
+  source_input_fingerprint VARCHAR,
+  reference_price_reason VARCHAR,
+  conditions_json JSON,
+  parent_plan_id VARCHAR,
+  version INTEGER,
+  review_status VARCHAR,
+  review_reason VARCHAR,
+  source_filing_as_of TIMESTAMP,
+  source_quote_observed_at VARCHAR,
   created_at TIMESTAMP NOT NULL
 );
 """
@@ -142,6 +153,17 @@ _MIGRATIONS = [
     "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS scenarios_json JSON",
     "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS sensitivity_json JSON",
     "ALTER TABLE valuation_run ADD COLUMN IF NOT EXISTS model_quality_json JSON",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS valuation_run_id VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS scenario_key VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS source_input_fingerprint VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS reference_price_reason VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS conditions_json JSON",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS parent_plan_id VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS version INTEGER",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS review_status VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS review_reason VARCHAR",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS source_filing_as_of TIMESTAMP",
+    "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS source_quote_observed_at VARCHAR",
 ]
 
 

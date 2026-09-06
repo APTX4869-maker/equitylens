@@ -729,6 +729,17 @@ def valuation_plans_list(ticker: str):
     return {"ticker": ticker, "plans": list_plans(_store(), company.cik)}
 
 
+@router.get("/companies/{ticker}/valuation/plans/compare")
+def valuation_plans_compare(ticker: str, ids: str):
+    from equitylens.valuation.service import compare_plans
+
+    company = _resolve_company(ticker)
+    try:
+        return compare_plans(_store(), company.cik, [item for item in ids.split(",") if item])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.get("/companies/{ticker}/valuation/plans/{plan_id}")
 def valuation_plan_detail(ticker: str, plan_id: str):
     from equitylens.valuation.service import get_plan
@@ -738,6 +749,17 @@ def valuation_plan_detail(ticker: str, plan_id: str):
     if plan is None:
         raise HTTPException(404, f"plan {plan_id} not found for {ticker}")
     return plan
+
+
+@router.post("/companies/{ticker}/valuation/plans/{plan_id}/copy")
+def valuation_plan_copy(ticker: str, plan_id: str, payload: dict):
+    from equitylens.valuation.service import copy_plan
+
+    company = _resolve_company(ticker)
+    try:
+        return copy_plan(_store(), company.cik, company.ticker, plan_id, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/companies/{ticker}/market/quote")
