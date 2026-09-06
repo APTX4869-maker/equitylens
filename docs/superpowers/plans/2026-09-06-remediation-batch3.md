@@ -34,29 +34,29 @@
 - Adds: `DcfInputs.terminal_roic: float` and `DcfOutput.terminal_forecast: dict`.
 - Retains: `run_dcf_explicit(...)` as the shared explicit-cash-flow core, with terminal inputs defined as year-6 amounts.
 
-- [ ] **Step 1: Write positive-growth hand-calculation regressions**
+- [x] **Step 1: Write positive-growth hand-calculation regressions**
 
-Add a literal case with WACC 10%, terminal growth 2%, terminal EBIT 120, tax 20%, terminal D&A 10, CapEx 5, and change in NWC 1. Assert terminal FCFF is `80`, terminal value is `1000`, and no extra `1.02` multiplier appears. Add a production `run_dcf` case that asserts its terminal block is built from year-6 revenue, stable margin, and `reinvestment_rate = terminal_growth / terminal_roic`.
+Add a literal case with WACC 10%, terminal growth 2%, terminal EBIT 120, tax 20%, terminal D&A 10, CapEx 5, and change in NWC 1. Assert terminal FCFF is `100`, terminal value is `1250`, and no extra `1.02` multiplier appears. Add a production `run_dcf` case that asserts its terminal block is built from year-6 revenue, stable margin, and `reinvestment_rate = terminal_growth / terminal_roic`.
 
-- [ ] **Step 2: Run the new tests and verify the old double-growth behavior fails**
+- [x] **Step 2: Run the new tests and verify the old double-growth behavior fails**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -k 'terminal_year or v2_terminal' -q -p no:cacheprovider`
 
 Expected: the explicit case returns `1020`, and production has no v2 terminal block.
 
-- [ ] **Step 3: Add explicit version dispatch and stable-period economics**
+- [x] **Step 3: Add explicit version dispatch and stable-period economics**
 
 Keep the old percentage-path calculation as `_run_dcf_v1` for explicit compatibility tests. Build the five forecast years once for v2. Construct terminal-year revenue as year-5 revenue times `(1 + terminal_growth)`, terminal EBIT from the stable margin, terminal NOPAT, reinvestment rate as `terminal_growth / terminal_roic`, and terminal FCFF as `terminal_nopat * (1 - reinvestment_rate)`. Pass that already-forward terminal cash flow to the explicit discount core and compute `TV = terminal_fcff / (wacc - terminal_growth)`.
 
 Validate finite `terminal_roic`, require it to be positive, and reject `terminal_growth / terminal_roic >= 1` with a structured `ValuationError(field="terminal_roic")`. Include the terminal revenue, EBIT, NOPAT, reinvestment, FCFF, ROIC and formula text in `terminal_forecast`.
 
-- [ ] **Step 4: Verify v1 compatibility and v2 arithmetic**
+- [x] **Step 4: Verify v1 compatibility and v2 arithmetic**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -q -p no:cacheprovider`
 
 Expected: all tests pass; hand calculations detect any terminal double growth.
 
-- [ ] **Step 5: Commit the engine boundary**
+- [x] **Step 5: Commit the engine boundary**
 
 ```bash
 git add equitylens/valuation/dcf.py tests/golden/test_golden_valuation.py

@@ -35,7 +35,7 @@ def test_dcf_is_deterministic():
     a = run_dcf(make_inputs())
     b = run_dcf(make_inputs())
     assert a.fair_value_per_share == pytest.approx(b.fair_value_per_share, rel=1e-15)
-    assert a.model_version == "fcff_dcf.v1"
+    assert a.model_version == "fcff_dcf.v2"
 
 
 def test_dcf_guardrail_wacc_must_exceed_growth():
@@ -87,6 +87,8 @@ def test_nan_inf_rejected():
             run_dcf(make_inputs(wacc=bad))
         with pytest.raises(ValuationError):
             run_dcf(make_inputs(revenue_base=bad))
+        with pytest.raises(ValuationError):
+            run_dcf(make_inputs(terminal_roic=bad))
 
 
 def test_out_of_range_inputs_rejected():
@@ -149,9 +151,46 @@ def test_explicit_terminal_values_must_be_finite():
     assert exc.value.field == "terminal_ebit"
 
 
+def test_explicit_terminal_year_cash_flow_is_not_grown_twice():
+    """P02: terminal inputs describe year 6 already, so TV uses that FCFF once."""
+    from equitylens.valuation.dcf import run_dcf_explicit
+
+    out = run_dcf_explicit(
+        ebit=[20.0] * 5, da=[3.0] * 5, capex=[5.0] * 5,
+        tax_rate=0.20, wacc=0.10, terminal_growth=0.02,
+        net_cash=0.0, shares=1.0, nwc_delta=[0.0] * 5,
+        terminal_ebit=120.0, terminal_da=10.0,
+        terminal_capex=5.0, terminal_nwc_delta=1.0,
+    )
+
+    # Terminal-year FCFF = 120*(1-.2)+10-5-1 = 100; TV = 100/(.10-.02).
+    assert out.terminal_value == pytest.approx(1250.0)
+
+
+def test_production_v2_terminal_uses_stable_roic_reinvestment():
+    """P02: production constructs year-6 FCFF from stable growth and ROIC."""
+    inputs = make_inputs(
+        revenue_base=100.0, revenue_growth=[0.0] * 5,
+        op_margin_start=0.25, op_margin_end=0.25, tax_rate=0.20,
+        da_pct=0.0, capex_pct=0.0, nwc_pct=0.0,
+        wacc=0.10, terminal_growth=0.02, net_cash=0.0, shares=1.0,
+    )
+    inputs.terminal_roic = 0.20
+
+    out = run_dcf(inputs)
+    terminal = out.terminal_forecast
+    assert out.model_version == "fcff_dcf.v2"
+    assert terminal["revenue"] == pytest.approx(102.0)
+    assert terminal["nopat"] == pytest.approx(20.4)
+    assert terminal["reinvestment_rate"] == pytest.approx(0.10)
+    assert terminal["reinvestment"] == pytest.approx(2.04)
+    assert terminal["fcff"] == pytest.approx(18.36)
+    assert out.terminal_value == pytest.approx(18.36 / 0.08)
+
+
 def test_negative_fcff_not_clipped_to_zero():
     """A legal negative-FCFF path must not crash nor be coerced to zero."""
-    out = run_dcf(make_inputs(op_margin_start=0.05, op_margin_end=0.05, tax_rate=0.2,
+    out = run_dcf(make_inputs(op_margin_start=-0.05, op_margin_end=-0.05, tax_rate=0.2,
                               da_pct=0.01, capex_pct=0.10, nwc_pct=0.0,
                               revenue_growth=[0.0] * 5, wacc=0.10, terminal_growth=0.03,
                               net_cash=0.0))

@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-MODEL_VERSION = "fcff_dcf.v1"
+MODEL_VERSION = "fcff_dcf.v2"
+LEGACY_MODEL_VERSION = "fcff_dcf.v1"
 FORECAST_YEARS = 5
 MIN_WACC_G_MARGIN = 0.01  # 1.0 percentage point
 
@@ -52,6 +53,7 @@ class DcfInputs:
     net_cash: float              # cash + ST investments - debt (can be negative)
     shares: float                # share-count basis (diluted)
     share_basis_label: str = "latest fiscal-year diluted weighted-average shares"
+    terminal_roic: float = 0.20  # stable-period return on incremental invested capital
 
 
 @dataclass
@@ -79,6 +81,7 @@ class DcfOutput:
     net_cash: float
     terminal_value_share: float  # % of EV from terminal value
     forecast: list[YearForecast]
+    terminal_forecast: dict = field(default_factory=dict)
     model_version: str = MODEL_VERSION
     warnings: list[str] = field(default_factory=list)
 
@@ -105,6 +108,7 @@ def validate(inputs: DcfInputs) -> list[str]:
         "nwc_pct": inputs.nwc_pct,
         "wacc": inputs.wacc,
         "terminal_growth": inputs.terminal_growth,
+        "terminal_roic": inputs.terminal_roic,
         "net_cash": inputs.net_cash,
         "shares": inputs.shares,
     }
@@ -135,6 +139,14 @@ def validate(inputs: DcfInputs) -> list[str]:
         raise ValuationError("INVALID_ASSUMPTION", f"da_pct must be >= 0 (got {inputs.da_pct})", "da_pct")
     if inputs.capex_pct < 0:
         raise ValuationError("INVALID_ASSUMPTION", f"capex_pct must be >= 0 (got {inputs.capex_pct})", "capex_pct")
+    if inputs.terminal_roic <= 0:
+        raise ValuationError("INVALID_ASSUMPTION", "terminal_roic must be positive", "terminal_roic")
+    if inputs.terminal_growth / inputs.terminal_roic >= 1.0:
+        raise ValuationError(
+            "INVALID_ASSUMPTION",
+            "terminal growth requires at least 100% of stable NOPAT to be reinvested",
+            "terminal_roic",
+        )
     if inputs.wacc <= -1.0:
         raise ValuationError("INVALID_ASSUMPTION", f"wacc must be > -1 (got {inputs.wacc})", "wacc")
     if inputs.wacc - inputs.terminal_growth < MIN_WACC_G_MARGIN - 1e-9:
@@ -153,7 +165,8 @@ def validate(inputs: DcfInputs) -> list[str]:
     return warnings
 
 
-def run_dcf(inputs: DcfInputs) -> DcfOutput:
+def _run_dcf_v1(inputs: DcfInputs) -> DcfOutput:
+    """Historical v1 executor retained only for explicit version dispatch."""
     warnings = validate(inputs)
     revenue = inputs.revenue_base
     forecast: list[YearForecast] = []
@@ -195,8 +208,79 @@ def run_dcf(inputs: DcfInputs) -> DcfOutput:
         net_cash=inputs.net_cash,
         terminal_value_share=tv_share,
         forecast=forecast,
+        model_version=LEGACY_MODEL_VERSION,
         warnings=warnings,
     )
+
+
+def _run_dcf_v2(inputs: DcfInputs) -> DcfOutput:
+    """Forecast five operating years and a separately defined stable year 6."""
+    warnings = validate(inputs)
+    revenue = inputs.revenue_base
+    forecast: list[YearForecast] = []
+    for t in range(1, FORECAST_YEARS + 1):
+        previous_revenue = revenue
+        revenue = previous_revenue * (1 + inputs.revenue_growth[t - 1])
+        progress = (t - 1) / (FORECAST_YEARS - 1) if FORECAST_YEARS > 1 else 1.0
+        margin = inputs.op_margin_start + (inputs.op_margin_end - inputs.op_margin_start) * progress
+        ebit = revenue * margin
+        nopat = ebit * (1 - inputs.tax_rate)
+        da = revenue * inputs.da_pct
+        capex = revenue * inputs.capex_pct
+        nwc_delta = (revenue - previous_revenue) * inputs.nwc_pct
+        forecast.append(YearForecast(
+            year=t, revenue=revenue, op_margin=margin, ebit=ebit, nopat=nopat,
+            da=da, capex=capex, nwc_delta=nwc_delta,
+            fcff=nopat + da - capex - nwc_delta, pv_fcff=0.0,
+        ))
+
+    terminal_revenue = revenue * (1 + inputs.terminal_growth)
+    terminal_ebit = terminal_revenue * inputs.op_margin_end
+    terminal_nopat = terminal_ebit * (1 - inputs.tax_rate)
+    reinvestment_rate = inputs.terminal_growth / inputs.terminal_roic
+    terminal_reinvestment = terminal_nopat * reinvestment_rate
+    terminal_fcff = terminal_nopat - terminal_reinvestment
+    terminal = {
+        "year": FORECAST_YEARS + 1,
+        "revenue": terminal_revenue,
+        "op_margin": inputs.op_margin_end,
+        "ebit": terminal_ebit,
+        "nopat": terminal_nopat,
+        "terminal_roic": inputs.terminal_roic,
+        "reinvestment_rate": reinvestment_rate,
+        "reinvestment": terminal_reinvestment,
+        "fcff": terminal_fcff,
+        "definition": "year-6 NOPAT × (1 − terminal_growth / terminal_roic)",
+    }
+
+    output = run_dcf_explicit(
+        ebit=[row.ebit for row in forecast],
+        da=[row.da for row in forecast],
+        capex=[row.capex for row in forecast],
+        nwc_delta=[row.nwc_delta for row in forecast],
+        tax_rate=inputs.tax_rate,
+        wacc=inputs.wacc,
+        terminal_growth=inputs.terminal_growth,
+        net_cash=inputs.net_cash,
+        shares=inputs.shares,
+        terminal_fcff=terminal_fcff,
+    )
+    for row, discounted in zip(forecast, output.forecast):
+        row.pv_fcff = discounted.pv_fcff
+    output.forecast = forecast
+    output.terminal_forecast = terminal
+    output.model_version = MODEL_VERSION
+    output.warnings = warnings
+    return output
+
+
+def run_dcf(inputs: DcfInputs, model_version: str = MODEL_VERSION) -> DcfOutput:
+    """Dispatch valuation by explicit model version; new calls default to v2."""
+    if model_version == MODEL_VERSION:
+        return _run_dcf_v2(inputs)
+    if model_version == LEGACY_MODEL_VERSION:
+        return _run_dcf_v1(inputs)
+    raise ValuationError("UNSUPPORTED", f"unsupported model version {model_version}", "model_version")
 
 
 def implied_growth(inputs: DcfInputs, target_price: float, lo: float = -0.05,
@@ -261,6 +345,7 @@ def run_dcf_explicit(
     terminal_da: float | None = None,
     terminal_capex: float | None = None,
     terminal_nwc_delta: float | None = None,
+    terminal_fcff: float | None = None,
 ) -> DcfOutput:
     import math
 
@@ -282,6 +367,7 @@ def run_dcf_explicit(
         ("terminal_da", terminal_da),
         ("terminal_capex", terminal_capex),
         ("terminal_nwc_delta", terminal_nwc_delta),
+        ("terminal_fcff", terminal_fcff),
     ):
         if v is not None and not math.isfinite(v):
             raise ValuationError("INVALID_ASSUMPTION", f"{name} must be finite", name)
@@ -296,7 +382,9 @@ def run_dcf_explicit(
     t_da = terminal_da if terminal_da is not None else da[-1]
     t_capex = terminal_capex if terminal_capex is not None else capex[-1]
     t_nwc = terminal_nwc_delta if terminal_nwc_delta is not None else nwc[-1]
-    terminal_fcff = t_ebit * (1 - tax_rate) + t_da - t_capex - t_nwc
+    stable_fcff = terminal_fcff if terminal_fcff is not None else (
+        t_ebit * (1 - tax_rate) + t_da - t_capex - t_nwc
+    )
 
     forecast: list[YearForecast] = []
     sum_pv_fcff = 0.0
@@ -311,7 +399,9 @@ def run_dcf_explicit(
             nwc_delta=nwc[i], fcff=fcff, pv_fcff=pv,
         ))
 
-    tv = terminal_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
+    # The terminal cash flow is already the year-6 amount. Growing it again here
+    # would apply terminal growth twice.
+    tv = stable_fcff / (wacc - terminal_growth)
     pv_terminal = tv / (1 + wacc) ** FORECAST_YEARS
     ev = sum_pv_fcff + pv_terminal
     equity = ev + net_cash
@@ -330,5 +420,15 @@ def run_dcf_explicit(
         net_cash=net_cash,
         terminal_value_share=tv_share,
         forecast=forecast,
+        terminal_forecast={
+            "year": FORECAST_YEARS + 1,
+            "ebit": t_ebit,
+            "nopat": t_ebit * (1 - tax_rate),
+            "da": t_da,
+            "capex": t_capex,
+            "nwc_delta": t_nwc,
+            "fcff": stable_fcff,
+            "definition": "explicit year-6 FCFF",
+        },
         warnings=warnings,
     )
