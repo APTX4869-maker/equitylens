@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -12,6 +13,16 @@ from equitylens.metrics.engine import MetricEngine
 from equitylens.storage.duckdb_store import DuckDBStore
 
 router = APIRouter(prefix="/api/v1")
+
+# P08: in-process per-company refresh locks so a second refresh of the same
+# company cannot start a conflicting write while the first is running.
+_REFRESH_LOCKS: dict[str, threading.Lock] = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
+
+
+def _refresh_lock(ticker: str) -> threading.Lock:
+    with _REFRESH_LOCKS_GUARD:
+        return _REFRESH_LOCKS.setdefault(ticker, threading.Lock())
 
 
 def _store() -> DuckDBStore:
@@ -227,7 +238,9 @@ def metrics(
         m = m.strip().upper()
         if not m:
             continue
-        points = engine.compute(m, company.cik, frequency=frequency, limit=limit)
+        points = ([engine.current(m, company.cik, frequency)]
+                  if frequency == "ttm" and limit == 1
+                  else engine.compute(m, company.cik, frequency=frequency, limit=limit))
         for p in points:
             out.append({
                 "metric": m,
@@ -239,9 +252,12 @@ def metrics(
                 "formula_version": p.formula_version,
                 "input_fact_ids": p.input_fact_ids or [],
                 "canonical_fact_id": p.canonical_fact_id,
+                "frequency": p.frequency,
+                "period_start": p.period_start,
                 "fiscal_year": p.fiscal_year,
                 "fiscal_quarter": p.fiscal_quarter,
                 "period_end": p.period_end,
+                "missing_reason": p.missing_reason,
             })
     return {"ticker": ticker, "frequency": frequency, "metrics": out}
 
@@ -273,22 +289,20 @@ def overview(ticker: str, mode: str = Query("latest_restated")):
     for m in ("REVENUE", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"):
         pts = engine.compute(m, cik, frequency="quarterly")
         if pts:
-            series = [(p.period_end or "", p.value) for p in pts if p.value is not None]
-            # TTM = trailing 4 standalone quarters
-            last4 = [v for _, v in series[-4:]]
-            if len(last4) == 4:
-                kpis[f"TTM_{m}"] = {"value": sum(last4), "unit": "USD", "periods": [p for p, _ in series[-4:]]}
-            latest = series[-1][1] if series else None
+            latest = next((p.value for p in reversed(pts) if p.value is not None), None)
             kpis[f"{m}_LATEST"] = {"value": latest, "unit": "USD"}
+        # TTM comes from the backend metric engine (4 *consecutive* quarters),
+        # never a front-end sum of the last 4 non-null points.
+        ttm = engine.compute(m, cik, frequency="ttm")
+        if ttm and ttm[-1].value is not None:
+            kpis[f"TTM_{m}"] = {"value": ttm[-1].value, "unit": "USD", "period": ttm[-1].period_label}
     for m in ("GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN", "FCF_MARGIN"):
         pts = engine.compute(m, cik, frequency="quarterly")
         if pts and pts[-1].value is not None:
             kpis[m] = {"value": pts[-1].value, "unit": "ratio", "period": pts[-1].period_label}
-    for m in ("FCF",):
-        pts = engine.compute(m, cik, frequency="quarterly")
-        series = [(p.period_end or "", p.value) for p in pts if p.value is not None]
-        if len(series) >= 4:
-            kpis["TTM_FCF"] = {"value": sum(v for _, v in series[-4:]), "unit": "USD"}
+    fcf_ttm = engine.compute("FCF", cik, frequency="ttm")
+    if fcf_ttm and fcf_ttm[-1].value is not None:
+        kpis["TTM_FCF"] = {"value": fcf_ttm[-1].value, "unit": "USD", "period": fcf_ttm[-1].period_label}
     nd = engine.compute("NET_DEBT", cik, frequency="quarterly")
     if nd:
         kpis["NET_DEBT"] = {"value": nd[-1].value, "unit": "USD", "period": nd[-1].period_label}
@@ -553,7 +567,8 @@ def valuation_run(ticker: str, payload: dict):
 
     company = _resolve_company(ticker)
     try:
-        return run_custom(_store(), company.cik, company.ticker, payload)
+        persist = bool(payload.get("persist", True))
+        return run_custom(_store(), company.cik, company.ticker, payload, persist=persist)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -577,6 +592,61 @@ def valuation_runs(ticker: str, limit: int = 10):
         [company.cik, limit],
     )
     return {"ticker": ticker, "runs": rows}
+
+
+@router.get("/companies/{ticker}/valuation/runs/{run_id}")
+def valuation_run_detail(ticker: str, run_id: str):
+    """Read a single saved run verbatim (inputs + output as persisted), so
+    opening an old record never silently re-runs today's defaults (V05)."""
+    import json as _json
+
+    company = _resolve_company(ticker)
+    row = _store().query_one(
+        "SELECT * FROM valuation_run WHERE valuation_run_id = ? AND company_id = ?",
+        [run_id, company.cik],
+    )
+    if row is None:
+        raise HTTPException(404, f"run {run_id} not found for {ticker}")
+    return {
+        "valuation_run_id": row["valuation_run_id"],
+        "model_name": row["model_name"],
+        "model_version": row["model_version"],
+        "run_at": row["run_at"],
+        "market_observation_id": row.get("market_observation_id"),
+        "assumptions": _json.loads(row["fact_snapshot_json"] or "{}"),
+        "output": _json.loads(row["output_json"] or "{}"),
+        "warnings": _json.loads(row["warnings_json"] or "[]"),
+    }
+
+
+@router.post("/companies/{ticker}/valuation/plans")
+def valuation_plans_create(ticker: str, payload: dict):
+    from equitylens.valuation.service import create_plan
+
+    company = _resolve_company(ticker)
+    try:
+        return create_plan(_store(), company.cik, company.ticker, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/companies/{ticker}/valuation/plans")
+def valuation_plans_list(ticker: str):
+    from equitylens.valuation.service import list_plans
+
+    company = _resolve_company(ticker)
+    return {"ticker": ticker, "plans": list_plans(_store(), company.cik)}
+
+
+@router.get("/companies/{ticker}/valuation/plans/{plan_id}")
+def valuation_plan_detail(ticker: str, plan_id: str):
+    from equitylens.valuation.service import get_plan
+
+    company = _resolve_company(ticker)
+    plan = get_plan(_store(), company.cik, plan_id)
+    if plan is None:
+        raise HTTPException(404, f"plan {plan_id} not found for {ticker}")
+    return plan
 
 
 @router.get("/companies/{ticker}/market/quote")
@@ -638,3 +708,52 @@ def company_freshness(ticker: str):
 
     company = _resolve_company(ticker)
     return freshness(_store(), company.cik, company.ticker)
+
+
+@router.post("/companies/{ticker}/refresh")
+def company_refresh(ticker: str):
+    """P08: one-click refresh of a company's financial data.
+
+    Serialized per company (no conflicting concurrent writes). Runs the existing
+    sync pipeline synchronously; returns per-module status. Segments/management/
+    quotes run best-effort after financials.
+    """
+    company = _resolve_company(ticker)
+    lock = _refresh_lock(company.ticker)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(409, f"{ticker} 正在刷新中，请稍后")
+
+    modules: dict[str, dict] = {}
+    try:
+        store = _store()
+        from equitylens.ingestion.sec.sync import sync_company
+
+        report = sync_company(company.ticker, fetch=True, store=store)
+        modules["financials"] = {
+            "status": "ok",
+            "facts_accepted": report.facts_accepted,
+            "canonical_count": report.canonical_count,
+            "warnings": report.warnings,
+        }
+
+        # best-effort segment refresh (may not have fetched filing docs)
+        try:
+            from equitylens.ingestion.sec.sync import sync_segments
+            seg = sync_segments(company.ticker, fetch=True, store=store)
+            modules["segments"] = {"status": "ok", "facts_accepted": seg.facts_accepted}
+        except Exception as exc:
+            modules["segments"] = {"status": "error", "reason": str(exc)}
+
+        # best-effort quote refresh
+        try:
+            from equitylens.market.service import sync_quotes
+            q = sync_quotes([company.ticker], fetch=True, store=store)
+            modules["quotes"] = {"status": "ok", "reports": [r.line() for r in q]}
+        except Exception as exc:
+            modules["quotes"] = {"status": "error", "reason": str(exc)}
+
+        return {"ticker": ticker, "status": "ok", "modules": modules}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+    finally:
+        lock.release()

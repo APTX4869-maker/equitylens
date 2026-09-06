@@ -48,9 +48,12 @@ class MetricOut(BaseModel):
     formula_id: str | None = None
     formula_version: str | None = None
     input_fact_ids: list[str] = Field(default_factory=list)
+    frequency: str | None = None
+    period_start: str | None = None
     fiscal_year: int | None = None
     fiscal_quarter: int | None = None
     period_end: str | None = None
+    missing_reason: str | None = None
 
 
 class CompanyOut(BaseModel):

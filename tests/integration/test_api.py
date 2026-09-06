@@ -66,6 +66,36 @@ def test_quarterly_cashflow_standalone_not_ytd(client):
     assert q2["provenance"]["formula_id"] == "standalone_quarter.ytd_diff.v1"
 
 
+def test_derived_metrics_have_own_identity_and_unit(client):
+    """D09: derived results carry their own unit and a provenance root of all
+    inputs — they must not impersonate the last input fact's identity/unit."""
+    r = client.get("/api/v1/companies/AAPL/metrics",
+                   params={"metrics": "REVENUE", "frequency": "ttm", "limit": 1})
+    m = r.json()["metrics"][-1]
+    assert m["value"] == pytest.approx(466_823_000_000, rel=1e-6)
+    assert m["unit"] == "USD"
+    assert m["canonical_fact_id"] is None  # derived, not the last quarter
+    assert len(m["input_fact_ids"]) == 4  # all four inputs expandable
+    assert m["frequency"] == "ttm"
+    assert m["status"] == "OK"
+    assert m["period_start"]
+    assert m["period_end"]
+    assert m["missing_reason"] is None
+
+    r = client.get("/api/v1/companies/AAPL/metrics",
+                   params={"metrics": "GROSS_MARGIN", "frequency": "quarterly", "limit": 1})
+    gm = r.json()["metrics"][-1]
+    assert gm["unit"] == "ratio"  # a ratio must not inherit USD
+    assert gm["canonical_fact_id"] is None
+    assert len(gm["input_fact_ids"]) == 2
+
+    r = client.get("/api/v1/companies/MSFT/metrics",
+                   params={"metrics": "NET_DEBT", "frequency": "quarterly"})
+    nd = r.json()["metrics"][-1]
+    assert nd["unit"] == "USD"
+    assert len(nd["input_fact_ids"]) >= 4  # full add/subtract bridge
+
+
 def test_metrics_have_formula_and_inputs(client):
     r = client.get(
         "/api/v1/companies/MSFT/metrics",
@@ -192,6 +222,109 @@ def test_market_quote_in_valuation_default(client):
     assert market["status"] == "OK"
     assert market["quote"]["price"] > 0
     assert "price_vs_fair_pct" in market["derived"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"tax_rate": 1.5},
+    {"op_margin_end": 2.0},
+    {"revenue_growth": [-1.2, -1.2, -1.2, -1.2, -1.2]},
+    {"revenue_growth": [0.05, 0.05]},
+])
+def test_valuation_run_invalid_input_400_no_write(client, company_db, bad):
+    """V01: invalid inputs return a structured client error and write nothing."""
+    before = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    r = client.post("/api/v1/companies/AAPL/valuation/run", json={"assumptions": bad})
+    assert r.status_code == 400
+    after = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    assert after == before
+
+
+def test_default_valuation_does_not_persist_run(client, company_db):
+    """V05: GET /default is a preview and must not add a valuation_run."""
+    before = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    r = client.get("/api/v1/companies/AAPL/valuation/default")
+    assert r.status_code == 200
+    after = company_db.query("SELECT count(*) n FROM valuation_run")[0]["n"]
+    assert after == before
+
+
+def test_saved_run_reads_back_verbatim(client):
+    """V05: a saved run can be read back with its persisted inputs/output."""
+    r = client.post("/api/v1/companies/AAPL/valuation/run",
+                    json={"persist": True, "assumptions": {"wacc": 0.12}})
+    assert r.status_code == 200
+    run_id = r.json()["valuation_run_id"]
+    assert run_id
+    detail = client.get(f"/api/v1/companies/AAPL/valuation/runs/{run_id}")
+    assert detail.status_code == 200
+    d = detail.json()
+    assert d["assumptions"]["inputs"]["wacc"] == pytest.approx(0.12)
+    assert d["output"]["fair_value_per_share"] == pytest.approx(
+        r.json()["result"]["fair_value_per_share"])
+
+
+def test_plan_reference_price_formula(client):
+    """P06: 参考价 = 选定每股估值 × (1 − 安全边际)."""
+    r = client.post("/api/v1/companies/AAPL/valuation/plans",
+                    json={"name": "保守", "reference_value": 100.0,
+                          "reference_source": "base_dcf", "margin_of_safety": 0.2})
+    assert r.status_code == 200
+    assert r.json()["reference_price"] == pytest.approx(80.0)
+
+    r = client.post("/api/v1/companies/AAPL/valuation/plans",
+                    json={"reference_value": 100.0, "margin_of_safety": 0.0})
+    assert r.json()["reference_price"] == pytest.approx(100.0)
+
+
+def test_plan_margin_validation_and_nonpositive_value(client):
+    """P06: margin < 0 or >= 100% is rejected; zero/negative value -> no price."""
+    assert client.post("/api/v1/companies/AAPL/valuation/plans",
+                       json={"reference_value": 100.0, "margin_of_safety": -0.1}).status_code == 400
+    assert client.post("/api/v1/companies/AAPL/valuation/plans",
+                       json={"reference_value": 100.0, "margin_of_safety": 1.0}).status_code == 400
+
+    r = client.post("/api/v1/companies/AAPL/valuation/plans",
+                    json={"reference_value": 0.0, "margin_of_safety": 0.2})
+    assert r.status_code == 200
+    assert r.json()["reference_price"] is None
+    assert "不生成可买入参考价" in r.json()["reference_price_reason"]
+
+
+def test_plans_are_company_isolated_and_readable(client):
+    """P06: plans are per-company and persist across reads."""
+    client.post("/api/v1/companies/AAPL/valuation/plans",
+                json={"reference_value": 100.0, "margin_of_safety": 0.2})
+    aapl = client.get("/api/v1/companies/AAPL/valuation/plans").json()["plans"]
+    msft = client.get("/api/v1/companies/MSFT/valuation/plans").json()["plans"]
+    assert len(aapl) >= 1
+    assert all(p["company_id"] == "0000320193" for p in aapl)
+    assert all(p["company_id"] == "0000789019" for p in msft)
+    # open the saved plan verbatim
+    pid = aapl[0]["plan_id"]
+    detail = client.get(f"/api/v1/companies/AAPL/valuation/plans/{pid}")
+    assert detail.status_code == 200
+    assert detail.json()["reference_price"] == pytest.approx(80.0)
+
+
+def test_refresh_endpoint_serialized_with_module_status(client, monkeypatch):
+    """P08: one-click refresh runs the sync pipeline and reports per-module status."""
+    import equitylens.ingestion.sec.sync as sec_sync
+    import equitylens.market.service as mkt_svc
+    from equitylens.ingestion.sec.sync import SyncReport
+
+    monkeypatch.setattr(sec_sync, "sync_company",
+                        lambda ticker, **kw: SyncReport(company=ticker, facts_accepted=5,
+                                                        canonical_count=5, warnings=[]))
+    monkeypatch.setattr(sec_sync, "sync_segments",
+                        lambda ticker, **kw: SyncReport(company=ticker, facts_accepted=2))
+    monkeypatch.setattr(mkt_svc, "sync_quotes", lambda tickers, **kw: [])
+
+    r = client.post("/api/v1/companies/AAPL/refresh")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["modules"]["financials"]["status"] == "ok"
+    assert d["modules"]["financials"]["facts_accepted"] == 5
+    assert d["modules"]["segments"]["status"] == "ok"
 
 
 def test_reverse_dcf_endpoint_returns_implied_growth(client):

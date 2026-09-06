@@ -13,7 +13,7 @@ Period semantics (docs/04):
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from equitylens.config import METRIC_ENGINE_VERSION
 
@@ -31,10 +31,13 @@ class MetricPoint:
     formula_version: str | None = None
     input_fact_ids: list[str] | None = None
     period_label: str | None = None
+    frequency: str | None = None
+    period_start: str | None = None
     period_end: str | None = None
     fiscal_year: int | None = None
     fiscal_quarter: int | None = None
     warnings: list[str] | None = None
+    missing_reason: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -47,10 +50,13 @@ class MetricPoint:
             "formula_version": self.formula_version,
             "input_fact_ids": self.input_fact_ids or [],
             "period_label": self.period_label,
+            "frequency": self.frequency,
+            "period_start": self.period_start,
             "period_end": self.period_end,
             "fiscal_year": self.fiscal_year,
             "fiscal_quarter": self.fiscal_quarter,
             "warnings": self.warnings or [],
+            "missing_reason": self.missing_reason,
         }
 
 
@@ -102,6 +108,153 @@ class MetricEngine:
 
     def _period_key(self, f: dict) -> tuple:
         return (f.get("fiscal_year"), f.get("fiscal_quarter"), f.get("period_type"))
+
+    @staticmethod
+    def _prior_quarter(key: tuple) -> tuple:
+        y, q = key[0], key[1]
+        q -= 1
+        if q == 0:
+            return (y - 1, 4)
+        return (y, q)
+
+    def _trailing_window(self, keys: set, end: tuple, n: int = 4) -> list[tuple] | None:
+        """Return n *consecutive* fiscal quarters ending at `end` (oldest first).
+
+        Returns None if the contiguous window is incomplete — a gap quarter is
+        never papered over by pulling an older quarter to reach `n` items.
+        """
+        window: list[tuple] = []
+        k = end
+        for _ in range(n):
+            if k not in keys:
+                return None
+            window.append(k)
+            k = self._prior_quarter(k)
+        return list(reversed(window))
+
+    def _ttm_window(self, series: dict, end: tuple, n: int = 4) -> dict | None:
+        """TTM of a duration metric = sum of n consecutive standalone quarters."""
+        window = self._trailing_window(set(series), end, n)
+        if window is None:
+            return None
+        vals = [series[k]["value"] for k in window]
+        if any(v is None for v in vals):
+            return None
+        units = {series[k].get("unit") for k in window}
+        if len(units) != 1:
+            return None
+        return {
+            "value": sum(vals),
+            "window": window,
+            "input_ids": [series[k]["canonical_fact_id"] for k in window],
+        }
+
+    @staticmethod
+    def _ttm_dependencies(metric: str) -> tuple[str, ...] | None:
+        direct = {
+            "REVENUE", "NET_INCOME", "OPERATING_CASH_FLOW",
+            "CAPITAL_EXPENDITURES", "GROSS_PROFIT", "OPERATING_INCOME",
+        }
+        if metric in direct:
+            return (metric,)
+        return {
+            "FCF": ("OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"),
+            "FCF_MARGIN": ("OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "REVENUE"),
+            "GROSS_MARGIN": ("GROSS_PROFIT", "REVENUE"),
+            "OPERATING_MARGIN": ("OPERATING_INCOME", "REVENUE"),
+            "NET_MARGIN": ("NET_INCOME", "REVENUE"),
+        }.get(metric)
+
+    def _missing_point(self, metric: str, frequency: str, status: str,
+                       reason: str, end: tuple | None = None) -> MetricPoint:
+        year, quarter = end or (None, None)
+        label = f"FY{year}Q{quarter}" if year is not None and quarter is not None else None
+        return MetricPoint(
+            metric=metric,
+            value=None,
+            unit="ratio" if metric.endswith("MARGIN") else "USD",
+            status=status,
+            frequency=frequency,
+            period_label=label,
+            fiscal_year=year,
+            fiscal_quarter=quarter,
+            missing_reason=reason,
+        )
+
+    def current(self, metric: str, company_id: str,
+                frequency: str = "quarterly") -> MetricPoint:
+        """Return the current result without silently selecting an older window."""
+        if frequency != "ttm":
+            points = self.compute(metric, company_id, frequency=frequency)
+            if points:
+                return points[-1]
+            return self._missing_point(metric, frequency, "MISSING_INPUT", "no observations")
+
+        dependencies = self._ttm_dependencies(metric)
+        if dependencies is None:
+            return self._missing_point(
+                metric, "ttm", "UNSUPPORTED", f"{metric} has no additive TTM definition"
+            )
+
+        loaded = self.load_facts(company_id, list(dependencies))
+        series = {name: self.standalone_series(loaded[name]) for name in dependencies}
+        all_keys = {key for values in series.values() for key in values if key[1] in (1, 2, 3, 4)}
+        if not all_keys:
+            return self._missing_point(metric, "ttm", "MISSING_INPUT", "no quarterly observations")
+
+        end = max(all_keys)
+        required: list[tuple] = []
+        key = end
+        for _ in range(4):
+            required.append(key)
+            key = self._prior_quarter(key)
+        required.reverse()
+
+        gaps: list[str] = []
+        window_units: set[str] = set()
+        period_ends: dict[tuple, set[str]] = {key: set() for key in required}
+        for name, values in series.items():
+            for key in required:
+                fact = values.get(key)
+                label = f"FY{key[0]}Q{key[1]}"
+                if fact is None:
+                    gaps.append(f"{name} missing {label}")
+                    continue
+                if fact.get("value") is None:
+                    gaps.append(f"{name} null {label}")
+                unit = fact.get("unit")
+                if unit:
+                    window_units.add(str(unit))
+                period_end = fact.get("period_end")
+                if period_end:
+                    period_ends[key].add(str(period_end)[:10])
+        if len(window_units) > 1:
+            gaps.append("unit mismatch: " + ", ".join(sorted(window_units)))
+        for key, ends in period_ends.items():
+            if len(ends) > 1:
+                gaps.append(f"period mismatch FY{key[0]}Q{key[1]}")
+        if gaps:
+            return self._missing_point(metric, "ttm", "INCOMPLETE_PERIOD", "; ".join(gaps), end)
+
+        point = next(
+            (candidate for candidate in reversed(self.compute(metric, company_id, frequency="ttm"))
+             if (candidate.fiscal_year, candidate.fiscal_quarter) == end),
+            None,
+        )
+        if point is None:
+            return self._missing_point(
+                metric, "ttm", "INCOMPLETE_PERIOD", "current TTM formula inputs are incomplete", end
+            )
+
+        first_fact = series[dependencies[0]][required[0]]
+        period_start = first_fact.get("period_start") or first_fact.get("period_end")
+        return replace(
+            point,
+            status="OK",
+            frequency="ttm",
+            period_start=str(period_start)[:10] if period_start else None,
+            missing_reason=None,
+        )
 
     # ---------------- standalone quarter series ----------------
 
@@ -165,37 +318,50 @@ class MetricEngine:
     # ---------------- TTM ----------------
 
     def ttm(self, facts: list[dict], as_of_quarter: tuple | None = None) -> dict | None:
-        """TTM of a duration metric = sum of the 4 standalone quarters ending at period t."""
+        """TTM of a duration metric = sum of 4 *consecutive* standalone quarters.
+
+        A missing quarter in the window yields None (never a partial sum).
+        """
         series = self.standalone_series(facts)
         quarters = sorted((k for k in series if k[1] in (1, 2, 3, 4)), reverse=True)
         if not quarters:
             return None
         end = as_of_quarter or quarters[0]
-        window = [k for k in quarters if k[0] < end[0] or (k[0] == end[0] and k[1] <= end[1])][:4]
-        if len(window) < 4:
-            return None
-        vals = [series[k]["value"] for k in window]
-        if any(v is None for v in vals):
+        t = self._ttm_window(series, end)
+        if t is None:
             return None
         return {
-            "value": sum(vals),
+            "value": t["value"],
             "fiscal_year": end[0],
             "fiscal_quarter": end[1],
-            "input_ids": [series[k]["canonical_fact_id"] for k in window],
+            "input_ids": t["input_ids"],
         }
 
     # ---------------- formula implementations ----------------
 
+    @staticmethod
+    def _annual_series(facts: list[dict]) -> dict[tuple, dict]:
+        """Map (fiscal_year, None) -> latest-restated FY fact."""
+        out: dict[tuple, dict] = {}
+        for f in facts:
+            if f.get("period_type") == "FY" and f.get("fiscal_year") is not None:
+                key = (f["fiscal_year"], None)
+                if key not in out or (f.get("as_known_at") or "") > (out[key].get("as_known_at") or ""):
+                    out[key] = f
+        return out
+
     def _two_series(self, num_facts: list[dict], den_facts: list[dict], freq: str):
-        """Pair numerator/denominator by period key; ratios for quarter/annual series."""
-        nums = self.standalone_series(num_facts) if freq == "quarterly" else {
-            (f["fiscal_year"], None, f["period_type"]): f
-            for f in num_facts if f.get("period_type") == "FY"
-        }
-        dens = self.standalone_series(den_facts) if freq == "quarterly" else {
-            (f["fiscal_year"], None, f["period_type"]): f
-            for f in den_facts if f.get("period_type") == "FY"
-        }
+        """Pair numerator/denominator by period key for quarterly/annual series.
+
+        For `ttm` the caller must use the explicit TTM path (sum-of-quartet over
+        sum-of-quartet); this method only serves `quarterly` and `annual`.
+        """
+        if freq == "quarterly":
+            nums = self.standalone_series(num_facts)
+            dens = self.standalone_series(den_facts)
+        else:  # annual
+            nums = self._annual_series(num_facts)
+            dens = self._annual_series(den_facts)
         out = []
         for key, n in sorted(nums.items(), key=lambda kv: (kv[0][0] or 0, kv[0][1] or 0)):
             d = dens.get(key)
@@ -211,96 +377,186 @@ class MetricEngine:
 
         if metric == "REVENUE_GROWTH_YOY":
             rev = self.load_facts(company_id, ["REVENUE"])["REVENUE"]
-            series = self.standalone_series(rev) if freq == "quarterly" else {
-                (f["fiscal_year"], None, "FY"): f for f in rev if f.get("period_type") == "FY"
-            }
-            keys = sorted(series, key=lambda k: (k[0] or 0, k[1] or 0))
-            for i, k in enumerate(keys):
-                if freq == "quarterly" and i < 4:
-                    continue
-                if freq == "annual" and i < 1:
-                    continue
-                cur = series[k]
-                if freq == "annual":
-                    prev_key = (k[0] - 1, None, "FY")
-                else:
-                    prev_key = (k[0] - 1, k[1])
-                prev = series.get(prev_key)
-                if prev is None:
-                    continue
-                value = (float(cur["value"]) / float(prev["value"]) - 1.0) if prev["value"] else None
-                points.append(self._point(metric, value, cur, "revenue_growth_yoy.v1",
-                                          [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
-                                          freq))
+            if freq == "quarterly":
+                series = self.standalone_series(rev)
+                keys = sorted(series, key=lambda k: (k[0] or 0, k[1] or 0))
+                for i, k in enumerate(keys):
+                    if i < 4:
+                        continue
+                    cur = series[k]
+                    prev = series.get((k[0] - 1, k[1]))
+                    if prev is None:
+                        continue
+                    value = (float(cur["value"]) / float(prev["value"]) - 1.0) if prev["value"] else None
+                    points.append(self._point(metric, value, cur, "revenue_growth_yoy.v1",
+                                              [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                                              freq, unit="ratio"))
+            elif freq == "annual":
+                series = self._annual_series(rev)
+                for k in sorted(series, key=lambda k: (k[0] or 0, k[1] or 0)):
+                    cur = series[k]
+                    prev = series.get((k[0] - 1, None))
+                    if prev is None:
+                        continue
+                    value = (float(cur["value"]) / float(prev["value"]) - 1.0) if prev["value"] else None
+                    points.append(self._point(metric, value, cur, "revenue_growth_yoy.v1",
+                                              [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                                              freq, unit="ratio"))
+            else:  # ttm: two complete TTM windows 4 quarters apart (8 consecutive quarters)
+                series = self.standalone_series(rev)
+                keys = sorted((k for k in series if k[1] in (1, 2, 3, 4)))
+                for k in keys:
+                    window8 = self._trailing_window(set(series), k, 8)
+                    if window8 is None:
+                        continue
+                    cur4, prev4 = window8[-4:], window8[:4]
+                    cur_val = sum(float(series[x]["value"]) for x in cur4)
+                    prev_val = sum(float(series[x]["value"]) for x in prev4)
+                    if not prev_val:
+                        continue
+                    value = cur_val / prev_val - 1.0
+                    input_ids = [series[x]["canonical_fact_id"] for x in window8]
+                    points.append(self._point(metric, value, series[k], "revenue_growth_yoy.ttm.v1",
+                                              input_ids, "ttm", unit="ratio"))
         elif metric in ("GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN"):
             num_metric = {"GROSS_MARGIN": "GROSS_PROFIT", "OPERATING_MARGIN": "OPERATING_INCOME",
                           "NET_MARGIN": "NET_INCOME"}[metric]
             facts = self.load_facts(company_id, [num_metric, "REVENUE"])
-            for key, n, d in self._two_series(facts[num_metric], facts["REVENUE"], freq):
-                value = float(n["value"]) / float(d["value"]) if d["value"] else None
-                points.append(self._point(metric, value, n, f"{metric.lower()}.v1",
-                                          [n.get("canonical_fact_id"), d.get("canonical_fact_id")], freq))
+            if freq == "ttm":
+                num_series = self.standalone_series(facts[num_metric])
+                den_series = self.standalone_series(facts["REVENUE"])
+                keys = sorted({k for k in num_series if k[1] in (1, 2, 3, 4)}
+                              & {k for k in den_series if k[1] in (1, 2, 3, 4)})
+                for key in keys:
+                    nt = self._ttm_window(num_series, key)
+                    dt = self._ttm_window(den_series, key)
+                    if nt is None or dt is None or not dt["value"]:
+                        continue
+                    value = nt["value"] / dt["value"]
+                    points.append(self._point(metric, value, num_series[key], f"{metric.lower()}.ttm.v1",
+                                              nt["input_ids"] + dt["input_ids"], "ttm", unit="ratio"))
+            else:
+                for key, n, d in self._two_series(facts[num_metric], facts["REVENUE"], freq):
+                    value = float(n["value"]) / float(d["value"]) if d["value"] else None
+                    points.append(self._point(metric, value, n, f"{metric.lower()}.v1",
+                                              [n.get("canonical_fact_id"), d.get("canonical_fact_id")], freq,
+                                              unit="ratio"))
         elif metric in ("FCF", "FCF_MARGIN"):
             facts = self.load_facts(company_id, ["OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "REVENUE"])
-            ocf = self.standalone_series(facts["OPERATING_CASH_FLOW"]) if freq == "quarterly" else {
-                (f["fiscal_year"], None, "FY"): f for f in facts["OPERATING_CASH_FLOW"] if f.get("period_type") == "FY"
-            }
-            capex = self.standalone_series(facts["CAPITAL_EXPENDITURES"]) if freq == "quarterly" else {
-                (f["fiscal_year"], None, "FY"): f for f in facts["CAPITAL_EXPENDITURES"] if f.get("period_type") == "FY"
-            }
-            rev_series = self.standalone_series(facts["REVENUE"]) if freq == "quarterly" else {
-                (f["fiscal_year"], None, "FY"): f for f in facts["REVENUE"] if f.get("period_type") == "FY"
-            }
-            for key in sorted(set(ocf) & set(capex), key=lambda k: (k[0] or 0, k[1] or 0)):
-                o, c = ocf[key], capex[key]
-                fcf = float(o["value"]) - float(c["value"])
-                if metric == "FCF":
-                    points.append(self._point("FCF", fcf, o, "fcf.v1",
-                                              [o.get("canonical_fact_id"), c.get("canonical_fact_id")], freq))
-                else:
-                    r = rev_series.get(key)
-                    if r and r["value"]:
-                        points.append(self._point("FCF_MARGIN", fcf / float(r["value"]), o, "fcf_margin.v1",
-                                                  [o.get("canonical_fact_id"), c.get("canonical_fact_id"),
-                                                   r.get("canonical_fact_id")], freq))
+            ocf_facts = facts["OPERATING_CASH_FLOW"]
+            capex_facts = facts["CAPITAL_EXPENDITURES"]
+            rev_facts = facts["REVENUE"]
+            if freq == "ttm":
+                ocf_series = self.standalone_series(ocf_facts)
+                capex_series = self.standalone_series(capex_facts)
+                rev_series = self.standalone_series(rev_facts)
+                keys = sorted({k for k in ocf_series if k[1] in (1, 2, 3, 4)}
+                              & {k for k in capex_series if k[1] in (1, 2, 3, 4)})
+                for key in keys:
+                    ot = self._ttm_window(ocf_series, key)
+                    ct = self._ttm_window(capex_series, key)
+                    if ot is None or ct is None:
+                        continue
+                    fcf = ot["value"] - ct["value"]
+                    if metric == "FCF":
+                        points.append(self._point("FCF", fcf, ocf_series[key], "fcf.ttm.v1",
+                                                  ot["input_ids"] + ct["input_ids"], "ttm", unit="USD"))
+                    else:
+                        rt = self._ttm_window(rev_series, key)
+                        if rt is None or not rt["value"]:
+                            continue
+                        points.append(self._point("FCF_MARGIN", fcf / rt["value"], ocf_series[key],
+                                                  "fcf_margin.ttm.v1",
+                                                  ot["input_ids"] + ct["input_ids"] + rt["input_ids"], "ttm",
+                                                  unit="ratio"))
+            else:
+                ocf = self.standalone_series(ocf_facts) if freq == "quarterly" else self._annual_series(ocf_facts)
+                capex = self.standalone_series(capex_facts) if freq == "quarterly" else self._annual_series(capex_facts)
+                rev_series = self.standalone_series(rev_facts) if freq == "quarterly" else self._annual_series(rev_facts)
+                for key in sorted(set(ocf) & set(capex), key=lambda k: (k[0] or 0, k[1] or 0)):
+                    o, c = ocf[key], capex[key]
+                    fcf = float(o["value"]) - float(c["value"])
+                    if metric == "FCF":
+                        points.append(self._point("FCF", fcf, o, "fcf.v1",
+                                                  [o.get("canonical_fact_id"), c.get("canonical_fact_id")], freq,
+                                                  unit="USD"))
+                    else:
+                        r = rev_series.get(key)
+                        if r and r["value"]:
+                            points.append(self._point("FCF_MARGIN", fcf / float(r["value"]), o, "fcf_margin.v1",
+                                                      [o.get("canonical_fact_id"), c.get("canonical_fact_id"),
+                                                       r.get("canonical_fact_id")], freq, unit="ratio"))
         elif metric == "NET_DEBT":
-            facts = self.load_facts(company_id, ["SHORT_TERM_DEBT", "LONG_TERM_DEBT",
-                                                 "CASH_AND_EQUIVALENTS", "SHORT_TERM_INVESTMENTS"])
-            cash = self._latest_instant(facts["CASH_AND_EQUIVALENTS"])
-            st = self._latest_instant(facts["SHORT_TERM_DEBT"])
-            lt = self._latest_instant(facts["LONG_TERM_DEBT"])
-            inv = self._latest_instant(facts["SHORT_TERM_INVESTMENTS"])
-            if cash is None or st is None or lt is None:
-                return points
-            value = float(st["value"]) + float(lt["value"]) - float(cash["value"]) - (float(inv["value"]) if inv else 0.0)
-            points.append(self._point("NET_DEBT", value, cash, "net_debt.v1",
-                                      [f.get("canonical_fact_id") for f in (st, lt, cash, inv) if f], freq))
+            # Net-debt bridge = (LT noncurrent + LT current + ST borrowings +
+            # commercial paper) - cash - ST investments, all on ONE balance-sheet
+            # date. us-gaap:LongTermDebt (total) is excluded because it overlaps
+            # the noncurrent + current split (double count).
+            debt_core = ("LONG_TERM_DEBT", "LONG_TERM_DEBT_CURRENT")
+            debt_optional = ("SHORT_TERM_BORROWINGS", "COMMERCIAL_PAPER")
+            facts = self.load_facts(company_id, list(debt_core) + list(debt_optional)
+                                    + ["CASH_AND_EQUIVALENTS", "SHORT_TERM_INVESTMENTS"])
+            # Latest-restated value per balance-sheet date so the bridge is
+            # computed on ONE coherent date (never splicing across dates).
+            by_date: dict[str, dict[str, dict]] = {}
+            for name in debt_core + debt_optional + ("CASH_AND_EQUIVALENTS", "SHORT_TERM_INVESTMENTS"):
+                for f in facts[name]:
+                    d = f.get("instant_date") or f.get("period_end")
+                    if not d:
+                        continue
+                    slot = by_date.setdefault(d, {})
+                    cur = slot.get(name)
+                    if cur is None or (f.get("as_known_at") or "") > (cur.get("as_known_at") or ""):
+                        slot[name] = f
+            required = ("LONG_TERM_DEBT", "LONG_TERM_DEBT_CURRENT",
+                        "CASH_AND_EQUIVALENTS", "SHORT_TERM_INVESTMENTS")
+            chosen = None
+            for d in sorted(by_date, reverse=True):
+                if all(name in by_date[d] for name in required):
+                    chosen = d
+                    break
+            if chosen is None:
+                return points  # incomplete net-debt bridge: gap, never a silent value
+            c = by_date[chosen]
+            lt = c["LONG_TERM_DEBT"]
+            ltc = c["LONG_TERM_DEBT_CURRENT"]
+            cash = c["CASH_AND_EQUIVALENTS"]
+            inv = c["SHORT_TERM_INVESTMENTS"]
+            stb = c.get("SHORT_TERM_BORROWINGS")
+            cp = c.get("COMMERCIAL_PAPER")
+            total_debt = float(lt["value"]) + float(ltc["value"])
+            if stb is not None:
+                total_debt += float(stb["value"])
+            if cp is not None:
+                total_debt += float(cp["value"])
+            value = total_debt - float(cash["value"]) - float(inv["value"])
+            input_ids = [f["canonical_fact_id"] for f in (lt, ltc, stb, cp, cash, inv) if f is not None]
+            points.append(self._point("NET_DEBT", value, cash, "net_debt.v2", input_ids, freq, unit="USD"))
         elif metric in ("REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME",
                         "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "DILUTED_EPS",
                         "BASIC_EPS", "DILUTED_WEIGHTED_AVG_SHARES", "BASIC_WEIGHTED_AVG_SHARES",
                         "SHARE_REPURCHASES", "DIVIDENDS_PAID", "SHARE_BASED_COMPENSATION",
-                        "DEPRECIATION_AMORTIZATION", "PRETAX_INCOME", "INCOME_TAX_EXPENSE",
-                        "COST_OF_REVENUE"):
+                        "DEPRECIATION_AMORTIZATION", "DEPRECIATION",
+                        "AMORTIZATION_OF_INTANGIBLE_ASSETS", "PRETAX_INCOME",
+                        "INCOME_TAX_EXPENSE", "COST_OF_REVENUE"):
             # passthrough canonical metrics (with standalone-quarter derivation for cash flow)
             facts = self.load_facts(company_id, [metric])[metric]
-            series = self.standalone_series(facts) if freq in ("quarterly", "ttm") else {
-                (f["fiscal_year"], None, "FY"): f for f in facts if f.get("period_type") == "FY"
-            }
             if freq == "ttm":
-                # TTM = trailing 4 standalone quarters per period end
-                keys = sorted(series, key=lambda k: (k[0] or 0, k[1] or 0))
-                for i, key in enumerate(keys):
-                    if i < 3:
-                        continue
-                    window = keys[i - 3 : i + 1]
-                    vals = [float(series[k]["value"]) for k in window]
-                    total = sum(vals)
+                series = self.standalone_series(facts)
+                keys = sorted((k for k in series if k[1] in (1, 2, 3, 4)))
+                for key in keys:
                     f = series[key]
-                    points.append(self._point(metric, total, f, "ttm.v1",
-                                              [series[k]["canonical_fact_id"] for k in window],
-                                              "quarterly"))
-                points = [p for p in points]
+                    # TTM summing is only meaningful for additive currency
+                    # metrics; per-share ratios (EPS) and share counts are NOT
+                    # summed quarter-over-quarter (D06).
+                    if (f.get("unit") or "") != "USD":
+                        continue
+                    t = self._ttm_window(series, key)
+                    if t is None:
+                        continue
+                    points.append(self._point(metric, t["value"], f, "ttm.v2",
+                                              t["input_ids"], "ttm", unit="USD"))
                 return points
+            series = self.standalone_series(facts) if freq == "quarterly" else self._annual_series(facts)
             for key in sorted(series, key=lambda k: (k[0] or 0, k[1] or 0)):
                 f = series[key]
                 formula_id = f.get("formula_id") or (
@@ -320,20 +576,25 @@ class MetricEngine:
             points = points[-limit:]
         return points
 
-    def _point(self, metric, value, fact, formula_id, input_ids, freq, fact_id=None) -> MetricPoint:
+    def _point(self, metric, value, fact, formula_id, input_ids, freq,
+               fact_id=None, unit=None) -> MetricPoint:
         label = f"FY{fact.get('fiscal_year')}" if freq == "annual" or fact.get("period_type") == "FY" \
             else f"FY{fact.get('fiscal_year')}Q{fact.get('fiscal_quarter')}"
+        period_start = fact.get("period_start")
+        period_end = fact.get("period_end") or fact.get("instant_date")
         return MetricPoint(
             metric=metric,
             value=value,
-            canonical_fact_id=fact_id or fact.get("canonical_fact_id"),
-            unit=fact.get("unit"),
+            canonical_fact_id=fact_id,
+            unit=unit if unit is not None else fact.get("unit"),
             status="CALCULATED" if formula_id else fact.get("status"),
             formula_id=formula_id,
-            formula_version=f"{formula_id.replace('.v1', '')}.v1" if formula_id else None,
+            formula_version=formula_id,
             input_fact_ids=input_ids,
             period_label=label,
-            period_end=fact.get("period_end") or fact.get("instant_date"),
+            frequency=freq,
+            period_start=str(period_start)[:10] if period_start else None,
+            period_end=str(period_end)[:10] if period_end else None,
             fiscal_year=fact.get("fiscal_year"),
             fiscal_quarter=fact.get("fiscal_quarter"),
         )
