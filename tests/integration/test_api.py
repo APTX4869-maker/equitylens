@@ -344,6 +344,29 @@ def test_legacy_run_reads_as_incomplete(client, company_db):
     assert d["scenarios"] is None or d["scenarios"]["base"] is None
 
 
+def test_derived_metric_has_resolvable_result_identity(client):
+    """D09: a derived metric carries a stable result id that resolves through
+    /provenance to a root with its value/frequency/formula and ALL inputs."""
+    r = client.get("/api/v1/companies/AAPL/metrics",
+                   params={"metrics": "FCF_MARGIN", "frequency": "ttm", "limit": 1})
+    assert r.status_code == 200
+    m = r.json()["metrics"][0]
+    assert m["result_id"], "derived metric must carry a stable result identity"
+
+    p = client.get(f"/api/v1/provenance/{m['result_id']}")
+    assert p.status_code == 200
+    node = p.json()["tree"]
+    assert node["kind"] == "metric_value"
+    fields = node["fields"]
+    assert fields["metric"] == "FCF_MARGIN"
+    assert fields["frequency"] == "ttm"
+    assert fields["value"] == m["value"]
+    assert fields["formula_id"] == m["formula_id"]
+    assert fields["input_fact_ids"] == m["input_fact_ids"]
+    assert len(node["parents"]) == len(m["input_fact_ids"])
+    assert node["parents"][0]["kind"] == "canonical_fact"
+
+
 def test_plan_reference_price_formula(client):
     """P06: 参考价 = 选定每股估值 × (1 − 安全边际)."""
     r = client.post("/api/v1/companies/AAPL/valuation/plans",

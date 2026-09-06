@@ -61,7 +61,17 @@ export function MetricDrawer({
                   查看来源 →
                 </button>
               ) : fact.input_fact_ids?.length ? (
-                <span className="card-sub">派生自 {fact.input_fact_ids.length} 个 SEC 事实</span>
+                <div style={{ marginTop: 6 }}>
+                  <div className="card-sub" style={{ marginBottom: 4 }}>
+                    派生自 {fact.input_fact_ids.length} 个 SEC 事实（点击展开）：
+                  </div>
+                  {fact.input_fact_ids.map((id, idx) => (
+                    <button key={id} className="text-link" style={{ display: "block" }}
+                      onClick={() => onViewSource(id)}>
+                      {idx + 1}. {id} →
+                    </button>
+                  ))}
+                </div>
               ) : null}
             </div>
           ) : null}

@@ -55,6 +55,7 @@ export type MetricPoint = {
   formula_id: string | null;
   formula_version: string | null;
   input_fact_ids: string[];
+  result_id?: string | null;
   fiscal_year: number | null;
   fiscal_quarter: number | null;
   period_end: string | null;

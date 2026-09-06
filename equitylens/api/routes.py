@@ -253,6 +253,7 @@ def metrics(
                 "formula_version": p.formula_version,
                 "input_fact_ids": p.input_fact_ids or [],
                 "canonical_fact_id": p.canonical_fact_id,
+                "result_id": p.result_id,
                 "frequency": p.frequency,
                 "period_start": p.period_start,
                 "fiscal_year": p.fiscal_year,
@@ -351,6 +352,8 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
     if depth <= 0 or entity_id in visited:
         return None
     visited = visited | {entity_id}
+    if entity_id.startswith("derived:"):
+        return _build_derived_node(store, entity_id, depth, visited)
     cf = store.query_one("SELECT * FROM canonical_fact WHERE canonical_fact_id = ?", [entity_id])
     if cf:
         raw_ids = json.loads(cf.get("source_raw_fact_ids") or "[]")
@@ -405,6 +408,49 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
             "parents": [],
         }
     return None
+
+
+def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict | None:
+    """Resolve a derived metric result id to a full provenance root (D09).
+
+    The root carries the result value/frequency/unit/status/formula and the
+    COMPLETE ordered input list, each input expandable to canonical fact and
+    source document — so the source tree exactly matches the card.
+    """
+    parts = entity_id.split(":")
+    if len(parts) != 5 or parts[0] != "derived":
+        return None
+    _, company_id, metric, frequency, period_end = parts
+    point = next(
+        (p for p in MetricEngine(store).compute(metric, company_id, frequency=frequency)
+         if (p.period_end or "") == period_end),
+        None,
+    )
+    if point is None:
+        return None
+    parents = []
+    for fid in (point.input_fact_ids or []):
+        parent = _build_provenance(store, fid, depth - 1, visited)
+        if parent:
+            parents.append(parent)
+    return {
+        "entity_id": entity_id,
+        "kind": "metric_value",
+        "label": metric,
+        "fields": {
+            "metric": metric,
+            "frequency": point.frequency,
+            "period": point.period_label,
+            "period_end": point.period_end,
+            "value": point.value,
+            "unit": point.unit,
+            "status": point.status,
+            "formula_id": point.formula_id,
+            "formula_version": point.formula_version,
+            "input_fact_ids": point.input_fact_ids or [],
+        },
+        "parents": parents,
+    }
 
 
 def _raw_node(store, raw: dict, depth: int, visited: set) -> dict:

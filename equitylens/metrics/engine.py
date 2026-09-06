@@ -20,6 +20,16 @@ from equitylens.config import METRIC_ENGINE_VERSION
 PERIOD_TYPE_RANK = {"Q_STANDALONE": 0, "YTD_6M": 1, "YTD_9M": 2, "FY": 3, "INSTANT": 4}
 
 
+def _derived_result_id(company_id: str, metric: str, frequency: str,
+                       period_end: str | None) -> str:
+    """Stable, reversible identity for a derived (non-canonical) metric result.
+
+    Derived metrics have no canonical fact id; this id lets the provenance API
+    resolve the result back to its value/formula/ordered inputs (D09).
+    """
+    return f"derived:{company_id}:{metric}:{frequency}:{period_end or ''}"
+
+
 @dataclass
 class MetricPoint:
     metric: str
@@ -38,11 +48,13 @@ class MetricPoint:
     fiscal_quarter: int | None = None
     warnings: list[str] | None = None
     missing_reason: str | None = None
+    result_id: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "metric": self.metric,
             "canonical_fact_id": self.canonical_fact_id,
+            "result_id": self.result_id,
             "value": self.value,
             "unit": self.unit,
             "status": self.status,
@@ -572,6 +584,9 @@ class MetricEngine:
             raise ValueError(f"Metric {metric!r} not implemented in metric engine")
 
         points.sort(key=lambda p: (p.fiscal_year or 0, p.fiscal_quarter or 0))
+        for p in points:
+            if p.canonical_fact_id is None and p.input_fact_ids:
+                p.result_id = _derived_result_id(company_id, p.metric, p.frequency, p.period_end)
         if limit:
             points = points[-limit:]
         return points
