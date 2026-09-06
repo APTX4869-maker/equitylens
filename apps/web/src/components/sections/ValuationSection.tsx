@@ -28,6 +28,11 @@ type RunResponse = {
     fair_value_per_share: number; enterprise_value: number; equity_value: number;
     terminal_value: number; pv_terminal: number; sum_pv_fcff: number; net_cash: number;
     terminal_value_share: number; model_version: string;
+    terminal_forecast: {
+      year: number; revenue: number; op_margin: number; ebit: number; nopat: number;
+      terminal_roic: number; reinvestment_rate: number; reinvestment: number;
+      fcff: number; definition: string;
+    };
     forecast: { year: number; revenue: number; op_margin: number; fcff: number; pv_fcff: number }[];
     warnings: string[];
   };
@@ -37,7 +42,8 @@ type RunResponse = {
     reason: string | null;
     result: { fair_value_per_share: number } | null;
     inputs: {
-      revenue_growth: number[]; op_margin_end: number; wacc: number; terminal_growth: number;
+      revenue_growth: number[]; op_margin_end: number; wacc: number;
+      terminal_growth: number; terminal_roic: number;
     };
   }>;
   sensitivity: { wacc_grid: number[]; terminal_grid: number[]; rows: { wacc: number; values: (number | null)[] }[] };
@@ -81,6 +87,7 @@ const RNG = {
   margin: { min: 5, max: 60, step: 0.5 },
   wacc: { min: 4, max: 15, step: 0.25 },
   terminal: { min: 0.5, max: 4, step: 0.25 },
+  roic: { min: 8, max: 40, step: 1 },
 };
 
 export function ValuationSection({ ticker }: { ticker: string }) {
@@ -281,6 +288,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const marginPct = draft ? draft.op_margin_end * 100 : 0;
   const waccPct = draft ? draft.wacc * 100 : 0;
   const terminalPct = draft ? draft.terminal_growth * 100 : 0;
+  const roicPct = draft ? draft.terminal_roic * 100 : 0;
 
   // The visible result is saveable only when the applied inputs still equal the
   // current draft and there is no pending/failed request.
@@ -391,7 +399,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           <div className="section-head">
             <div>
               <div className="card-title">5-Year FCFF DCF</div>
-              <div className="card-sub">代码计算现金流；改动假设即全量重算。开放 4 个最重要假设。</div>
+              <div className="card-sub">代码计算现金流；改动假设即全量重算。开放 5 个核心假设。</div>
             </div>
             <Pill tone="blue">FCFF DCF</Pill>
           </div>
@@ -425,6 +433,17 @@ export function ValuationSection({ ticker }: { ticker: string }) {
                 value={terminalPct} onChange={(e) => edit({ field: "terminal", percent: Number(e.target.value) })} />
               <output>{terminalPct.toFixed(2)}%</output>
             </div>
+            <div className="dcf-control">
+              <label htmlFor="roic-slider">稳定期增量资本回报率</label>
+              <input id="roic-slider" type="range" min={RNG.roic.min} max={RNG.roic.max} step={RNG.roic.step}
+                value={roicPct} onChange={(e) => edit({ field: "roic", percent: Number(e.target.value) })} />
+              <output>{roicPct.toFixed(0)}%</output>
+            </div>
+          </div>
+          <div className="card-sub" style={{ marginBottom: 8 }}>
+            稳定期 Y{base.result.terminal_forecast.year}：NOPAT {fmtMoney(base.result.terminal_forecast.nopat)}，
+            再投资率 {(base.result.terminal_forecast.reinvestment_rate * 100).toFixed(1)}%，
+            终值年度 FCFF {fmtMoney(base.result.terminal_forecast.fcff)}。
           </div>
           {forecastChart ? <EChart option={forecastChart} height={200} /> : null}
           <div className="beginner-note">

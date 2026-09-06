@@ -15,6 +15,7 @@ type Assumptions = {
   nwc_pct: number;
   wacc: number;
   terminal_growth: number;
+  terminal_roic: number;
   net_cash: number;
   shares: number;
 };
@@ -31,6 +32,7 @@ function defaults(): Assumptions {
     nwc_pct: 0.002,
     wacc: 0.085,
     terminal_growth: 0.025,
+    terminal_roic: 0.20,
     net_cash: 36_549_000_000,
     shares: 15_000_000_000,
   };
@@ -52,7 +54,7 @@ function runResponse(fair: number, assumptions: Assumptions) {
   return {
     ticker: "AAPL",
     input_fingerprint: `fp-${fair}`,
-    model_version: "fcff_dcf.v1",
+    model_version: "fcff_dcf.v2",
     run_at: "2026-09-06T00:00:00",
     valuation_run_id: null,
     assumptions: { inputs: assumptions, meta: {} },
@@ -65,7 +67,13 @@ function runResponse(fair: number, assumptions: Assumptions) {
       sum_pv_fcff: 0,
       net_cash: assumptions.net_cash,
       terminal_value_share: 0.6,
-      model_version: "fcff_dcf.v1",
+      model_version: "fcff_dcf.v2",
+      terminal_forecast: {
+        year: 6, revenue: 120, op_margin: 0.33, ebit: 39.6, nopat: 33.264,
+        terminal_roic: assumptions.terminal_roic, reinvestment_rate: 0.125,
+        reinvestment: 4.158, fcff: 29.106,
+        definition: "year-6 NOPAT × (1 − terminal_growth / terminal_roic)",
+      },
       forecast: [
         { year: 1, revenue: 100, op_margin: 0.3, fcff: 10, pv_fcff: 9 },
         { year: 2, revenue: 110, op_margin: 0.3, fcff: 11, pv_fcff: 9 },
@@ -147,6 +155,7 @@ test("keeps the newest complete draft when previews return out of order", async 
   // complete draft, not a 4-field partial override
   expect(second.revenue_base).toBe(416_161_000_000);
   expect(second.shares).toBe(15_000_000_000);
+  expect(second.terminal_roic).toBe(0.20);
 });
 
 test("a failed newest request marks the result stale and disables save", async ({ page }) => {

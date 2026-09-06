@@ -93,6 +93,8 @@ def default_assumption_set(store, company_id: str, ticker: str,
     erp = wacc_cfg["equity_risk_premium"]["value"]
     beta = float(issuer["beta"])
     debt_cost = float(issuer["pre_tax_debt_cost"])
+    terminal_roic_cfg = wacc_cfg["terminal_roic"]
+    terminal_roic = float(terminal_roic_cfg["value"])
     meta: dict = {
         "risk_free": {"value": rf, **wacc_cfg["risk_free_rate"]},
         "erp": {"value": erp, **wacc_cfg["equity_risk_premium"]},
@@ -169,6 +171,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
         terminal_growth=0.025,
         net_cash=net_cash,
         shares=shares,
+        terminal_roic=terminal_roic,
     )
     meta.update({
         "revenue_base": {"value": revenue, "fiscal_year": fy, "source": "SEC 10-K canonical fact",
@@ -192,5 +195,6 @@ def default_assumption_set(store, company_id: str, ticker: str,
         "shares": {"value": shares, "basis": "FY diluted weighted-average",
                    "fact_ids": fact_ids(shares_point), "source": "SEC canonical fact"},
         "wacc": {"value": wacc, "formula": "E/(D+E)*CoE + D/(D+E)*CoD_after_tax, weights documented"},
+        "terminal_roic": {"value": terminal_roic, **terminal_roic_cfg},
     })
     return inputs, meta

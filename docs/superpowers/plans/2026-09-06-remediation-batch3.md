@@ -81,25 +81,25 @@ git commit -m "feat: implement production fcff dcf v2"
 - Complete input drafts and fingerprints include `terminal_roic`.
 - Saved v1 run reads remain byte-for-byte stored output reads.
 
-- [ ] **Step 1: Add failing API path coverage**
+- [x] **Step 1: Add failing API path coverage**
 
 Extend integration tests to call default, preview, persisted run, scenarios, sensitivity, and reverse DCF. Assert every newly calculated result reports v2 and returns `terminal_forecast`; assert the saved run reads the same terminal block. Keep the existing inserted legacy v1 record and assert it remains v1.
 
-- [ ] **Step 2: Verify the production service still reports v1**
+- [x] **Step 2: Verify the production service still reports v1**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k 'v2 or legacy_run' -q -p no:cacheprovider`
 
 Expected: new calculations fail the v2 assertions.
 
-- [ ] **Step 3: Carry `terminal_roic` through defaults, overrides and the client draft**
+- [x] **Step 3: Carry `terminal_roic` through defaults, overrides and the client draft**
 
 Add a documented issuer/config default of 20% and metadata with configuration version. Include it in `_inputs_dict`, fingerprints, scenario trials, sensitivity trials, reverse trials, `buildPreviewRequest`, `draftFingerprint`, controlled-order Playwright fixtures, and an editable percentage control in the valuation page.
 
-- [ ] **Step 4: Remove the test-only production split**
+- [x] **Step 4: Remove the test-only production split**
 
 Make default, custom, scenario, sensitivity and reverse functions call `run_dcf(..., model_version="fcff_dcf.v2")` through the same dispatch. Do not invoke `run_dcf_explicit` directly in API/service code except inside the v2 executor. Return the terminal definition and v2 model version in API and UI.
 
-- [ ] **Step 5: Verify backend and frontend contracts**
+- [x] **Step 5: Verify backend and frontend contracts**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py tests/integration/test_api.py -q -p no:cacheprovider`
 
@@ -107,7 +107,7 @@ Run: `cd apps/web && pnpm exec tsc --noEmit --incremental false && pnpm lint && 
 
 Expected: all commands pass and the two valuation ordering tests still collect.
 
-- [ ] **Step 6: Commit the v2 product path**
+- [x] **Step 6: Commit the v2 product path**
 
 ```bash
 git add equitylens/valuation/defaults.py equitylens/valuation/service.py equitylens/api/routes.py apps/web/src/lib/valuationDraft.ts apps/web/src/components/sections/ValuationSection.tsx apps/web/e2e/valuation-state.spec.ts tests/integration/test_api.py

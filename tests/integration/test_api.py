@@ -229,6 +229,7 @@ def test_market_quote_in_valuation_default(client):
     {"op_margin_end": 2.0},
     {"revenue_growth": [-1.2, -1.2, -1.2, -1.2, -1.2]},
     {"revenue_growth": [0.05, 0.05]},
+    {"terminal_roic": 0.0},
 ])
 def test_valuation_run_invalid_input_400_no_write(client, company_db, bad):
     """V01: invalid inputs return a structured client error and write nothing."""
@@ -255,7 +256,7 @@ def test_valuation_response_fingerprints_complete_executed_inputs(client):
     # every editable field is present in the complete input object
     for k in ("revenue_base", "revenue_growth", "op_margin_start", "op_margin_end",
               "tax_rate", "da_pct", "capex_pct", "nwc_pct", "wacc",
-              "terminal_growth", "net_cash", "shares"):
+              "terminal_growth", "terminal_roic", "net_cash", "shares"):
         assert k in a["assumptions"]["inputs"]
 
 
@@ -319,7 +320,8 @@ def test_saved_run_reads_back_full_scenarios_sensitivity(client, company_db):
         body["scenarios"]["bear"]["result"]["fair_value_per_share"])
     assert d["sensitivity"]["rows"], "sensitivity cells persisted"
     assert d["model_quality"]["terminal_value_share"] is not None
-    assert d["model_version"] == "fcff_dcf.v1"
+    assert d["model_version"] == "fcff_dcf.v2"
+    assert d["output"]["terminal_forecast"] == body["result"]["terminal_forecast"]
     source_ids = d["assumptions"].get("source_fact_ids")
     assert source_ids, "complete run must freeze the canonical fact identities used"
     assert source_ids["revenue_base"]
@@ -354,6 +356,34 @@ def test_legacy_run_reads_as_incomplete(client, company_db):
     assert d["status"] == "legacy/incomplete"
     assert d["output"]["fair_value_per_share"] == 100.0
     assert d["scenarios"] is None or d["scenarios"]["base"] is None
+
+
+def test_all_new_valuation_paths_report_v2_terminal_contract(client):
+    """P02: default, custom, scenarios and reverse DCF share the v2 method."""
+    default = client.get("/api/v1/companies/AAPL/valuation/default").json()
+    custom = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        json={"persist": False, "assumptions": default["assumptions"]["inputs"]},
+    ).json()
+    reverse = client.post(
+        "/api/v1/companies/AAPL/valuation/reverse-dcf",
+        json={"target_price": 300.0, "assumptions": default["assumptions"]["inputs"]},
+    ).json()
+
+    for response in (default, custom):
+        assert response["model_version"] == "fcff_dcf.v2"
+        assert response["result"]["model_version"] == "fcff_dcf.v2"
+        assert response["result"]["terminal_forecast"]["definition"]
+        assert response["assumptions"]["inputs"]["terminal_roic"] > 0
+        for scenario in response["scenarios"].values():
+            if scenario["result"] is not None:
+                assert scenario["result"]["model_version"] == "fcff_dcf.v2"
+                assert scenario["result"]["terminal_forecast"]["definition"]
+
+    assert reverse["model_version"] == "fcff_dcf.v2"
+    assert reverse["fixed_assumptions"]["terminal_roic"] == pytest.approx(
+        default["assumptions"]["inputs"]["terminal_roic"]
+    )
 
 
 def test_derived_metric_has_resolvable_result_identity(client):

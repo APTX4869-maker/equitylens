@@ -16,6 +16,7 @@ export type DcfInputs = {
   nwc_pct: number;
   wacc: number;
   terminal_growth: number;
+  terminal_roic: number;
   net_cash: number;
   shares: number;
   share_basis_label?: string;
@@ -25,7 +26,8 @@ export type DraftEdit =
   | { field: "growth"; percent: number }
   | { field: "margin"; percent: number }
   | { field: "wacc"; percent: number }
-  | { field: "terminal"; percent: number };
+  | { field: "terminal"; percent: number }
+  | { field: "roic"; percent: number };
 
 /** Build a local draft from the backend's executed inputs (default/run). */
 export function draftFromInputs(inputs: DcfInputs): DcfInputs {
@@ -46,7 +48,8 @@ export function updateDraft(draft: DcfInputs, edit: DraftEdit): DcfInputs {
   }
   if (edit.field === "margin") return { ...draft, op_margin_end: edit.percent / 100 };
   if (edit.field === "wacc") return { ...draft, wacc: edit.percent / 100 };
-  return { ...draft, terminal_growth: edit.percent / 100 };
+  if (edit.field === "terminal") return { ...draft, terminal_growth: edit.percent / 100 };
+  return { ...draft, terminal_roic: edit.percent / 100 };
 }
 
 /** Complete preview/run request body for a draft (every editable field). */
@@ -64,6 +67,7 @@ export function buildPreviewRequest(draft: DcfInputs, persist = false) {
       nwc_pct: draft.nwc_pct,
       wacc: draft.wacc,
       terminal_growth: draft.terminal_growth,
+      terminal_roic: draft.terminal_roic,
       net_cash: draft.net_cash,
       shares: draft.shares,
       share_basis_label: draft.share_basis_label,
@@ -86,6 +90,7 @@ export function draftFingerprint(draft: DcfInputs): string {
     nwc_pct: draft.nwc_pct,
     wacc: draft.wacc,
     terminal_growth: draft.terminal_growth,
+    terminal_roic: draft.terminal_roic,
     net_cash: draft.net_cash,
     shares: draft.shares,
   });

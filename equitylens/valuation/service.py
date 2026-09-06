@@ -28,7 +28,7 @@ def _inputs_dict(i: DcfInputs) -> dict:
 
 
 def _inputs_from_dict(d: dict) -> DcfInputs:
-    return DcfInputs(**{k: d[k] for k in DcfInputs.__dataclass_fields__})
+    return DcfInputs(**{k: value for k, value in d.items() if k in DcfInputs.__dataclass_fields__})
 
 
 def valuation_input_fingerprint(inputs: DcfInputs | dict) -> str:
@@ -92,7 +92,7 @@ def scenario_valuation(base: DcfInputs, ticker: str) -> dict:
             op_margin_end=m,
             tax_rate=base.tax_rate, da_pct=base.da_pct, capex_pct=base.capex_pct,
             nwc_pct=base.nwc_pct, wacc=w, terminal_growth=t,
-            net_cash=base.net_cash, shares=base.shares,
+            net_cash=base.net_cash, shares=base.shares, terminal_roic=base.terminal_roic,
         )
         try:
             result = _output_dict(run_dcf(trial))
@@ -141,7 +141,7 @@ def sensitivity(base: DcfInputs) -> dict:
                 op_margin_start=base.op_margin_start, op_margin_end=base.op_margin_end,
                 tax_rate=base.tax_rate, da_pct=base.da_pct, capex_pct=base.capex_pct,
                 nwc_pct=base.nwc_pct, wacc=w, terminal_growth=g,
-                net_cash=base.net_cash, shares=base.shares,
+                net_cash=base.net_cash, shares=base.shares, terminal_roic=base.terminal_roic,
             )
             try:
                 fair = run_dcf(trial).fair_value_per_share
@@ -210,6 +210,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
             terminal_growth=float(a.get("terminal_growth", base.terminal_growth)),
             net_cash=float(a.get("net_cash", base.net_cash)),
             shares=float(a.get("shares", base.shares)),
+            terminal_roic=float(a.get("terminal_roic", base.terminal_roic)),
         )
         # meta must reflect the FINAL executed inputs, marking user overrides.
         _override_meta = {
@@ -219,6 +220,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
             "tax_rate": "tax_rate", "net_cash": "net_cash", "shares": "shares",
             "da_pct": "da_pct", "capex_pct": "capex_pct", "revenue_base": "revenue_base",
             "nwc_pct": "nwc_pct",
+            "terminal_roic": "terminal_roic",
         }
         for field, meta_key in _override_meta.items():
             if field in a:
@@ -295,6 +297,7 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
             terminal_growth=float(a.get("terminal_growth", base.terminal_growth)),
             net_cash=float(a.get("net_cash", base.net_cash)),
             shares=float(a.get("shares", base.shares)),
+            terminal_roic=float(a.get("terminal_roic", base.terminal_roic)),
         )
     target = float(payload.get("target_price"))
     implied = implied_growth(base, target)
@@ -308,11 +311,13 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
     if len(annual) >= 2 and annual[0]:
         hist_cagr = (annual[-1] / annual[0]) ** (1 / (len(annual) - 1)) - 1.0
     return {
+        "model_version": dcf_mod.MODEL_VERSION,
         "implied_revenue_cagr": implied,
         "target_price": target,
         "market": valuation_market_block(store, company_id, ticker, fair_value_per_share=None),
         "historical_revenue_cagr": hist_cagr,
         "fixed_assumptions": {"wacc": base.wacc, "terminal_growth": base.terminal_growth,
+                              "terminal_roic": base.terminal_roic,
                               "margin_end": base.op_margin_end, "tax_rate": base.tax_rate},
         "interpretation": None if implied is None else (
             f"市场隐含 5Y 收入 CAGR {implied*100:.1f}% "
@@ -333,6 +338,7 @@ def _output_dict(output) -> dict:
         "sum_pv_fcff": output.sum_pv_fcff,
         "net_cash": output.net_cash,
         "terminal_value_share": output.terminal_value_share,
+        "terminal_forecast": output.terminal_forecast,
         "forecast": [
             {"year": f.year, "revenue": f.revenue, "op_margin": f.op_margin,
              "fcff": f.fcff, "pv_fcff": f.pv_fcff}

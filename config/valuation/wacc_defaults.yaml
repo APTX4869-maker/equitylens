@@ -2,9 +2,10 @@
 # Every number carries a source/date label — never an unexplained constant.
 # The risk-free rate is normally refreshed from the US Treasury feed when it
 # is reachable; this file is the documented fallback (value + as_of + source).
-# v2: per-issuer default 5-year revenue growth path (hand-versioned research
+# v3: per-issuer growth paths plus a versioned stable-period ROIC assumption.
+# Growth remains a hand-versioned research
 # prior, NOT historical CAGR extrapolated into the future).
-version: 2
+version: 3
 risk_free_rate:
   value: 0.0425
   as_of: "2026-08-01"
@@ -14,6 +15,10 @@ equity_risk_premium:
   value: 0.045
   source: "EquityLens config v1 (documented assumption; ERP requires an explicit dated source in production)"
   version: "erp.v1"
+terminal_roic:
+  value: 0.20
+  source: "EquityLens stable-period assumption: mature large-cap incremental ROIC"
+  version: "terminal-roic.v1"
 issuers:
   AAPL:
     beta: 1.1
