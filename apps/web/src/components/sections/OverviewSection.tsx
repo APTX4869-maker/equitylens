@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
 import { Card, Pill } from "@/components/ui";
@@ -16,12 +16,12 @@ type Props = {
   onOpenMetric: (key: string, fact: Fact | null) => void;
 };
 
-type KpiItem = { label: string; value: string; note: string; tone?: string; metricKey?: string };
-function KpiCard({ label, value, note, tone, metricKey, onOpenMetric }: KpiItem & { onOpenMetric: (k: string) => void }) {
+type KpiItem = { label: string; value: string; note: string; tone?: string; metricKey?: string; fact?: Fact | null };
+function KpiCard({ label, value, note, tone, metricKey, fact, onOpenMetric }: KpiItem & { onOpenMetric: (k: string, fact: Fact | null) => void }) {
   return (
     <button
       className="brief-card"
-      onClick={() => metricKey && onOpenMetric(metricKey)}
+      onClick={() => metricKey && onOpenMetric(metricKey, fact ?? null)}
       disabled={!metricKey}
       style={{ textAlign: "left", border: "none", background: "inherit", cursor: metricKey ? "pointer" : "default" }}
     >
@@ -36,6 +36,31 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
   const trend = useMemo(() => overview?.trend ?? {}, [overview]);
   const [activeChart, setActiveChart] = useState("revenue");
 
+  const kpiFact = useCallback((key: string): Fact | null => {
+    const item = overview?.kpis[key];
+    if (!item || item.value === null || item.value === undefined) return null;
+    return {
+      metric: item.metric ?? key,
+      period: item.period ?? "",
+      period_type: item.frequency ?? "",
+      fiscal_year: item.fiscal_year ?? null,
+      fiscal_quarter: item.fiscal_quarter ?? null,
+      period_start: null,
+      period_end: item.period_end ?? null,
+      instant_date: null,
+      value: item.value,
+      unit: item.unit ?? "",
+      status: item.status ?? "UNKNOWN",
+      canonical_fact_id: item.canonical_fact_id ?? null,
+      result_id: item.result_id ?? null,
+      provenance: {
+        formula_id: item.formula_id ?? null,
+        status: item.status ?? null,
+      },
+      input_fact_ids: item.input_fact_ids ?? [],
+    };
+  }, [overview]);
+
   const kpis = useMemo<{ items: KpiItem[] } | null>(() => {
     if (!overview) return null;
     const k = overview.kpis;
@@ -44,7 +69,10 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
     const gross = trend.grossMargin?.values ?? [];
     const op = trend.opMargin?.values ?? [];
     const revTtm = k.TTM_REVENUE?.value ?? null;
-    const revTtmPrev = rev.length >= 8 ? rev.slice(-8, -4).reduce((a: number, b) => a + (b ?? 0), 0) : null;
+    const priorRevenue = rev.slice(-8, -4);
+    const revTtmPrev = priorRevenue.length === 4 && priorRevenue.every((value) => value != null)
+      ? priorRevenue.reduce((sum: number, value) => sum + (value as number), 0)
+      : null;
     const latestGrowth = growth.length ? growth[growth.length - 1] : null;
     const grossLast = gross.length ? gross[gross.length - 1] : null;
     const opLast = op.length ? op[op.length - 1] : null;
@@ -59,6 +87,7 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
           note: revTtm && revTtmPrev ? `${signedPct(revTtm / revTtmPrev - 1)} YoY` : "—",
           tone: revTtm && revTtmPrev && revTtm >= revTtmPrev ? "good" : "",
           metricKey: "revenue",
+          fact: kpiFact("TTM_REVENUE"),
         },
         {
           label: "最近季度收入增速",
@@ -66,12 +95,13 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
           note: "同比（真实数据）",
           tone: latestGrowth !== null && latestGrowth !== undefined && latestGrowth > 0 ? "good" : "warn",
           metricKey: "revenue",
+          fact: kpiFact("REVENUE_GROWTH_YOY"),
         },
-        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: "最近季度", tone: opLast != null && opLast > 0.2 ? "good" : "", metricKey: "opMargin" },
-        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin" },
-        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf" },
-        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "最近季度", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin" },
-        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash" },
+        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: "最近季度", tone: opLast != null && opLast > 0.2 ? "good" : "", metricKey: "opMargin", fact: kpiFact("OPERATING_MARGIN") },
+        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin", fact: kpiFact("GROSS_MARGIN") },
+        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf", fact: kpiFact("TTM_FCF") },
+        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "最近季度", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin", fact: kpiFact("FCF_MARGIN") },
+        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash", fact: kpiFact("NET_DEBT") },
         {
           label: "最新财报期",
           value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",
@@ -80,7 +110,7 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         },
       ],
     };
-  }, [overview, trend]);
+  }, [overview, trend, kpiFact]);
 
   const signals = useMemo(() => {
     const growth = trend.revenueGrowth?.values ?? [];
@@ -139,14 +169,16 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
     );
   }
 
-  const chartKeys: [string, string][] = [
-    ["revenue", "收入"],
-    ["revenueGrowth", "同比"],
-    ["grossMargin", "毛利率"],
-    ["opMargin", "营业利润率"],
-    ["fcf", "FCF"],
+  const chartKeys: { key: string; label: string; fallbackUnit: "currency" | "ratio" }[] = [
+    { key: "revenue", label: "营业收入", fallbackUnit: "currency" },
+    { key: "revenueGrowth", label: "收入同比", fallbackUnit: "ratio" },
+    { key: "grossMargin", label: "毛利率", fallbackUnit: "ratio" },
+    { key: "opMargin", label: "营业利润率", fallbackUnit: "ratio" },
+    { key: "fcf", label: "自由现金流", fallbackUnit: "currency" },
   ];
   const active = trend[activeChart];
+  const activeDefinition = chartKeys.find(({ key }) => key === activeChart) ?? chartKeys[0];
+  const activeUnit = active?.unit === "ratio" ? "ratio" : activeDefinition.fallbackUnit;
 
   return (
     <>
@@ -185,7 +217,7 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
       <div className="briefing-grid">
         {kpis?.items.map((k: KpiItem) => (
           <KpiCard key={k.label} label={k.label} value={k.value} note={k.note} tone={k.tone}
-            metricKey={k.metricKey} onOpenMetric={(key) => onOpenMetric(key, null)} />
+            metricKey={k.metricKey} fact={k.fact} onOpenMetric={onOpenMetric} />
         ))}
       </div>
 
@@ -205,18 +237,19 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         <Card className="quarter-chart-wrap">
           <div className="chart-top">
             <div>
-              <div className="card-title">营业收入 · 最近 8 季（真实）</div>
+              <div className="card-title" data-testid="overview-chart-title">{activeDefinition.label} · 最近 8 季（真实）</div>
               <div className="card-sub">连续季度比单点数字更容易看出经营方向</div>
+              <div className="card-sub" data-testid="overview-chart-unit">图表单位：{activeUnit === "currency" ? "$" : "%"}</div>
             </div>
             <div className="seg">
-              {chartKeys.map(([key, label]) => (
+              {chartKeys.map(({ key, label }) => (
                 <button key={key} className={activeChart === key ? "active" : ""} onClick={() => setActiveChart(key)}>{label}</button>
               ))}
             </div>
           </div>
           <div className="chart-area">
             {active && active.values.length ? (
-              <EChart option={seriesOption(active.periods.slice(-8), active.values.slice(-8), { unit: "currency" })} height={230} />
+              <EChart option={seriesOption(active.periods.slice(-8), active.values.slice(-8), { unit: activeUnit, name: activeDefinition.label })} height={230} />
             ) : null}
           </div>
         </Card>

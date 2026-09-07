@@ -11,18 +11,36 @@ function NodeRow({ node, depth }: { node: ProvenanceNode; depth: number }) {
   const title =
     node.kind === "canonical_fact"
       ? `${String(f.metric)} · ${String(f.period_type ?? "")}${f.fiscal_quarter ? ` FY${String(f.fiscal_year)}Q${String(f.fiscal_quarter)}` : f.fiscal_year ? ` FY${String(f.fiscal_year)}` : ""}`
+      : node.kind === "metric_value"
+        ? `${String(f.metric)} · ${String(f.period_label ?? "")}`
       : node.kind === "raw_fact"
         ? `${node.label ?? ""}`
         : node.label ?? "";
+  const kindLabel = node.kind === "canonical_fact"
+    ? "规范化事实"
+    : node.kind === "metric_value"
+      ? "派生指标"
+      : node.kind === "raw_fact"
+        ? "原始事实"
+        : node.kind === "market_observation"
+          ? "行情观察"
+          : "来源文档";
   return (
     <div className="prov-node" style={{ marginLeft: depth * 18 }}>
       <div className="prov-head">
-        <span className={`prov-kind kind-${node.kind}`}>{node.kind === "canonical_fact" ? "规范化事实" : node.kind === "raw_fact" ? "原始事实" : "来源文档"}</span>
+        <span className={`prov-kind kind-${node.kind}`}>{kindLabel}</span>
         <strong>{title}</strong>
         {node.kind === "canonical_fact" ? <em>{statusLabel(f.status as string)}</em> : null}
       </div>
       <div className="prov-fields">
-        {node.kind === "canonical_fact" ? (
+        {node.kind === "metric_value" ? (
+          <>
+            <span>值：{f.value !== null && f.value !== undefined ? Number(f.value).toLocaleString("en-US") : "—"} {String(f.unit ?? "")}</span>
+            {f.frequency ? <span>频率：{String(f.frequency)}</span> : null}
+            {f.formula_id ? <span>公式：{String(f.formula_id)}</span> : null}
+            {f.period_start || f.period_end ? <span>期间：{String(f.period_start ?? "—")} 至 {String(f.period_end ?? "—")}</span> : null}
+          </>
+        ) : node.kind === "canonical_fact" ? (
           <>
             <span>值：{f.value !== null && f.value !== undefined ? Number(f.value).toLocaleString("en-US") : "—"} {String(f.unit ?? "")}</span>
             {f.period_end ? <span>期末：{String(f.period_end)}</span> : null}

@@ -61,6 +61,6 @@
 - [x] Write a scripted browser reading test that finds company economics/data recency, the current growth and its source, the least reliable assumption, WACC direction, scenario method, reverse DCF, safety margin, and review trigger.
 - [x] Reorder beginner mode into evidence → range/uncertainty → adjust assumptions → reverse DCF → save/review. Keep sensitivity and raw field metadata collapsed until requested.
 - [x] Add plain-language parameter explanations with raise/lower effects; do not describe WACC as a promised return. Keep edited inputs when switching modes.
-- [ ] Confirm ratio titles/units follow the selected metric and all drawers are company-safe. Financials and company switching pass; Overview still hard-codes the revenue title/currency unit and opens KPI drawers without result provenance.
+- [x] Confirm ratio titles/units follow the selected metric and all drawers are company-safe. Financials and Overview both expose the selected title/unit; KPI drawers prefer the complete derived result identity and company switching closes open drawers.
 - [x] Run full backend, TypeScript, ESLint, and all Playwright tests. Update the Batch 4 evidence and consolidated progress documents after completion.
 - [x] Apply verification-before-completion and finish the development branch workflow.

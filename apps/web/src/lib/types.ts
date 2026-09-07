@@ -22,6 +22,7 @@ export type Fact = {
   unit: string;
   status: string;
   canonical_fact_id: string | null;
+  result_id?: string | null;
   provenance: {
     source_document_id?: string | null;
     provider?: string | null;
@@ -84,9 +85,25 @@ export type OverviewResponse = {
   } | null;
   kpis: Record<
     string,
-    { value?: number | null; unit?: string; period?: string | null; periods?: string[] }
+    {
+      metric?: string;
+      value?: number | null;
+      unit?: string | null;
+      period?: string | null;
+      frequency?: string | null;
+      status?: string | null;
+      formula_id?: string | null;
+      formula_version?: string | null;
+      canonical_fact_id?: string | null;
+      result_id?: string | null;
+      input_fact_ids?: string[];
+      fiscal_year?: number | null;
+      fiscal_quarter?: number | null;
+      period_end?: string | null;
+      missing_reason?: string | null;
+    }
   >;
-  trend: Record<string, { label: string; values: (number | null)[]; periods: (string | null)[] }>;
+  trend: Record<string, { label: string; unit?: string | null; values: (number | null)[]; periods: (string | null)[] }>;
   provenance_available: boolean;
 };
 

@@ -275,27 +275,43 @@ def overview(ticker: str, mode: str = Query("latest_restated")):
     engine = MetricEngine(store)
     cik = company.cik
 
+    def point_payload(point) -> dict:
+        return {
+            "metric": point.metric,
+            "value": point.value,
+            "unit": point.unit,
+            "period": point.period_label,
+            "frequency": point.frequency,
+            "status": point.status,
+            "formula_id": point.formula_id,
+            "formula_version": point.formula_version,
+            "canonical_fact_id": point.canonical_fact_id,
+            "result_id": point.result_id,
+            "input_fact_ids": point.input_fact_ids or [],
+            "fiscal_year": point.fiscal_year,
+            "fiscal_quarter": point.fiscal_quarter,
+            "period_end": point.period_end,
+            "missing_reason": point.missing_reason,
+        }
+
     kpis = {}
     for m in ("REVENUE", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"):
         pts = engine.compute(m, cik, frequency="quarterly")
         if pts:
-            latest = next((p.value for p in reversed(pts) if p.value is not None), None)
-            kpis[f"{m}_LATEST"] = {"value": latest, "unit": "USD"}
+            latest = next((p for p in reversed(pts) if p.value is not None), None)
+            if latest is not None:
+                kpis[f"{m}_LATEST"] = point_payload(latest)
         # TTM comes from the backend metric engine (4 *consecutive* quarters),
         # never a front-end sum of the last 4 non-null points.
-        ttm = engine.compute(m, cik, frequency="ttm")
-        if ttm and ttm[-1].value is not None:
-            kpis[f"TTM_{m}"] = {"value": ttm[-1].value, "unit": "USD", "period": ttm[-1].period_label}
-    for m in ("GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN", "FCF_MARGIN"):
+        kpis[f"TTM_{m}"] = point_payload(engine.current(m, cik, frequency="ttm"))
+    for m in ("REVENUE_GROWTH_YOY", "GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN", "FCF_MARGIN"):
         pts = engine.compute(m, cik, frequency="quarterly")
         if pts and pts[-1].value is not None:
-            kpis[m] = {"value": pts[-1].value, "unit": "ratio", "period": pts[-1].period_label}
-    fcf_ttm = engine.compute("FCF", cik, frequency="ttm")
-    if fcf_ttm and fcf_ttm[-1].value is not None:
-        kpis["TTM_FCF"] = {"value": fcf_ttm[-1].value, "unit": "USD", "period": fcf_ttm[-1].period_label}
+            kpis[m] = point_payload(pts[-1])
+    kpis["TTM_FCF"] = point_payload(engine.current("FCF", cik, frequency="ttm"))
     nd = engine.compute("NET_DEBT", cik, frequency="quarterly")
     if nd:
-        kpis["NET_DEBT"] = {"value": nd[-1].value, "unit": "USD", "period": nd[-1].period_label}
+        kpis["NET_DEBT"] = point_payload(nd[-1])
 
     trend = {}
     for m, key in (("REVENUE", "revenue"), ("REVENUE_GROWTH_YOY", "revenueGrowth"),
@@ -307,6 +323,7 @@ def overview(ticker: str, mode: str = Query("latest_restated")):
             continue
         trend[key] = {
             "label": m,
+            "unit": next((p.unit for p in reversed(pts) if p.unit), None),
             "values": [p.value for p in pts],
             "periods": [p.period_label for p in pts],
         }

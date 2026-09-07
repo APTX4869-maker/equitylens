@@ -116,7 +116,13 @@ def test_overview_kpis_and_trends(client):
     d = r.json()
     assert d["latest_period"]["fiscal_year"] >= 2025
     assert d["kpis"]["TTM_REVENUE"]["value"] == pytest.approx(466_823_000_000, rel=1e-6)
+    assert d["kpis"]["TTM_REVENUE"]["result_id"].startswith("derived.v2.")
+    assert d["kpis"]["TTM_REVENUE"]["metric"] == "REVENUE"
+    assert d["trend"]["grossMargin"]["unit"] == "ratio"
     assert len(d["trend"]["revenue"]["values"]) >= 8
+    provenance = client.get(f"/api/v1/provenance/{d['kpis']['TTM_REVENUE']['result_id']}")
+    assert provenance.status_code == 200
+    assert provenance.json()["tree"]["fields"]["value"] == pytest.approx(466_823_000_000, rel=1e-6)
 
 
 def test_provenance_recursive_lineage(client):
