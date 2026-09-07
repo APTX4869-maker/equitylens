@@ -75,7 +75,7 @@ def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
             seen: dict[tuple, dict] = {}
             for f in facts:
                 key = (f["fiscal_year"], f["fiscal_quarter"], f["period_type"])
-                if key not in seen or (f.get("as_known_at") or "") > (seen[key].get("as_known_at") or ""):
+                if key not in seen or MetricEngine.restatement_key(f) > MetricEngine.restatement_key(seen[key]):
                     seen[key] = f
             items = sorted(seen.values(), key=lambda f: (f["fiscal_year"] or 0, f["fiscal_quarter"] or 0))
             for f in items:

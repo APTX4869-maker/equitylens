@@ -140,9 +140,18 @@ class MetricEngine:
         return out
 
     @staticmethod
+    def restatement_key(fact: dict) -> tuple[str, str, str]:
+        """Stable preference for facts disclosed at the same timestamp."""
+        return (
+            str(fact.get("as_known_at") or ""),
+            str(fact.get("source_document_id") or ""),
+            str(fact.get("canonical_fact_id") or ""),
+        )
+
+    @staticmethod
     def pick_latest(facts: list[dict]) -> dict | None:
-        """Latest restated: prefer highest as_known_at (filing date)."""
-        return max(facts, key=lambda f: f.get("as_known_at") or "") if facts else None
+        """Latest restated with deterministic identity tie-breaking."""
+        return max(facts, key=MetricEngine.restatement_key) if facts else None
 
     @staticmethod
     def _latest_instant(facts: list[dict]) -> dict | None:
@@ -153,7 +162,7 @@ class MetricEngine:
             facts,
             key=lambda f: (
                 f.get("instant_date") or f.get("period_end") or "",
-                f.get("as_known_at") or "",
+                *MetricEngine.restatement_key(f),
             ),
         )
 
@@ -399,7 +408,7 @@ class MetricEngine:
         for f in facts:
             if f.get("period_type") == "FY" and f.get("fiscal_year") is not None:
                 key = (f["fiscal_year"], None)
-                if key not in out or (f.get("as_known_at") or "") > (out[key].get("as_known_at") or ""):
+                if key not in out or MetricEngine.restatement_key(f) > MetricEngine.restatement_key(out[key]):
                     out[key] = f
         return out
 
@@ -418,7 +427,7 @@ class MetricEngine:
         out = []
         for key, n in sorted(nums.items(), key=lambda kv: (kv[0][0] or 0, kv[0][1] or 0)):
             d = dens.get(key)
-            if not d or not n.get("value") or not d.get("value"):
+            if d is None or n.get("value") is None or d.get("value") is None:
                 continue
             out.append((key, n, d))
         return out
@@ -490,10 +499,16 @@ class MetricEngine:
                                               nt["input_ids"] + dt["input_ids"], "ttm", unit="ratio"))
             else:
                 for key, n, d in self._two_series(facts[num_metric], facts["REVENUE"], freq):
-                    value = float(n["value"]) / float(d["value"]) if d["value"] else None
-                    points.append(self._point(metric, value, n, f"{metric.lower()}.v1",
-                                              [n.get("canonical_fact_id"), d.get("canonical_fact_id")], freq,
-                                              unit="ratio"))
+                    inputs = [n.get("canonical_fact_id"), d.get("canonical_fact_id")]
+                    if float(d["value"]) == 0:
+                        point = self._point(metric, None, n, f"{metric.lower()}.v1", inputs, freq,
+                                            unit="ratio")
+                        point.status = "UNAVAILABLE"
+                        point.missing_reason = "REVENUE denominator is zero"
+                        points.append(point)
+                    else:
+                        points.append(self._point(metric, float(n["value"]) / float(d["value"]), n,
+                                                  f"{metric.lower()}.v1", inputs, freq, unit="ratio"))
         elif metric in ("FCF", "FCF_MARGIN"):
             facts = self.load_facts(company_id, ["OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES", "REVENUE"])
             ocf_facts = facts["OPERATING_CASH_FLOW"]
@@ -558,7 +573,7 @@ class MetricEngine:
                         continue
                     slot = by_date.setdefault(d, {})
                     cur = slot.get(name)
-                    if cur is None or (f.get("as_known_at") or "") > (cur.get("as_known_at") or ""):
+                    if cur is None or self.restatement_key(f) > self.restatement_key(cur):
                         slot[name] = f
             required = ("LONG_TERM_DEBT", "LONG_TERM_DEBT_CURRENT",
                         "CASH_AND_EQUIVALENTS", "SHORT_TERM_INVESTMENTS")

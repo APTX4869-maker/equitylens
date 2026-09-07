@@ -3,6 +3,8 @@ not by guessing from directory file names; prior versions stay readable."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from equitylens.storage.raw_store import load_snapshot, save_snapshot, sha256_bytes
@@ -131,3 +133,85 @@ def test_sync_offline_reads_latest_snapshot(tmp_path, db):
 
     content, _ = load_snapshot(raw / "sec" / "0000320193", "companyfacts.json")
     assert b"Revenues" in content  # latest (v2), not the v1 fixed-name file
+
+
+def test_two_snapshot_restatement_replays_latest_into_fresh_database(tmp_path, db):
+    """D05/D08: latest snapshot bytes must drive a fresh offline normalization."""
+    from equitylens.ingestion.sec.sync import sync_company
+    from equitylens.metrics.engine import MetricEngine
+    from equitylens.storage.duckdb_store import DuckDBStore
+
+    submissions = json.dumps({
+        "filings": {"recent": [{"form": "10-K", "reportDate": "2025-09-27"}]}
+    }).encode()
+
+    def companyfacts(value: int, filed: str, accn: str) -> bytes:
+        return json.dumps({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [{
+                "start": "2024-09-29", "end": "2025-09-27", "val": value,
+                "accn": accn, "fy": 2025, "fp": "FY", "form": "10-K", "filed": filed,
+            }]}}
+        }}}).encode()
+
+    class StubClient:
+        def __init__(self, facts: bytes):
+            self.facts = facts
+
+        def get(self, url):
+            content = submissions if "submissions" in url else self.facts
+            return 200, content, {
+                "fetched_at": "2026-01-01T00:00:00", "content_length": len(content), "status": 200,
+            }
+
+    raw = tmp_path / "raw-restatement"
+    sync_company("AAPL", fetch=True, store=db, client=StubClient(companyfacts(100, "2025-10-30", "v1")), raw_dir=raw)
+    sync_company("AAPL", fetch=True, store=db, client=StubClient(companyfacts(120, "2026-10-30", "v2")), raw_dir=raw)
+    assert MetricEngine(db).compute("REVENUE", "0000320193", frequency="annual")[-1].value == 120
+
+    replay = DuckDBStore(tmp_path / "replay.duckdb")
+    replay.connect()
+    replay.init_schema()
+    try:
+        sync_company("AAPL", fetch=False, store=replay, raw_dir=raw)
+        first_count = replay.query_one("SELECT COUNT(*) AS n FROM canonical_fact")["n"]
+        assert MetricEngine(replay).compute("REVENUE", "0000320193", frequency="annual")[-1].value == 120
+        sync_company("AAPL", fetch=False, store=replay, raw_dir=raw)
+        assert replay.query_one("SELECT COUNT(*) AS n FROM canonical_fact")["n"] == first_count
+    finally:
+        replay.close()
+
+
+def test_failed_multi_document_fetch_keeps_previous_latest_set(tmp_path, db):
+    """D08: a partial network failure cannot publish half of a new SEC snapshot set."""
+    from equitylens.ingestion.sec.sync import sync_company
+
+    class Client:
+        def __init__(self, submissions: bytes, facts: bytes | None):
+            self.submissions = submissions
+            self.facts = facts
+
+        def get(self, url):
+            if "submissions" in url:
+                content = self.submissions
+            elif self.facts is None:
+                raise RuntimeError("companyfacts failed")
+            else:
+                content = self.facts
+            return 200, content, {
+                "fetched_at": "2026-01-01T00:00:00", "content_length": len(content), "status": 200,
+            }
+
+    raw = tmp_path / "raw-atomic"
+    old_submissions = b'{"filings":{"recent":[]},"version":1}'
+    old_facts = b'{"facts":{"us-gaap":{}},"version":1}'
+    sync_company("AAPL", fetch=True, store=db, client=Client(old_submissions, old_facts), raw_dir=raw)
+
+    with pytest.raises(RuntimeError, match="companyfacts failed"):
+        sync_company(
+            "AAPL", fetch=True, store=db,
+            client=Client(b'{"filings":{"recent":[]},"version":2}', None), raw_dir=raw,
+        )
+
+    directory = raw / "sec" / "0000320193"
+    assert load_snapshot(directory, "submissions.json")[0] == old_submissions
+    assert load_snapshot(directory, "companyfacts.json")[0] == old_facts

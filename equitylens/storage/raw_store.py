@@ -103,32 +103,51 @@ def _versioned_name(doc_name: str, sha: str) -> str:
     return f"{p.stem}.{sha[:8]}{p.suffix}"
 
 
-def save_snapshot(directory: Path, doc_name: str, content: bytes) -> tuple[Path, str]:
-    """Save raw bytes to `directory/doc_name`.
+def save_snapshots(directory: Path, documents: dict[str, bytes]) -> dict[str, tuple[Path, str]]:
+    """Durably publish a related set of snapshots with one manifest update.
 
-    Returns (path, sha256). Idempotent when content is unchanged; otherwise a
-    new versioned file (stem.hash.ext) is created and prior versions are kept.
-    The latest pointer is updated only after a successful write.
+    All immutable files are written before any latest pointer changes. If a
+    write fails, the old manifest remains authoritative; successfully written
+    orphan bytes are harmless and may be reused by a later retry.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    sha = sha256_bytes(content)
-    base = directory / doc_name
-
+    results: dict[str, tuple[Path, str]] = {}
     with _manifest_lock(directory):
-        if base.exists() and sha256_bytes(base.read_bytes()) == sha:
-            path = base
-        elif base.exists():
-            path = directory / _versioned_name(doc_name, sha)
-            _write_immutable(path, content)
-        else:
-            path = base
-            _write_immutable(path, content)
-
-        # Publish only after the immutable bytes are durable.
         manifest = _read_manifest(directory)
-        manifest[doc_name] = {"sha256": sha, "path": path.name}
+        next_manifest = dict(manifest)
+        for doc_name, content in documents.items():
+            sha = sha256_bytes(content)
+            base = directory / doc_name
+            if base.exists() and sha256_bytes(base.read_bytes()) == sha:
+                path = base
+            elif base.exists():
+                path = directory / _versioned_name(doc_name, sha)
+                _write_immutable(path, content)
+            else:
+                path = base
+                _write_immutable(path, content)
+            results[doc_name] = (path, sha)
+            next_manifest[doc_name] = {"sha256": sha, "path": path.name}
+        # Publish the complete set only after every immutable file is durable.
+        manifest = next_manifest
         _write_manifest(directory, manifest)
-    return path, sha
+    return results
+
+
+def save_snapshot(directory: Path, doc_name: str, content: bytes) -> tuple[Path, str]:
+    """Save one immutable snapshot and update its latest pointer."""
+    return save_snapshots(directory, {doc_name: content})[doc_name]
+
+
+def snapshot_path(directory: Path, doc_name: str, sha: str) -> Path:
+    """Return the stored path for hash-verified bytes without guessing latest."""
+    fixed = directory / doc_name
+    if fixed.exists() and sha256_bytes(fixed.read_bytes()) == sha:
+        return fixed
+    versioned = directory / _versioned_name(doc_name, sha)
+    if versioned.exists() and sha256_bytes(versioned.read_bytes()) == sha:
+        return versioned
+    raise FileNotFoundError(f"no snapshot path for {doc_name}@{sha[:8]}")
 
 
 def load_snapshot(directory: Path, doc_name: str, sha: str | None = None) -> tuple[bytes, str] | None:

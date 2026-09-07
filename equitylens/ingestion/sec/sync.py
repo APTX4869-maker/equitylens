@@ -22,7 +22,7 @@ from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.storage.duckdb_store import DuckDBStore
-from equitylens.storage.raw_store import load_snapshot, save_snapshot
+from equitylens.storage.raw_store import load_snapshot, save_snapshots, snapshot_path
 
 DOC_SUBMISSIONS = "submissions.json"
 DOC_COMPANYFACTS = "companyfacts.json"
@@ -49,10 +49,8 @@ class SyncReport:
         )
 
 
-def _fetch_snapshot(client: SECClient, url: str, directory, doc_name: str) -> tuple[bytes, str, dict, SourceDocument]:
-    status, content, meta = client.get(url)
-    path, sha = save_snapshot(directory, doc_name, content)
-    doc = SourceDocument(
+def _snapshot_document(*, url: str, meta: dict, path: Path, sha: str) -> SourceDocument:
+    return SourceDocument(
         provider="SEC",
         document_type="COMPANYFACTS_SNAPSHOT" if "companyfacts" in url else "SUBMISSIONS_SNAPSHOT",
         source_url=url,
@@ -60,9 +58,8 @@ def _fetch_snapshot(client: SECClient, url: str, directory, doc_name: str) -> tu
         local_path=str(path),
         fetched_at=meta["fetched_at"],
         parser_version=PARSER_VERSION,
-        metadata_json={"http_status": status, "content_length": meta["content_length"]},
+        metadata_json={"http_status": meta.get("status", 200), "content_length": meta["content_length"]},
     )
-    return content, sha, meta, doc
 
 
 def sync_company(
@@ -91,23 +88,29 @@ def sync_company(
         if fetch:
             own_client = client or SECClient()
             try:
-                # submissions
-                subs_content, sha, meta, doc = _fetch_snapshot(
-                    own_client, SEC_SUBMISSIONS_URL + f"CIK{cik}.json", directory, DOC_SUBMISSIONS
-                )
-                fetched_bytes += len(subs_content)
+                subs_url = SEC_SUBMISSIONS_URL + f"CIK{cik}.json"
+                cf_url = SEC_COMPANYFACTS_URL + f"CIK{cik}.json"
+                subs_status, subs_content, subs_meta = own_client.get(subs_url)
+                cf_status, cf_content, cf_meta = own_client.get(cf_url)
+                subs_meta = {**subs_meta, "status": subs_status}
+                cf_meta = {**cf_meta, "status": cf_status}
+                fetched_bytes += len(subs_content) + len(cf_content)
                 submissions_data = json.loads(subs_content)
-                doc.company_id = cik
-                doc.filed_at = None
-                docs.append(doc)
-
-                # companyfacts
-                cf_content, sha, meta, doc = _fetch_snapshot(
-                    own_client, SEC_COMPANYFACTS_URL + f"CIK{cik}.json", directory, DOC_COMPANYFACTS
+                published = save_snapshots(directory, {
+                    DOC_SUBMISSIONS: subs_content,
+                    DOC_COMPANYFACTS: cf_content,
+                })
+                subs_path, subs_sha = published[DOC_SUBMISSIONS]
+                cf_path, cf_sha = published[DOC_COMPANYFACTS]
+                subs_doc = _snapshot_document(
+                    url=subs_url, meta=subs_meta, path=subs_path, sha=subs_sha,
                 )
-                fetched_bytes += len(cf_content)
-                doc.company_id = cik
-                docs.append(doc)
+                subs_doc.company_id = cik
+                cf_doc = _snapshot_document(
+                    url=cf_url, meta=cf_meta, path=cf_path, sha=cf_sha,
+                )
+                cf_doc.company_id = cik
+                docs.extend([subs_doc, cf_doc])
             finally:
                 if client is None:
                     own_client.close()
@@ -121,14 +124,15 @@ def sync_company(
                     f"No cached snapshots for {ticker}; run with --fetch first"
                 )
             submissions_data = json.loads(subs[0])
+            cf_content = cf[0]
             docs = [
                 SourceDocument(provider="SEC", document_type="SUBMISSIONS_SNAPSHOT",
                               source_url=SEC_SUBMISSIONS_URL + f"CIK{cik}.json",
-                              content_sha256=subs[1], local_path=str(directory / DOC_SUBMISSIONS),
+                              content_sha256=subs[1], local_path=str(snapshot_path(directory, DOC_SUBMISSIONS, subs[1])),
                               company_id=cik, parser_version=PARSER_VERSION),
                 SourceDocument(provider="SEC", document_type="COMPANYFACTS_SNAPSHOT",
                               source_url=SEC_COMPANYFACTS_URL + f"CIK{cik}.json",
-                              content_sha256=cf[1], local_path=str(directory / DOC_COMPANYFACTS),
+                              content_sha256=cf[1], local_path=str(snapshot_path(directory, DOC_COMPANYFACTS, cf[1])),
                               company_id=cik, parser_version=PARSER_VERSION),
             ]
 
@@ -139,8 +143,7 @@ def sync_company(
 
         # normalize companyfacts
         cf_doc = next(d for d in docs if d.document_type == "COMPANYFACTS_SNAPSHOT")
-        cf_path = cf_doc.local_path
-        cf_data = json.loads(Path(cf_path).read_text())
+        cf_data = json.loads(cf_content)
         mappings = MappingRegistry()
         calendar = FiscalCalendar.from_submissions(submissions_data, fallback_mm_dd=company.fiscal_year_end)
         raw_rows, canonical_rows, result = normalize_companyfacts(

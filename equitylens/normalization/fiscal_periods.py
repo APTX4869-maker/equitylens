@@ -260,7 +260,14 @@ def derive_standalone_quarters(facts: list[dict], year: int, calendar: FiscalCal
         # if several (e.g. restated filings for the same period), prefer the
         # latest known (highest as_known_at) so derived quarters follow the
         # latest restatement rather than insertion order.
-        return max(candidates, key=lambda f: f.get("as_known_at") or "")
+        return max(
+            candidates,
+            key=lambda f: (
+                str(f.get("as_known_at") or ""),
+                str(f.get("source_document_id") or ""),
+                str(f.get("canonical_fact_id") or ""),
+            ),
+        )
 
     def max_known(*items: dict | None) -> str | None:
         known = [f.get("as_known_at") for f in items if f and f.get("as_known_at")]

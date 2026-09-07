@@ -160,6 +160,44 @@ def test_ttm_requires_consecutive_quarters():
     assert eng.ttm(incomplete) is None
 
 
+def test_same_day_duplicate_period_selection_is_stable():
+    """D05/D06: database insertion order cannot change the selected fact."""
+    facts = [
+        {"canonical_fact_id": "fact-a", "as_known_at": "2026-01-30", "value": 10.0},
+        {"canonical_fact_id": "fact-b", "as_known_at": "2026-01-30", "value": 20.0},
+    ]
+    assert MetricEngine.pick_latest(facts)["canonical_fact_id"] == "fact-b"
+    assert MetricEngine.pick_latest(list(reversed(facts)))["canonical_fact_id"] == "fact-b"
+
+
+def test_duplicate_quarter_is_selected_once_in_ttm(db):
+    """D05/D06: tied duplicate observations cannot be counted twice."""
+    cid = "DUPLICATE"
+    _insert_fact(db, cid, "REVENUE", "Q_STANDALONE", 2025, 1, 10.0, fact_id="fact-a")
+    _insert_fact(db, cid, "REVENUE", "Q_STANDALONE", 2025, 1, 20.0, fact_id="fact-b")
+    for quarter, value in ((2, 2.0), (3, 3.0), (4, 4.0)):
+        _insert_fact(db, cid, "REVENUE", "Q_STANDALONE", 2025, quarter, value)
+
+    points = MetricEngine(db).compute("REVENUE", cid, frequency="ttm")
+    assert len(points) == 1
+    assert points[0].value == pytest.approx(29.0)
+    assert "fact-b" in points[0].input_fact_ids
+    assert "fact-a" not in points[0].input_fact_ids
+
+
+def test_ratio_zero_denominator_is_explicitly_unavailable(db):
+    """D07: a disclosed zero denominator is not a valid zero ratio."""
+    cid = "ZERO-DENOMINATOR"
+    _insert_fact(db, cid, "GROSS_PROFIT", "Q_STANDALONE", 2025, 1, 10.0, fact_id="gross")
+    _insert_fact(db, cid, "REVENUE", "Q_STANDALONE", 2025, 1, 0.0, fact_id="revenue-zero")
+
+    point = MetricEngine(db).compute("GROSS_MARGIN", cid, frequency="quarterly")[0]
+    assert point.value is None
+    assert point.status == "UNAVAILABLE"
+    assert point.missing_reason == "REVENUE denominator is zero"
+    assert point.input_fact_ids == ["gross", "revenue-zero"]
+
+
 def test_aapl_eps_ttm_missing_q4_is_gap(engine):
     """D06/D09: EPS is a per-share ratio and is NOT additive quarter-over-quarter;
     the engine must never emit the bogus 8.44 TTM sum for it."""

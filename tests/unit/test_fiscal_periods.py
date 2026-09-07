@@ -38,6 +38,36 @@ def test_duration_period_classification():
     assert p.period_type == "FY" and p.fiscal_quarter is None and p.fiscal_year == 2025
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "fiscal_year"),
+    [("2024-09-29", "2025-09-27", 2025), ("2023-10-01", "2024-10-05", 2024)],
+)
+def test_52_and_53_week_fiscal_years_are_full_years(start, end, fiscal_year):
+    """D03: retail 52/53-week calendars remain FY duration facts."""
+    cal = FiscalCalendar(
+        year_ends={2023: date(2023, 9, 30), 2024: date(2024, 10, 5), 2025: date(2025, 9, 27)},
+        quarter_ends={},
+        fallback_mm_dd=None,
+    )
+    period = cal.resolve_duration(start, end)
+    assert period.period_type == "FY"
+    assert period.fiscal_year == fiscal_year
+
+
+def test_fiscal_year_end_change_uses_reported_calendar_boundaries():
+    """D03: a transition year follows reported 10-K ends, not a fixed MM-DD."""
+    cal = FiscalCalendar(
+        year_ends={2023: date(2023, 9, 30), 2024: date(2024, 9, 28), 2025: date(2025, 12, 27)},
+        quarter_ends={2025: [date(2024, 12, 28), date(2025, 3, 29), date(2025, 6, 28)]},
+        fallback_mm_dd="09-30",
+    )
+    transition = cal.resolve_duration("2024-09-29", "2025-12-27")
+    first_quarter = cal.resolve_duration("2024-09-29", "2024-12-28")
+    assert transition.period_type == "FY" and transition.fiscal_year == 2025
+    assert first_quarter.period_type == "Q_STANDALONE"
+    assert first_quarter.fiscal_year == 2025 and first_quarter.fiscal_quarter == 1
+
+
 def test_instant_period():
     cal = make_calendar()
     p = cal.resolve_instant("2024-09-30")
@@ -149,6 +179,30 @@ def test_derive_uses_latest_restated_fy_for_q4():
     derived_rev = derive_standalone_quarters(reversed_facts, 2025, cal)
     q4_rev = next(d for d in derived_rev if d["fiscal_quarter"] == 4)
     assert q4_rev["value"] == pytest.approx(200.0)
+
+
+def test_same_day_restatement_tie_is_insertion_order_independent():
+    """D05: equal filing dates use a stable identity tie-breaker."""
+    cal = make_calendar()
+    common = [
+        {"canonical_fact_id": "ytd9", "canonical_metric": "OCF", "period_type": "YTD_9M",
+         "fiscal_quarter": 3, "period_end": "2025-03-31", "value": 300.0, "unit": "USD",
+         "as_known_at": "2025-07-29"},
+    ]
+    tied = [
+        {"canonical_fact_id": "fy-a", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": "2025-06-30", "value": 400.0, "unit": "USD",
+         "as_known_at": "2025-07-29"},
+        {"canonical_fact_id": "fy-b", "canonical_metric": "OCF", "period_type": "FY",
+         "fiscal_quarter": None, "period_end": "2025-06-30", "value": 500.0, "unit": "USD",
+         "as_known_at": "2025-07-29"},
+    ]
+    first = derive_standalone_quarters(common + tied, 2025, cal)
+    second = derive_standalone_quarters(common + list(reversed(tied)), 2025, cal)
+    q4_first = next(row for row in first if row["fiscal_quarter"] == 4)
+    q4_second = next(row for row in second if row["fiscal_quarter"] == 4)
+    assert q4_first["value"] == q4_second["value"] == 200.0
+    assert q4_first["input_ids"] == q4_second["input_ids"] == ["ytd9", "fy-b"]
 
 
 @pytest.mark.parametrize("as_date", [False, True])
