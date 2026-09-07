@@ -34,11 +34,11 @@
 
 **Files:** `config/valuation/wacc_defaults.yaml`, `equitylens/valuation/service.py`, `apps/web/src/components/sections/ValuationSection.tsx`, `tests/golden/test_golden_valuation.py`, `tests/integration/test_api.py`, `apps/web/e2e/beginner-valuation.spec.ts`
 
-- [ ] Add failing tests for a −5% first-year stress path, a loss-making base whose bear margin becomes more negative, and scenario fields/stories that exactly describe all changes.
-- [ ] Define issuer-specific Bear/Base/Bull stories and explicit deltas/paths in versioned config. Do not use magnitude-based labels or clamp margins at zero.
-- [ ] Return `story`, `changed_fields`, full CapEx/D&A/NWC and terminal assumptions, status, and reason for every scenario.
-- [ ] Render expandable scenario details and preserve the scenario names even when result values are not ordered.
-- [ ] Run focused backend/browser checks, update Batch 4 evidence/progress, and commit.
+- [x] Add failing tests for a −5% first-year stress path, a loss-making base whose bear margin becomes more negative, and scenario fields/stories that exactly describe all changes.
+- [x] Define issuer-specific Bear/Base/Bull stories and explicit deltas/paths in versioned config. Do not use magnitude-based labels or clamp margins at zero.
+- [x] Return `story`, `changed_fields`, full CapEx/D&A/NWC and terminal assumptions, status, and reason for every scenario.
+- [x] Render expandable scenario details and preserve the scenario names even when result values are not ordered.
+- [x] Run focused backend/browser checks, update Batch 4 evidence/progress, and commit.
 
 ---
 

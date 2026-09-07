@@ -328,6 +328,30 @@ def test_model_quality_block_structured():
     assert "不是价格正确的概率" in mq["note"]
 
 
+def test_aapl_bear_scenario_supports_negative_growth_and_explains_changes():
+    from equitylens.valuation.service import scenario_valuation
+
+    scenarios = scenario_valuation(make_inputs(revenue_growth=[0.0] * 5), "AAPL")
+    bear = scenarios["bear"]
+    assert bear["inputs"]["revenue_growth"][0] == pytest.approx(-0.05)
+    assert bear["story"]
+    assert set(bear["changed_fields"]) == {
+        "revenue_growth", "op_margin_end", "wacc", "terminal_growth"
+    }
+    assert bear["inputs"]["capex_pct"] == pytest.approx(0.04)
+    assert bear["inputs"]["da_pct"] == pytest.approx(0.03)
+    assert bear["inputs"]["nwc_pct"] == pytest.approx(0.002)
+
+
+def test_bear_scenario_makes_a_loss_margin_worse_instead_of_clipping_to_zero():
+    from equitylens.valuation.service import scenario_valuation
+
+    base = make_inputs(op_margin_start=-0.08, op_margin_end=-0.10)
+    bear = scenario_valuation(base, "AAPL")["bear"]
+    assert bear["inputs"]["op_margin_end"] < base.op_margin_end
+    assert bear["inputs"]["op_margin_end"] == pytest.approx(-0.13)
+
+
 def test_guardrail_boundary_is_consistent():
     """V04: WACC − g of exactly 1pp vs slightly more/less follows one rule."""
     # >= 1pp is allowed (message says "at least 1.0pp")

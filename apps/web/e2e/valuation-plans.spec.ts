@@ -10,7 +10,10 @@ const inputs = {
 
 function runResponse(saved = false) {
   const scenario = (key: "bear" | "base" | "bull", value: number) => ({
-    label: key, status: "OK", reason: null, inputs, result: {
+    label: key, story: `${key} company-specific story`,
+    scenario_version: "test-scenarios.v1",
+    changed_fields: key === "base" ? [] : ["revenue_growth", "op_margin_end"],
+    status: "OK", reason: null, inputs, result: {
       fair_value_per_share: value, enterprise_value: value * 10,
       equity_value: value * 10, terminal_value: 500, pv_terminal: 300,
       sum_pv_fcff: value * 10 - 300, net_cash: 10, terminal_value_share: 0.6,
@@ -84,6 +87,9 @@ test("save, open, copy and compare traceable valuation plans", async ({ page }) 
 
   await page.goto("/");
   await page.getByRole("button", { name: "估值" }).click();
+  await expect(page.getByText("bear company-specific story")).toBeVisible();
+  await page.getByText("查看全部假设与差异").first().click();
+  await expect(page.getByText(/相对当前草稿变更：revenue_growth、op_margin_end/).first()).toBeVisible();
   await page.getByRole("button", { name: "保存本次运行" }).click();
   await expect(page.getByText(/已保存 · run run-v2/)).toBeVisible();
 

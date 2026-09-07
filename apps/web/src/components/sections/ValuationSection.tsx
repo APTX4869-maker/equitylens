@@ -38,12 +38,16 @@ type RunResponse = {
   };
   scenarios: Record<"bear" | "base" | "bull", {
     label: string;
+    story?: string;
+    scenario_version?: string;
+    changed_fields?: string[];
     status: "OK" | "UNAVAILABLE";
     reason: string | null;
     result: { fair_value_per_share: number } | null;
     inputs: {
       revenue_growth: number[]; op_margin_end: number; wacc: number;
       terminal_growth: number; terminal_roic: number;
+      da_pct?: number; capex_pct?: number; nwc_pct?: number;
     };
   }>;
   sensitivity: { wacc_grid: number[]; terminal_grid: number[]; rows: { wacc: number; values: (number | null)[] }[] };
@@ -611,6 +615,18 @@ export function ValuationSection({
                       增速 {sc.inputs.revenue_growth.map((g) => `${(g * 100).toFixed(0)}%`).join("→")}
                       <br />利润率 {(sc.inputs.op_margin_end * 100).toFixed(0)}% · WACC {(sc.inputs.wacc * 100).toFixed(1)}% · g {(sc.inputs.terminal_growth * 100).toFixed(1)}%
                     </div>
+                    <p className="card-sub" style={{ fontSize: 10, marginTop: 5 }}>
+                      {sc.story ?? "旧版本情景未记录公司故事。"}
+                    </p>
+                    <details style={{ marginTop: 5 }}>
+                      <summary className="text-link">查看全部假设与差异</summary>
+                      <div className="card-sub" style={{ fontSize: 10, lineHeight: 1.5, marginTop: 4 }}>
+                        D&amp;A/收入 {sc.inputs.da_pct != null ? `${(sc.inputs.da_pct * 100).toFixed(1)}%` : "旧版本未记录"} · CapEx/收入 {sc.inputs.capex_pct != null ? `${(sc.inputs.capex_pct * 100).toFixed(1)}%` : "旧版本未记录"}
+                        <br />营运资金/收入增量 {sc.inputs.nwc_pct != null ? `${(sc.inputs.nwc_pct * 100).toFixed(1)}%` : "旧版本未记录"} · 稳定期 ROIC {(sc.inputs.terminal_roic * 100).toFixed(0)}%
+                        <br />相对当前草稿变更：{sc.changed_fields?.length ? sc.changed_fields.join("、") : sc.changed_fields ? "无" : "旧版本未记录"}
+                        <br />版本：{sc.scenario_version ?? "旧版本未记录"}
+                      </div>
+                    </details>
                     {sc.reason ? <div className="card-sub" style={{ fontSize: 10, marginTop: 2 }}>{sc.reason}</div> : null}
                   </div>
                 );

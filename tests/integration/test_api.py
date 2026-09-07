@@ -236,6 +236,12 @@ def test_default_valuation_exposes_complete_assumption_metadata(client):
     assert meta["op_margin_end"]["rule"]
     assert meta["terminal_growth"]["source_type"] == "config_assumption"
     assert meta["shares"]["basis"] == "FY diluted weighted-average shares"
+    for key in ("bear", "base", "bull"):
+        scenario = body["scenarios"][key]
+        assert scenario["story"]
+        assert isinstance(scenario["changed_fields"], list)
+        assert "capex_pct" in scenario["inputs"]
+        assert "terminal_roic" in scenario["inputs"]
 
 
 def test_user_override_metadata_clears_fact_identity_and_share_basis_guess(client):

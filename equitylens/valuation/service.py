@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from equitylens.storage.duckdb_store import DuckDBStore
 from equitylens.valuation import dcf as dcf_mod
 from equitylens.valuation.dcf import DcfInputs, run_dcf, implied_growth
-from equitylens.valuation.defaults import default_assumption_set
+from equitylens.valuation.defaults import default_assumption_set, load_valuation_config
 from equitylens.valuation.rates import risk_free_rate
 
 
@@ -103,7 +103,31 @@ def scenario_valuation(base: DcfInputs, ticker: str) -> dict:
     (e.g. its WACC/terminal-growth offset hits the guardrail) is reported as
     unavailable with a reason, never a whole-request failure.
     """
-    def make(g, m, w, t, label) -> dict:
+    issuer = (load_valuation_config().get("issuers") or {}).get(ticker.upper())
+    if issuer is not None and issuer.get("scenarios"):
+        scenario_cfg = issuer["scenarios"]
+    else:
+        # A transparent generic policy remains available for isolated model
+        # tests. Product defaults still reject unsupported issuers before this
+        # function is reached.
+        bear_growth, bull_growth = _bear_bull_growth(base.revenue_growth)
+        scenario_cfg = {
+            "version": "generic-scenarios.v1",
+            "bear": {"label": "悲观", "story": "增长和利润率低于当前基准，资本成本上升。",
+                     "revenue_growth": bear_growth, "op_margin_delta": -0.02,
+                     "wacc_delta": 0.01, "terminal_growth_delta": -0.005},
+            "base": {"label": "中性", "story": "沿用当前完整输入，不作额外改变。"},
+            "bull": {"label": "乐观", "story": "增长和利润率高于当前基准，资本成本下降。",
+                     "revenue_growth": bull_growth, "op_margin_delta": 0.02,
+                     "wacc_delta": -0.005, "terminal_growth_delta": 0.005},
+        }
+
+    def make(key: str) -> dict:
+        spec = scenario_cfg[key]
+        g = list(spec.get("revenue_growth", base.revenue_growth))
+        m = base.op_margin_end + float(spec.get("op_margin_delta", 0.0))
+        w = base.wacc + float(spec.get("wacc_delta", 0.0))
+        t = base.terminal_growth + float(spec.get("terminal_growth_delta", 0.0))
         trial = DcfInputs(
             revenue_base=base.revenue_base,
             revenue_growth=g,
@@ -114,20 +138,25 @@ def scenario_valuation(base: DcfInputs, ticker: str) -> dict:
             net_cash=base.net_cash, shares=base.shares, terminal_roic=base.terminal_roic,
             share_basis_label=base.share_basis_label,
         )
+        changed_fields = [
+            field for field in DcfInputs.__dataclass_fields__
+            if getattr(trial, field) != getattr(base, field)
+        ]
+        context = {
+            "label": spec["label"], "story": spec["story"],
+            "scenario_version": scenario_cfg["version"],
+            "changed_fields": changed_fields, "inputs": _inputs_dict(trial),
+        }
         try:
             result = _output_dict(run_dcf(trial))
-            return {"label": label, "inputs": _inputs_dict(trial), "result": result,
-                    "status": "OK", "reason": None}
+            return {**context, "result": result, "status": "OK", "reason": None}
         except dcf_mod.ValuationError as exc:
-            return {"label": label, "inputs": _inputs_dict(trial), "result": None,
-                    "status": "UNAVAILABLE", "reason": str(exc)}
+            return {**context, "result": None, "status": "UNAVAILABLE", "reason": str(exc)}
 
-    base_m = base.op_margin_end
-    bear_g, bull_g = _bear_bull_growth(base.revenue_growth)
     return {
-        "bear": make(bear_g, max(0.0, base_m - 0.02), min(0.15, base.wacc + 0.01), max(0.005, base.terminal_growth - 0.005), "Bear"),
-        "base": make(list(base.revenue_growth), base_m, base.wacc, base.terminal_growth, "Base"),
-        "bull": make(bull_g, base_m + 0.02, max(0.05, base.wacc - 0.005), base.terminal_growth + 0.005, "Bull"),
+        "bear": make("bear"),
+        "base": make("base"),
+        "bull": make("bull"),
     }
 
 

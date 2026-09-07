@@ -2,10 +2,10 @@
 # Every number carries a source/date label — never an unexplained constant.
 # The risk-free rate is normally refreshed from the US Treasury feed when it
 # is reachable; this file is the documented fallback (value + as_of + source).
-# v4: per-issuer paths plus structured reasons/rules for every executable input.
+# v5: structured defaults plus issuer-specific economic scenario stories.
 # Growth remains a hand-versioned research
 # prior, NOT historical CAGR extrapolated into the future).
-version: 4
+version: 5
 defaults:
   op_margin_end_delta:
     value: 0.005
@@ -58,6 +58,25 @@ issuers:
     growth_path_source: "assumption v2 (mature hardware/services; hand-versioned prior, not historical CAGR)"
     growth_path_version: "aapl-growth.v2"
     growth_path_reason: "成熟硬件与服务组合：首年 6%，随后逐步回落；这是研究先验，不是历史增速外推。"
+    scenarios:
+      version: "aapl-scenarios.v1"
+      bear:
+        label: "悲观"
+        story: "硬件换机周期转弱且服务增速不能抵消，首年收入收缩 5%；竞争与投入使第五年营业利润率比基准低 3 个百分点，风险溢价上升。"
+        revenue_growth: [-0.05, 0.00, 0.01, 0.02, 0.025]
+        op_margin_delta: -0.03
+        wacc_delta: 0.01
+        terminal_growth_delta: -0.005
+      base:
+        label: "中性"
+        story: "沿用 AAPL 已版本化的成熟硬件与服务组合基准，不额外改变经营或资本假设。"
+      bull:
+        label: "乐观"
+        story: "服务与换机需求好于基准，第五年利润率高 2 个百分点，风险溢价略降，稳定期增长略高。"
+        revenue_growth: [0.10, 0.085, 0.07, 0.055, 0.045]
+        op_margin_delta: 0.02
+        wacc_delta: -0.005
+        terminal_growth_delta: 0.005
   MSFT:
     beta: 1.0
     beta_source: "assumption (no market-data provider configured; ~1.0 based on 3Y weekly vs SPX)"
@@ -67,3 +86,22 @@ issuers:
     growth_path_source: "assumption v2 (cloud/AI-driven software; hand-versioned prior, not historical CAGR)"
     growth_path_version: "msft-growth.v2"
     growth_path_reason: "云与 AI 驱动的软件组合：首年 12%，随后逐步回落；这是研究先验，不是历史增速外推。"
+    scenarios:
+      version: "msft-scenarios.v1"
+      bear:
+        label: "悲观"
+        story: "云与 AI 投入转化慢于预期，首年增长降至 2%，第五年利润率比基准低 3 个百分点，风险溢价上升。"
+        revenue_growth: [0.02, 0.04, 0.05, 0.055, 0.06]
+        op_margin_delta: -0.03
+        wacc_delta: 0.01
+        terminal_growth_delta: -0.005
+      base:
+        label: "中性"
+        story: "沿用 MSFT 已版本化的云与 AI 软件组合基准，不额外改变经营或资本假设。"
+      bull:
+        label: "乐观"
+        story: "云与 AI 商业化快于基准，第五年利润率高 2 个百分点，风险溢价略降，稳定期增长略高。"
+        revenue_growth: [0.16, 0.14, 0.12, 0.10, 0.09]
+        op_margin_delta: 0.02
+        wacc_delta: -0.005
+        terminal_growth_delta: 0.005

@@ -23,6 +23,11 @@ def _load_wacc_config() -> dict:
     return yaml.safe_load(Path(WACC_CONFIG_PATH).read_text())
 
 
+def load_valuation_config() -> dict:
+    """Return the versioned valuation/default/scenario configuration."""
+    return _load_wacc_config()
+
+
 def _latest_annual_point(store, company_id: str, metric: str):
     engine = MetricEngine(store)
     pts = engine.compute(metric, company_id, frequency="annual")
