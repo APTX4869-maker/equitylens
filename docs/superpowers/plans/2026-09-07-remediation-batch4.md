@@ -58,9 +58,9 @@
 
 **Files:** `apps/web/src/components/sections/ValuationSection.tsx`, `apps/web/src/components/MetricDrawer.tsx`, `apps/web/src/lib/metricKnowledge.ts`, `apps/web/src/app/globals.css`, `apps/web/e2e/beginner-valuation.spec.ts`, documentation under `docs/reviews`
 
-- [ ] Write a scripted browser reading test that finds company economics/data recency, the current growth and its source, the least reliable assumption, WACC direction, scenario method, reverse DCF, safety margin, and review trigger.
-- [ ] Reorder beginner mode into evidence → range/uncertainty → adjust assumptions → reverse DCF → save/review. Keep sensitivity and raw field metadata collapsed until requested.
-- [ ] Add plain-language parameter explanations with raise/lower effects; do not describe WACC as a promised return. Keep edited inputs when switching modes.
-- [ ] Confirm ratio titles/units follow the selected metric and all drawers are company-safe.
-- [ ] Run full backend, TypeScript, ESLint, and all Playwright tests. Update the Batch 4 evidence and consolidated progress documents after completion.
+- [x] Write a scripted browser reading test that finds company economics/data recency, the current growth and its source, the least reliable assumption, WACC direction, scenario method, reverse DCF, safety margin, and review trigger.
+- [x] Reorder beginner mode into evidence → range/uncertainty → adjust assumptions → reverse DCF → save/review. Keep sensitivity and raw field metadata collapsed until requested.
+- [x] Add plain-language parameter explanations with raise/lower effects; do not describe WACC as a promised return. Keep edited inputs when switching modes.
+- [x] Confirm ratio titles/units follow the selected metric and all drawers are company-safe.
+- [x] Run full backend, TypeScript, ESLint, and all Playwright tests. Update the Batch 4 evidence and consolidated progress documents after completion.
 - [ ] Apply verification-before-completion and finish the development branch workflow.

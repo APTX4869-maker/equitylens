@@ -370,6 +370,10 @@ def test_defaults_built_from_real_facts(company_db):
     assert inputs.op_margin_start == pytest.approx(133_050 / 416_161, rel=1e-4)
     assert inputs.capex_pct == pytest.approx(12_715 / 416_161, rel=1e-4)
     assert meta["revenue_base"]["source"].startswith("SEC")
+    history = meta["revenue_growth"]["historical_reference"]
+    assert history["period"] == "FY2020–FY2025"
+    assert history["value"] == pytest.approx((416_161 / 274_515) ** (1 / 5) - 1)
+    assert "不直接用作未来预测" in history["rule"]
     assert inputs.wacc > inputs.terminal_growth + 0.01
 
 

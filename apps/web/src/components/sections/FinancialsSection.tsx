@@ -219,6 +219,9 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
             <div className="card-sub">
               {view === "quarter" ? "看连续变化与拐点（单季为独立季度，非累计值）" : "看 5-10 年长期经营质量"}
             </div>
+            <div className="card-sub" data-testid="financial-chart-unit">
+              图表单位：{kind === "currency" ? "$B" : "%"}
+            </div>
           </div>
           <div className="quarter-controls">
             <div className="seg">

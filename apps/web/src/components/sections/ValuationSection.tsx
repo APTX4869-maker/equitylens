@@ -98,6 +98,7 @@ type AssumptionMeta = {
   fallback_reason?: string | null;
   basis?: string;
   components?: Record<string, number>;
+  historical_reference?: { label: string; value: number | null; period: string | null; rule: string };
 };
 
 type ValuationPlan = {
@@ -432,9 +433,21 @@ export function ValuationSection({
     const item = meta[key];
     if (!item) return null;
     const identity = item.as_of || item.version || "未标注版本";
+    const effects: Record<string, string> = {
+      revenue_growth: "调高通常会提高收入与价值；调低或转负通常会降低价值。",
+      op_margin_end: "调高表示每单位收入留下更多经营利润，通常提高价值；调低则相反。",
+      wacc: "调高会更大幅度折价未来现金流，通常降低价值；它是模型折现率，不是个人承诺收益率。",
+      terminal_growth: "调高通常提高终值，但也会增加模型对远期假设的依赖。",
+      terminal_roic: "调高表示稳定增长需要较少再投资，通常提高稳定期自由现金流。",
+    };
+    const history = item.historical_reference;
     return (
       <div className="assumption-context" data-testid={`assumption-${key}`}>
+        {history?.value != null ? (
+          <span>公司历史参照：{history.label} {(history.value * 100).toFixed(1)}% · {history.period}（{history.rule}）</span>
+        ) : null}
         <strong>{item.reason}</strong>
+        {effects[key] ? <span>变动影响：{effects[key]}</span> : null}
         <span>{item.source_type ?? "unknown"} · {identity} · {item.source}</span>
         <span>规则：{item.rule}</span>
         {item.fallback_reason ? <span>回退原因：{item.fallback_reason}</span> : null}
@@ -467,6 +480,16 @@ export function ValuationSection({
           {mktStale ? "行情已过期" : mktQuote ? "行情已同步 · 现价 vs 公允价" : "行情未同步"}
         </Pill>
       </div>
+
+      <Card className="card-pad beginner-only" data-testid="beginner-valuation-walkthrough" style={{ marginBottom: 16 }}>
+        <div className="card-title">先读懂，再调整</div>
+        <div className="beginner-steps">
+          <div><strong>1 · 公司经营基准</strong><span>{ticker} 从 {meta.revenue_base?.as_of ?? "未标注期间"} 收入 {fmtMoney(i.revenue_base)}、营业利润率 {(i.op_margin_start * 100).toFixed(1)}% 开始预测。</span></div>
+          <div><strong>2 · 数据时点</strong><span>利润与股数：{meta.shares?.as_of ?? "未标注"}；净现金：{meta.net_cash?.as_of ?? "未标注"}；行情：{mktQuote?.observed_at ?? "未同步"}。</span></div>
+          <div><strong>3 · 先看范围与不确定性</strong><span>下方区间来自三个明确情景，不是概率范围。当前最需要自己判断的是收入增长路径；默认理由和历史参照会显示在滑杆下方。</span></div>
+          <div><strong>4 · 再采取行动</strong><span>修改假设后重算，用 Reverse DCF 检查市场价格要求，再自行设置安全边际并保存方案。</span></div>
+        </div>
+      </Card>
 
       {refreshStale ? (
         <Card data-testid="refresh-review-warning" style={{ marginBottom: 16 }}>
@@ -638,11 +661,13 @@ export function ValuationSection({
             </div>
           </Card>
 
-          <Card className="card-pad" data-testid="sensitivity-matrix">
-            <div className="card-title">Sensitivity Matrix（全量重算）</div>
-            <div className="card-sub">固定增长与利润率，观察 WACC × 永续增长。</div>
-            <div style={{ overflow: "auto", marginTop: 8 }}>
-              <table className="sensitivity">
+          <details className="advanced-disclosure">
+            <summary>展开高级敏感性矩阵（WACC × 永续增长）</summary>
+            <Card className="card-pad" data-testid="sensitivity-matrix">
+              <div className="card-title">Sensitivity Matrix（全量重算）</div>
+              <div className="card-sub">固定增长与利润率，观察 WACC × 永续增长。</div>
+              <div style={{ overflow: "auto", marginTop: 8 }}>
+                <table className="sensitivity">
                 <thead>
                   <tr>
                     <th>WACC ↓ / g →</th>
@@ -661,9 +686,10 @@ export function ValuationSection({
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          </Card>
+                </table>
+              </div>
+            </Card>
+          </details>
         </div>
       </div>
 
@@ -704,9 +730,11 @@ export function ValuationSection({
           </div>
         </Card>
         <Card className="card-pad">
-          <div className="card-title">假设来源（pro 模式）</div>
-          <div className="card-sub">每个输入都可溯源；“assumption” 标注的项在有行情数据前是文档化假设。</div>
-          <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
+          <details className="advanced-disclosure">
+            <summary>展开全部假设来源与原始字段</summary>
+            <div className="card-title" style={{ marginTop: 10 }}>假设来源</div>
+            <div className="card-sub">每个输入都区分事实、确定性公式、配置假设与用户覆盖。</div>
+            <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
             {Object.entries(meta).map(([k, v]) => (
               <div key={k} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)" }}>
                 <strong style={{ color: "var(--navy)" }}>{k}</strong>
@@ -715,7 +743,8 @@ export function ValuationSection({
                 <div>{v.rule}</div>
               </div>
             ))}
-          </div>
+            </div>
+          </details>
         </Card>
       </div>
 
@@ -740,7 +769,7 @@ export function ValuationSection({
         <div className="card-sub">
           参考价 = 选定每股估值 × (1 − 安全边际)。这是你主动选择的买入价格参考，不是保证收益或自动交易信号。
         </div>
-        <div className="beginner-note" style={{ marginTop: 10 }}>
+        <div className="beginner-note" data-testid="plan-review-trigger" style={{ marginTop: 10 }}>
           <div>💡</div>
           <div>
             <strong>新手下一步怎么走？</strong>

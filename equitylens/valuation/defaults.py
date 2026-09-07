@@ -122,6 +122,10 @@ def default_assumption_set(store, company_id: str, ticker: str,
         }
 
     revenue_point = _latest_annual_point(store, company_id, "REVENUE")
+    revenue_history = [
+        point for point in MetricEngine(store).compute("REVENUE", company_id, frequency="annual")
+        if point.value is not None and point.value > 0
+    ][-6:]
     op_income_point = _latest_annual_point(store, company_id, "OPERATING_INCOME")
     pretax_point = _latest_annual_point(store, company_id, "PRETAX_INCOME")
     tax_point = _latest_annual_point(store, company_id, "INCOME_TAX_EXPENSE")
@@ -198,6 +202,23 @@ def default_assumption_set(store, company_id: str, ticker: str,
         terminal_roic=terminal_roic,
     )
     period = f"FY{fy}" if fy is not None else None
+    revenue_cagr = None
+    revenue_history_period = None
+    if len(revenue_history) >= 2:
+        first, last = revenue_history[0], revenue_history[-1]
+        years = (
+            last.fiscal_year - first.fiscal_year
+            if first.fiscal_year is not None and last.fiscal_year is not None
+            else len(revenue_history) - 1
+        )
+        if years <= 0:
+            years = len(revenue_history) - 1
+        revenue_cagr = (float(last.value) / float(first.value)) ** (1 / years) - 1
+        revenue_history_period = (
+            f"FY{first.fiscal_year}–FY{last.fiscal_year}"
+            if first.fiscal_year is not None and last.fiscal_year is not None
+            else f"{first.period}–{last.period}"
+        )
     op_ids = fact_ids(op_income_point) + fact_ids(revenue_point)
     tax_ids = fact_ids(tax_point) + fact_ids(pretax_point)
     meta: dict = {
@@ -224,7 +245,13 @@ def default_assumption_set(store, company_id: str, ticker: str,
                                    source=issuer.get("growth_path_source") or "versioned issuer assumption",
                                    rule="Apply the five issuer-specific annual rates in order; do not extrapolate historical CAGR.",
                                    reason=issuer.get("growth_path_reason") or "Versioned issuer growth prior.",
-                                   version=issuer.get("growth_path_version") or config_version),
+                                   version=issuer.get("growth_path_version") or config_version,
+                                   historical_reference={
+                                       "label": "历史收入 CAGR（仅作参照）",
+                                       "value": revenue_cagr,
+                                       "period": revenue_history_period,
+                                       "rule": "首尾年度收入复合增长率；不直接用作未来预测。",
+                                   }),
         "op_margin_start": metadata(op_margin, source_type="deterministic_formula",
                                     source="OPERATING_INCOME / REVENUE",
                                     rule="Latest-restated FY operating income divided by same-FY revenue.",

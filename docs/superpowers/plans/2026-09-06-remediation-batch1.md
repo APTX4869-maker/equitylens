@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 状态回填（2026-09-07）：本计划各步骤已在 Batch 1 及后续边界补修中完成；最终全量验证为后端 220 passed、Playwright 9 passed，详见 `docs/reviews/2026-09-06-remediation-progress.md`。
+
 **Goal:** Eliminate the reviewed paths that can return an incorrect financial value or associate a valuation result with the wrong ticker or input draft.
 
 **Architecture:** Add explicit period-selection and current-TTM contracts in the existing metric layer, then make market, risk, and research consumers use those contracts. Tighten valuation inputs at the pure engine boundary and carry one complete, fingerprinted draft through the API and React client so stale responses cannot become saveable results.
@@ -171,7 +173,7 @@ git commit -m "fix: align depreciation with valuation base period"
 - Produces: `MetricEngine.current(metric: str, company_id: str, frequency: str) -> MetricPoint`.
 - `current(metric, company_id, "ttm")` returns the latest expected fiscal-quarter endpoint with status `OK` or `INCOMPLETE_PERIOD`; it never returns an older complete window.
 
-- [ ] **Step 1: Write failing current-window tests**
+- [x] **Step 1: Write failing current-window tests**
 
 Add real-engine tests for these independently hand-derived cases:
 
@@ -193,13 +195,13 @@ def test_current_ttm_reports_latest_gap_instead_of_older_window(store):
 
 Add unit-mismatch and null-quarter cases. Assert `period_start`, `period_end`, `frequency="ttm"`, formula version, and ordered input IDs for a valid window.
 
-- [ ] **Step 2: Verify the current engine either returns an old point or no status**
+- [x] **Step 2: Verify the current engine either returns an old point or no status**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_metric_engine.py -k current_ttm -q -p no:cacheprovider`
 
 Expected: FAIL because `current` and the incomplete-period result do not exist.
 
-- [ ] **Step 3: Implement explicit window status without changing historical series**
+- [x] **Step 3: Implement explicit window status without changing historical series**
 
 Extend `MetricPoint` and `MetricOut` additively. Implement `current` as the boundary that determines the latest expected endpoint from relevant standalone input series, calls existing `compute`, and accepts a computed point only when its `(fiscal_year, fiscal_quarter)` matches that endpoint.
 
@@ -223,17 +225,17 @@ def current(self, metric: str, company_id: str, frequency: str) -> MetricPoint:
 
 The dependency map for this batch must cover `REVENUE`, `NET_INCOME`, `OPERATING_CASH_FLOW`, `FCF`, `FCF_MARGIN`, `GROSS_MARGIN`, `OPERATING_MARGIN`, and `NET_MARGIN`. Validate consistent units within each amount series before summing. Correct current TTM points must use `frequency="ttm"`, not `quarterly`.
 
-- [ ] **Step 4: Expose missing status through the metric API**
+- [x] **Step 4: Expose missing status through the metric API**
 
 Add an integration request for the latest-value endpoint used by consumers and assert that `value=null`, `status="INCOMPLETE_PERIOD"`, and `missing_reason` survive JSON serialization. Preserve existing historical-series endpoints.
 
-- [ ] **Step 5: Verify metric and API suites**
+- [x] **Step 5: Verify metric and API suites**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_metric_engine.py tests/integration/test_api.py -q -p no:cacheprovider`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit the contract**
+- [x] **Step 6: Commit the contract**
 
 ```bash
 git add equitylens/metrics/engine.py equitylens/api/schemas.py tests/unit/test_metric_engine.py tests/integration/test_api.py
@@ -253,7 +255,7 @@ git commit -m "fix: expose current TTM completeness"
 - Consumes: `MetricEngine.current(metric, company_id, "ttm")`.
 - Produces: derived multiple entries with `value`, `status`, `reason`, formula, period, and input fact IDs.
 
-- [ ] **Step 1: Write the zero and missing-current regressions**
+- [x] **Step 1: Write the zero and missing-current regressions**
 
 Use a temporary store and a literal market cap of `1000`:
 
@@ -274,13 +276,13 @@ def test_market_multiples_do_not_use_old_window_when_latest_is_incomplete(store)
 
 Assert the returned period and evidence IDs refer to the current endpoint whenever a multiple is valid.
 
-- [ ] **Step 2: Verify the reviewed P/E=10 and P/FCF=16.67 fallback fails the tests**
+- [x] **Step 2: Verify the reviewed P/E=10 and P/FCF=16.67 fallback fails the tests**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_market.py -k 'zero or incomplete' -q -p no:cacheprovider`
 
 Expected: FAIL because truthiness filtering selects an older non-zero metric point.
 
-- [ ] **Step 3: Replace list filtering with explicit current results**
+- [x] **Step 3: Replace list filtering with explicit current results**
 
 Remove `if p.value` selection. Use the Task 3 result and branch explicitly:
 
@@ -298,13 +300,13 @@ else:
 
 Apply the same logic to FCF and FCF yield. Include period and evidence identity in each valid or unavailable derived metric.
 
-- [ ] **Step 4: Verify market and API behavior**
+- [x] **Step 4: Verify market and API behavior**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_market.py tests/integration/test_api.py -q -p no:cacheprovider`
 
 Expected: all tests pass, including real AAPL/MSFT fixtures.
 
-- [ ] **Step 5: Commit the consumer correction**
+- [x] **Step 5: Commit the consumer correction**
 
 ```bash
 git add equitylens/market/service.py tests/golden/test_golden_market.py tests/integration/test_api.py
@@ -326,7 +328,7 @@ git commit -m "fix: prevent stale TTM multiple fallback"
 - Produces: risk response `checks: list[{key, status, reason, evidence_ids}]`.
 - Produces: research coverage statements derived from `checks`, never from a hard-coded list.
 
-- [ ] **Step 1: Write failing risk coverage tests**
+- [x] **Step 1: Write failing risk coverage tests**
 
 Create a store with a quarter gap and force one management-score dependency to raise. Assert cash-flow risk is not computed from partial rows and the management check is present as an error:
 
@@ -342,13 +344,13 @@ def test_risks_report_incomplete_ttm_and_module_failure(store, monkeypatch):
 
 Add a research assertion that its coverage text names the unavailable checks and does not say all modules were checked.
 
-- [ ] **Step 2: Verify exceptions are swallowed and the response has no coverage**
+- [x] **Step 2: Verify exceptions are swallowed and the response has no coverage**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_research.py tests/integration/test_api.py -k 'coverage or incomplete_ttm' -q -p no:cacheprovider`
 
 Expected: FAIL because `risk_signals` currently catches exceptions with `pass` and manually sums rows.
 
-- [ ] **Step 3: Add a checked-module wrapper and use metric results**
+- [x] **Step 3: Add a checked-module wrapper and use metric results**
 
 Each risk module appends a check on success, unavailable input, or exception. The wrapper records the failure but lets sibling modules continue.
 
@@ -364,17 +366,17 @@ def record_check(key: str, fn: Callable[[], tuple[str, str | None, list[str]]]) 
 
 For cash-flow risks, call `current("OPERATING_CASH_FLOW", company_id, "ttm")` and `current("FCF", company_id, "ttm")`; do not query and sum the latest four canonical rows. Only emit a numeric claim when both required results are `OK`, and copy their input IDs into evidence.
 
-- [ ] **Step 4: Build research coverage from actual check statuses**
+- [x] **Step 4: Build research coverage from actual check statuses**
 
 Replace unconditional wording with a compact list of successful and unavailable checks. Numeric risk statements keep their resolvable evidence IDs; an `ERROR` check is described as not completed.
 
-- [ ] **Step 5: Verify risk, research, and API suites**
+- [x] **Step 5: Verify risk, research, and API suites**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_research.py tests/integration/test_api.py -q -p no:cacheprovider`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit the coverage behavior**
+- [x] **Step 6: Commit the coverage behavior**
 
 ```bash
 git add equitylens/domain/risks.py equitylens/research/engine.py tests/golden/test_golden_research.py tests/integration/test_api.py
@@ -394,7 +396,7 @@ git commit -m "fix: report risk calculation coverage"
 - Produces: `ValuationError(code: str, field: str | None, message: str)` for every invalid engine input.
 - Keeps `run_dcf(inputs) -> DcfOutput` and the existing explicit-forecast function deterministic.
 
-- [ ] **Step 1: Write failing engine regressions**
+- [x] **Step 1: Write failing engine regressions**
 
 Add literal tests for each reviewed failure:
 
@@ -437,13 +439,13 @@ def test_explicit_terminal_values_must_be_finite():
 
 Also cover `1 + wacc <= 0`, non-finite growth entries, negative D&A ratios, and non-finite optional terminal D&A/CapEx/dNWC.
 
-- [ ] **Step 2: Verify the tests reproduce zero dNWC, accepted negative CapEx, division by zero, and NaN output**
+- [x] **Step 2: Verify the tests reproduce zero dNWC, accepted negative CapEx, division by zero, and NaN output**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -k 'working_capital or incompatible or terminal_values' -q -p no:cacheprovider`
 
 Expected: FAIL for the reviewed reasons, not fixture construction errors.
 
-- [ ] **Step 3: Make validation structured and shared**
+- [x] **Step 3: Make validation structured and shared**
 
 Give `ValuationError` stable fields and use helpers for finite and bounded values. Enforce `wacc > -1`, `wacc - terminal_growth >= 0.01`, `da_pct >= 0`, `capex_pct >= 0`, and the existing model bounds. Include optional explicit terminal inputs in finite validation.
 
@@ -459,7 +461,7 @@ def _require_finite(field: str, value: float) -> None:
         raise ValuationError("INVALID_ASSUMPTION", f"{field} must be finite", field)
 ```
 
-- [ ] **Step 4: Preserve prior revenue before growth**
+- [x] **Step 4: Preserve prior revenue before growth**
 
 Use direct state rather than reversing the growth operation:
 
@@ -469,13 +471,13 @@ revenue = previous_revenue * (1 + g)
 nwc_delta = (revenue - previous_revenue) * inputs.nwc_pct
 ```
 
-- [ ] **Step 5: Verify the valuation engine suite**
+- [x] **Step 5: Verify the valuation engine suite**
 
 Run: `.venv/bin/python -m pytest tests/golden/test_golden_valuation.py -q -p no:cacheprovider`
 
 Expected: all tests pass, including valid negative FCFF/equity cases.
 
-- [ ] **Step 6: Commit the engine boundary**
+- [x] **Step 6: Commit the engine boundary**
 
 ```bash
 git add equitylens/valuation/dcf.py tests/golden/test_golden_valuation.py
@@ -497,7 +499,7 @@ git commit -m "fix: harden DCF input boundaries"
 - Produces: valuation responses containing `ticker`, `input_fingerprint`, and complete executed `assumptions.inputs`.
 - Produces: HTTP 400 body `{"error": {"code", "field", "message"}}` for `ValuationError`.
 
-- [ ] **Step 1: Write failing API contract tests**
+- [x] **Step 1: Write failing API contract tests**
 
 Assert two requests differing only in WACC have different fingerprints, repeated identical requests have the same fingerprint, and the returned fingerprint corresponds to the complete returned input object. Assert invalid CapEx returns the stable structured error and creates no row.
 
@@ -510,27 +512,27 @@ def test_valuation_response_fingerprints_complete_executed_inputs(client):
     assert a["input_fingerprint"] == fingerprint(a["assumptions"]["inputs"])
 ```
 
-- [ ] **Step 2: Verify the response has no complete identity contract**
+- [x] **Step 2: Verify the response has no complete identity contract**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k 'fingerprint or structured_valuation_error' -q -p no:cacheprovider`
 
 Expected: FAIL because the fields and structured error body do not exist.
 
-- [ ] **Step 3: Canonicalize all executed inputs and metadata before calculation**
+- [x] **Step 3: Canonicalize all executed inputs and metadata before calculation**
 
 Serialize dataclass inputs with `asdict`, JSON sort keys, compact separators, and `allow_nan=False`, then hash UTF-8 bytes. Generate metadata after overrides for every editable field, including `op_margin_start` and `nwc_pct`. Return the same complete input object used by the engine.
 
-- [ ] **Step 4: Map domain errors at the API boundary**
+- [x] **Step 4: Map domain errors at the API boundary**
 
 Catch `ValuationError` separately from other `ValueError` paths and return the stable error object. Confirm every invalid main-input branch exits before persistence.
 
-- [ ] **Step 5: Verify API and valuation suites**
+- [x] **Step 5: Verify API and valuation suites**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py tests/golden/test_golden_valuation.py -q -p no:cacheprovider`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit the API identity contract**
+- [x] **Step 6: Commit the API identity contract**
 
 ```bash
 git add equitylens/valuation/service.py equitylens/api/routes.py equitylens/api/schemas.py tests/integration/test_api.py
@@ -555,7 +557,7 @@ git commit -m "fix: identify valuation inputs and errors"
 - Produces: `ValuationDraft` containing every editable DCF field and `buildPreviewRequest(draft)` containing the full input object.
 - Produces: UI state where `draftFingerprint`, `appliedFingerprint`, ticker, and request sequence must all match before output is current or saveable.
 
-- [ ] **Step 1: Add Playwright following the repository's Next.js 16 guide**
+- [x] **Step 1: Add Playwright following the repository's Next.js 16 guide**
 
 Read `apps/web/node_modules/next/dist/docs/01-app/02-guides/testing/playwright.md`, then add `@playwright/test`, an `e2e` script, and a config with `baseURL` plus a `webServer` command. Install only Chromium for local verification.
 
@@ -566,7 +568,7 @@ Read `apps/web/node_modules/next/dist/docs/01-app/02-guides/testing/playwright.m
 }
 ```
 
-- [ ] **Step 2: Write the failing controlled-order browser test**
+- [x] **Step 2: Write the failing controlled-order browser test**
 
 Intercept the default and valuation-run API routes. Delay the first preview response, submit a growth edit, then submit a WACC edit before the first response resolves. Give each response a distinct literal fair value and echoed fingerprint.
 
@@ -587,13 +589,13 @@ test('keeps the newest complete draft when previews return out of order', async 
 
 Add cases for: old `finally` not clearing a newer loading state; a failed newest request marking old output stale and disabling save; ticker change clearing reverse result and source context; market target `326.68` remaining `326.68`.
 
-- [ ] **Step 3: Verify the browser test fails against current closure state**
+- [x] **Step 3: Verify the browser test fails against current closure state**
 
 Run: `cd apps/web && pnpm e2e:valuation`
 
 Expected: FAIL because the second request can carry the old `growthPath`, failed drafts leave prior output saveable, and target price is rounded.
 
-- [ ] **Step 4: Extract pure draft construction**
+- [x] **Step 4: Extract pure draft construction**
 
 Use one object initialized from `response.assumptions.inputs`. Editing a field creates the next complete draft synchronously before starting fetch. Growth edits alone rebuild the five-year path and allow negative values down to the backend limit; editing WACC, margin, or terminal growth preserves the current path.
 
@@ -607,21 +609,21 @@ export function updateDraft(draft: ValuationDraft, edit: DraftEdit): ValuationDr
 }
 ```
 
-- [ ] **Step 5: Gate response application and saving by full identity**
+- [x] **Step 5: Gate response application and saving by full identity**
 
 Maintain the current ticker, monotonically increasing sequence, and draft fingerprint in refs. Apply a response only when all three match. Store `appliedFingerprint` from the response; enable save only when it equals the current draft fingerprint and there is no current error. Mark reverse DCF stale whenever target or draft changes. Preserve market-price decimals with `String(q.price)`.
 
-- [ ] **Step 6: Send complete inputs for preview, reverse DCF, and save**
+- [x] **Step 6: Send complete inputs for preview, reverse DCF, and save**
 
 `buildPreviewRequest` must include revenue base, all five growth values, both margins, tax, D&A, CapEx, NWC, WACC, terminal growth, net cash, shares, and share-basis label. Saving uses the already applied input/fingerprint contract and must not silently combine a new draft with an old result.
 
-- [ ] **Step 7: Verify frontend behavior and static checks**
+- [x] **Step 7: Verify frontend behavior and static checks**
 
 Run: `cd apps/web && pnpm e2e:valuation && pnpm exec tsc --noEmit --incremental false && pnpm lint`
 
 Expected: all checks pass.
 
-- [ ] **Step 8: Commit the client identity behavior**
+- [x] **Step 8: Commit the client identity behavior**
 
 ```bash
 git add apps/web/src/lib/valuationDraft.ts apps/web/src/lib/types.ts apps/web/src/components/sections/ValuationSection.tsx apps/web/package.json apps/web/pnpm-lock.yaml apps/web/playwright.config.ts apps/web/e2e/valuation-state.spec.ts
@@ -640,33 +642,33 @@ git commit -m "fix: bind valuation previews to complete drafts"
 - Consumes: focused regression outputs and the final repository state.
 - Produces: one evidence-backed status for D02, D04, D06, D07, V01, V03, U01, U02, U03, P05, and P07 as affected by this batch.
 
-- [ ] **Step 1: Run the complete backend suite**
+- [x] **Step 1: Run the complete backend suite**
 
 Run: `.venv/bin/python -m pytest -q -p no:cacheprovider`
 
 Expected: all tests pass. Record the exact count, duration, and warnings.
 
-- [ ] **Step 2: Run all frontend checks**
+- [x] **Step 2: Run all frontend checks**
 
 Run: `cd apps/web && pnpm e2e:valuation && pnpm exec tsc --noEmit --incremental false && pnpm lint`
 
 Expected: all checks pass. Record the exact Playwright count and static-check results.
 
-- [ ] **Step 3: Re-run the reviewed counterexamples directly**
+- [x] **Step 3: Re-run the reviewed counterexamples directly**
 
 Run the focused test selectors from Tasks 1–8 and confirm each reviewed failure now returns the specified value or status. Do not use the real database for writes.
 
-- [ ] **Step 4: Write the batch evidence record**
+- [x] **Step 4: Write the batch evidence record**
 
 For each affected remediation ID, record implemented behavior, test name, API/UI consistency, version impact, persistence impact, and any remaining limitation. Change an audit status only when all original acceptance dimensions covered by this batch are satisfied; otherwise leave it partial and state the next batch dependency.
 
-- [ ] **Step 5: Check the final diff for unintended files**
+- [x] **Step 5: Check the final diff for unintended files**
 
 Run: `git status --short && git diff --check && git diff --stat HEAD~8..HEAD`
 
 Expected: no database files, backups, caches, or unrelated user files are staged or committed.
 
-- [ ] **Step 6: Commit the batch record**
+- [x] **Step 6: Commit the batch record**
 
 ```bash
 git add docs/reviews/2026-09-06-remediation-batch1-rework.md docs/reviews/2026-09-06-remediation-quality-review.md
