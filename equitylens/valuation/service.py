@@ -54,10 +54,29 @@ def _source_fact_ids(meta: dict) -> dict[str, list[str]]:
     }
 
 
+def _apply_runtime_risk_free(meta: dict, rate: dict) -> None:
+    """Keep the normalized metadata contract when the live/fallback rate wins."""
+    item = meta.setdefault("risk_free", {})
+    item.update(rate)
+    item["source_type"] = (
+        "external_observation" if "daily yield curve" in str(rate.get("source", "")).lower()
+        else "config_assumption"
+    )
+    item["rule"] = "Use latest Treasury 10Y when available; otherwise the dated config fallback."
+    item["reason"] = "Nominal USD cash flows require a same-currency risk-free component."
+    item.setdefault("source_ids", [])
+    item.setdefault("fact_ids", [])
+    item.setdefault("version", "risk-free-adapter.v1")
+    item["fallback_reason"] = (
+        None if item["source_type"] == "external_observation"
+        else "Treasury feed unavailable; using dated config fallback."
+    )
+
+
 def default_valuation(store, company_id: str, ticker: str) -> dict:
     rf = risk_free_rate()
     inputs, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
-    meta["risk_free"] = rf
+    _apply_runtime_risk_free(meta, rf)
     output = run_dcf(inputs)
     from equitylens.market.service import valuation_market_block
 
@@ -93,6 +112,7 @@ def scenario_valuation(base: DcfInputs, ticker: str) -> dict:
             tax_rate=base.tax_rate, da_pct=base.da_pct, capex_pct=base.capex_pct,
             nwc_pct=base.nwc_pct, wacc=w, terminal_growth=t,
             net_cash=base.net_cash, shares=base.shares, terminal_roic=base.terminal_roic,
+            share_basis_label=base.share_basis_label,
         )
         try:
             result = _output_dict(run_dcf(trial))
@@ -142,6 +162,7 @@ def sensitivity(base: DcfInputs) -> dict:
                 tax_rate=base.tax_rate, da_pct=base.da_pct, capex_pct=base.capex_pct,
                 nwc_pct=base.nwc_pct, wacc=w, terminal_growth=g,
                 net_cash=base.net_cash, shares=base.shares, terminal_roic=base.terminal_roic,
+                share_basis_label=base.share_basis_label,
             )
             try:
                 fair = run_dcf(trial).fair_value_per_share
@@ -194,7 +215,7 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
     """
     rf = risk_free_rate()
     base, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
-    meta["risk_free"] = rf
+    _apply_runtime_risk_free(meta, rf)
     if "assumptions" in payload and payload["assumptions"]:
         a = payload["assumptions"]
         base = DcfInputs(
@@ -210,23 +231,47 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
             terminal_growth=float(a.get("terminal_growth", base.terminal_growth)),
             net_cash=float(a.get("net_cash", base.net_cash)),
             shares=float(a.get("shares", base.shares)),
+            share_basis_label=str(a.get(
+                "share_basis_label",
+                "user-supplied share count" if "shares" in a else base.share_basis_label,
+            )),
             terminal_roic=float(a.get("terminal_roic", base.terminal_roic)),
         )
         # meta must reflect the FINAL executed inputs, marking user overrides.
         _override_meta = {
             "wacc": "wacc", "terminal_growth": "terminal_growth",
-            "op_margin_start": "op_margin_start", "op_margin_end": "op_margin",
+            "op_margin_start": "op_margin_start", "op_margin_end": "op_margin_end",
             "revenue_growth": "revenue_growth",
             "tax_rate": "tax_rate", "net_cash": "net_cash", "shares": "shares",
             "da_pct": "da_pct", "capex_pct": "capex_pct", "revenue_base": "revenue_base",
             "nwc_pct": "nwc_pct",
             "terminal_roic": "terminal_roic",
+            "share_basis_label": "share_basis_label",
         }
         for field, meta_key in _override_meta.items():
             if field in a:
-                meta.setdefault(meta_key, {})["value"] = a[field]
-                meta[meta_key]["source"] = "user_override"
-                meta[meta_key]["fact_ids"] = []
+                item = meta.setdefault(meta_key, {})
+                item.update({
+                    "value": a[field], "source_type": "user_override",
+                    "source": "user_override", "source_ids": [], "fact_ids": [],
+                    "as_of": _now(), "version": "user-input.v1",
+                    "rule": "Use the complete value supplied by the user for this run.",
+                    "reason": "User edited this field in the valuation draft.",
+                    "fallback_reason": None,
+                })
+        if "op_margin_start" in a or "op_margin_end" in a:
+            meta["op_margin"] = {
+                "value": base.op_margin_start,
+                "source_type": "user_override", "source": "user_override",
+                "source_ids": [], "fact_ids": [], "as_of": _now(),
+                "version": "user-input.v1",
+                "rule": "Compatibility alias; executable inputs are op_margin_start/op_margin_end.",
+                "reason": "User edited the operating-margin path.", "fallback_reason": None,
+            }
+        if "shares" in a:
+            meta["shares"]["basis"] = base.share_basis_label
+            meta["share_basis_label"] = dict(meta["shares"])
+            meta["share_basis_label"]["value"] = base.share_basis_label
     output = run_dcf(base)
     # Build the complete response before persisting so an invalid sub-scenario
     # can never leave a half-written run behind (atomic write-after-compute).
@@ -297,6 +342,10 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
             terminal_growth=float(a.get("terminal_growth", base.terminal_growth)),
             net_cash=float(a.get("net_cash", base.net_cash)),
             shares=float(a.get("shares", base.shares)),
+            share_basis_label=str(a.get(
+                "share_basis_label",
+                "user-supplied share count" if "shares" in a else base.share_basis_label,
+            )),
             terminal_roic=float(a.get("terminal_roic", base.terminal_roic)),
         )
     target = float(payload.get("target_price"))

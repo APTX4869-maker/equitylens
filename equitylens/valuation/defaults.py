@@ -86,6 +86,8 @@ def default_assumption_set(store, company_id: str, ticker: str,
     Returns (inputs, metadata) where metadata explains each input's source.
     """
     wacc_cfg = _load_wacc_config()
+    config_version = f"valuation-defaults.v{wacc_cfg['version']}"
+    defaults = wacc_cfg["defaults"]
     issuer = wacc_cfg["issuers"].get(ticker.upper())
     if issuer is None:
         raise ValueError(f"no issuer defaults configured for {ticker}")
@@ -95,12 +97,24 @@ def default_assumption_set(store, company_id: str, ticker: str,
     debt_cost = float(issuer["pre_tax_debt_cost"])
     terminal_roic_cfg = wacc_cfg["terminal_roic"]
     terminal_roic = float(terminal_roic_cfg["value"])
-    meta: dict = {
-        "risk_free": {"value": rf, **wacc_cfg["risk_free_rate"]},
-        "erp": {"value": erp, **wacc_cfg["equity_risk_premium"]},
-        "beta": {"value": beta, "source": issuer["beta_source"]},
-        "debt_cost": {"value": debt_cost, "source": issuer["debt_cost_source"]},
-    }
+    def metadata(value, *, source_type: str, source: str, rule: str, reason: str,
+                 source_ids: list[str] | None = None, as_of: str | None = None,
+                 version: str | None = None, fallback_reason: str | None = None,
+                 **extra) -> dict:
+        ids = list(source_ids or [])
+        return {
+            "value": value,
+            "source_type": source_type,
+            "source": source,
+            "source_ids": ids,
+            "fact_ids": ids,  # compatibility for saved-run lineage extraction
+            "as_of": as_of,
+            "version": version,
+            "rule": rule,
+            "reason": reason,
+            "fallback_reason": fallback_reason,
+            **extra,
+        }
 
     revenue_point = _latest_annual_point(store, company_id, "REVENUE")
     op_income_point = _latest_annual_point(store, company_id, "OPERATING_INCOME")
@@ -135,9 +149,9 @@ def default_assumption_set(store, company_id: str, ticker: str,
     op_margin = op_income / revenue
     # Zero is a valid value: a real zero tax rate / CapEx / D&A must stay zero,
     # not be silently replaced by an assumption. Only genuine absence falls back.
-    tax_rate = (tax / pretax) if (tax is not None and pretax) else 0.17
-    capex_pct = (capex / revenue) if capex is not None else 0.05
-    da_pct = (da / revenue) if da is not None else 0.03
+    tax_rate = (tax / pretax) if (tax is not None and pretax) else float(defaults["tax_rate_fallback"]["value"])
+    capex_pct = (capex / revenue) if capex is not None else float(defaults["capex_pct_fallback"]["value"])
+    da_pct = (da / revenue) if da is not None else float(defaults["da_pct_fallback"]["value"])
     # NET_DEBT = debt - cash - ST investments (positive = net debt);
     # DCF equity bridge adds net cash = -NET_DEBT. A missing bridge forbids a
     # per-share value.
@@ -149,7 +163,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
 
     # WACC: E/(D+E)*CoE + D/(D+E)*AfterTaxCoD with documented weights
     # (debt weight assumption 0.10 absent balance-sheet-based weight config)
-    debt_weight = 0.10
+    debt_weight = float(defaults["debt_weight"]["value"])
     equity_weight = 1 - debt_weight
     coe = rf + beta * erp
     cod_after_tax = debt_cost * (1 - tax_rate)
@@ -158,43 +172,124 @@ def default_assumption_set(store, company_id: str, ticker: str,
     # per-issuer default 5-year growth path (user-adjustable); AAPL and MSFT no
     # longer share one unexplained path (P01).
     growth = list(issuer.get("growth_path") or [0.08, 0.075, 0.07, 0.06, 0.05])
+    margin_delta = float(defaults["op_margin_end_delta"]["value"])
+    nwc_pct = float(defaults["nwc_pct"]["value"])
+    terminal_growth = float(defaults["terminal_growth"]["value"])
+    share_basis = "FY diluted weighted-average shares"
     inputs = DcfInputs(
         revenue_base=revenue,
         revenue_growth=growth,
         op_margin_start=op_margin,
-        op_margin_end=op_margin + 0.005,
+        op_margin_end=op_margin + margin_delta,
         tax_rate=tax_rate,
         da_pct=da_pct,
         capex_pct=capex_pct,
-        nwc_pct=0.002,
+        nwc_pct=nwc_pct,
         wacc=wacc,
-        terminal_growth=0.025,
+        terminal_growth=terminal_growth,
         net_cash=net_cash,
         shares=shares,
+        share_basis_label=share_basis,
         terminal_roic=terminal_roic,
     )
-    meta.update({
-        "revenue_base": {"value": revenue, "fiscal_year": fy, "source": "SEC 10-K canonical fact",
-                         "fact_ids": fact_ids(revenue_point)},
-        "revenue_growth": {"value": growth, "source": issuer.get("growth_path_source") or "assumption (hand-versioned)"},
-        "op_margin": {"value": op_margin, "fiscal_year": fy, "source": "OPERATING_INCOME / REVENUE",
-                      "fact_ids": fact_ids(op_income_point) + fact_ids(revenue_point)},
-        "tax_rate": {"value": tax_rate,
-                     "fact_ids": fact_ids(tax_point) + fact_ids(pretax_point),
-                     "source": "INCOME_TAX / PRETAX_INCOME (latest FY)" if (tax is not None and pretax)
-                               else "assumption (normalized 17% tax rate)"},
-        "da_pct": {"value": da_pct,
-                   "fiscal_year": fy,
-                   "fact_ids": da_fact_ids + fact_ids(revenue_point) if da is not None else [],
-                   "source_kind": da_source_kind if da is not None else "assumption",
-                   "source": "canonical D&A / revenue" if da is not None else "assumption (D&A tag absent)"},
-        "capex_pct": {"value": capex_pct, "fact_ids": fact_ids(capex_point) + fact_ids(revenue_point) if capex is not None else [],
-                      "source": "CAPITAL_EXPENDITURES / REVENUE" if capex is not None else "assumption (CapEx absent)"},
-        "net_cash": {"value": net_cash, "fact_ids": fact_ids(net_debt_point),
-                     "source": "NET_DEBT sign flip (latest balance sheet)"},
-        "shares": {"value": shares, "basis": "FY diluted weighted-average",
-                   "fact_ids": fact_ids(shares_point), "source": "SEC canonical fact"},
-        "wacc": {"value": wacc, "formula": "E/(D+E)*CoE + D/(D+E)*CoD_after_tax, weights documented"},
-        "terminal_roic": {"value": terminal_roic, **terminal_roic_cfg},
-    })
+    period = f"FY{fy}" if fy is not None else None
+    op_ids = fact_ids(op_income_point) + fact_ids(revenue_point)
+    tax_ids = fact_ids(tax_point) + fact_ids(pretax_point)
+    meta: dict = {
+        "risk_free": metadata(rf, source_type="config_assumption", source=wacc_cfg["risk_free_rate"]["source"],
+                              rule="Use latest Treasury 10Y when available; otherwise documented fallback.",
+                              reason="Nominal USD cash flows require a same-currency risk-free component.",
+                              as_of=wacc_cfg["risk_free_rate"].get("as_of"), version=config_version,
+                              fallback_reason="Treasury feed unavailable; using dated config fallback."),
+        "erp": metadata(erp, source_type="config_assumption", source=wacc_cfg["equity_risk_premium"]["source"],
+                        rule="Cost of equity = risk-free rate + beta × ERP.",
+                        reason="Explicit market-risk premium component for WACC.",
+                        version=wacc_cfg["equity_risk_premium"].get("version") or config_version),
+        "beta": metadata(beta, source_type="config_assumption", source=issuer["beta_source"],
+                         rule="Issuer-specific beta is used in CAPM.", reason="Market beta feed is not configured.",
+                         version=config_version, fallback_reason="No market-data beta provider is configured."),
+        "debt_cost": metadata(debt_cost, source_type="config_assumption", source=issuer["debt_cost_source"],
+                              rule="Apply issuer pre-tax debt cost after the modeled tax rate.",
+                              reason="Issuer-specific debt-cost prior for WACC.", version=config_version),
+        "revenue_base": metadata(revenue, source_type="canonical_fact", source="SEC 10-K canonical REVENUE",
+                                 rule="Select latest-restated annual revenue.",
+                                 reason="Forecast starts from the latest complete fiscal-year revenue.",
+                                 source_ids=fact_ids(revenue_point), as_of=period, fiscal_year=fy),
+        "revenue_growth": metadata(growth, source_type="config_assumption",
+                                   source=issuer.get("growth_path_source") or "versioned issuer assumption",
+                                   rule="Apply the five issuer-specific annual rates in order; do not extrapolate historical CAGR.",
+                                   reason=issuer.get("growth_path_reason") or "Versioned issuer growth prior.",
+                                   version=issuer.get("growth_path_version") or config_version),
+        "op_margin_start": metadata(op_margin, source_type="deterministic_formula",
+                                    source="OPERATING_INCOME / REVENUE",
+                                    rule="Latest-restated FY operating income divided by same-FY revenue.",
+                                    reason="Start the margin path from the latest complete operating result.",
+                                    source_ids=op_ids, as_of=period, version="operating-margin.v1"),
+        "op_margin_end": metadata(op_margin + margin_delta, source_type="config_assumption",
+                                  source="Versioned margin-path assumption",
+                                  rule=f"Year-5 margin = latest FY margin + {margin_delta:.3f}; interpolate linearly.",
+                                  reason=defaults["op_margin_end_delta"]["reason"], source_ids=op_ids,
+                                  as_of=period, version=defaults["op_margin_end_delta"]["version"]),
+        "tax_rate": metadata(tax_rate,
+                             source_type="deterministic_formula" if tax_ids else "config_assumption",
+                             source="INCOME_TAX_EXPENSE / PRETAX_INCOME" if tax_ids else "Tax-rate config fallback",
+                             rule="Use latest same-FY reported effective tax rate; do not silently adjust one-offs.",
+                             reason="Use a reproducible effective tax rate and disclose when normalization data is unavailable.",
+                             source_ids=tax_ids, as_of=period if tax_ids else None,
+                             version="effective-tax-rate.v1" if tax_ids else defaults["tax_rate_fallback"]["version"],
+                             fallback_reason=None if tax_ids else defaults["tax_rate_fallback"]["reason"],
+                             normalization_rule="Latest reported FY effective rate; no one-off normalization without identified evidence."),
+        "da_pct": metadata(da_pct, source_type="deterministic_formula" if da is not None else "config_assumption",
+                           source="Canonical D&A / revenue" if da is not None else "D&A ratio config fallback",
+                           rule="Same-FY non-overlapping D&A divided by revenue.",
+                           reason="Forecast D&A as a stable share of revenue in the simplified model.",
+                           source_ids=da_fact_ids + fact_ids(revenue_point) if da is not None else [],
+                           as_of=period if da is not None else None,
+                           version="da-ratio.v1" if da is not None else defaults["da_pct_fallback"]["version"],
+                           fallback_reason=None if da is not None else defaults["da_pct_fallback"]["reason"],
+                           source_kind=da_source_kind),
+        "capex_pct": metadata(capex_pct, source_type="deterministic_formula" if capex is not None else "config_assumption",
+                              source="CAPITAL_EXPENDITURES / REVENUE" if capex is not None else "CapEx ratio config fallback",
+                              rule="Latest same-FY CapEx divided by revenue.",
+                              reason="Forecast CapEx as a stable share of revenue in the simplified model.",
+                              source_ids=fact_ids(capex_point) + fact_ids(revenue_point) if capex is not None else [],
+                              as_of=period if capex is not None else None,
+                              version="capex-ratio.v1" if capex is not None else defaults["capex_pct_fallback"]["version"],
+                              fallback_reason=None if capex is not None else defaults["capex_pct_fallback"]["reason"]),
+        "nwc_pct": metadata(nwc_pct, source_type="config_assumption", source="Working-capital config assumption",
+                            rule="dNWC = change in revenue × nwc_pct.", reason=defaults["nwc_pct"]["reason"],
+                            version=defaults["nwc_pct"]["version"]),
+        "wacc": metadata(wacc, source_type="deterministic_formula", source="CAPM plus after-tax debt cost",
+                         rule="E/(D+E) × (Rf + beta × ERP) + D/(D+E) × pre-tax debt cost × (1-tax rate).",
+                         reason="Discount FCFF using an explicit weighted cost of capital.",
+                         version="wacc.v1", components={"risk_free": rf, "erp": erp, "beta": beta,
+                                                       "pre_tax_debt_cost": debt_cost,
+                                                       "equity_weight": equity_weight, "debt_weight": debt_weight}),
+        "terminal_growth": metadata(terminal_growth, source_type="config_assumption",
+                                    source="Stable-period growth config assumption",
+                                    rule="Grow year-5 revenue once into year 6, then use in the stable-period formula.",
+                                    reason=defaults["terminal_growth"]["reason"],
+                                    version=defaults["terminal_growth"]["version"]),
+        "net_cash": metadata(net_cash, source_type="deterministic_formula", source="NET_DEBT sign reversal",
+                             rule="net_cash = -NET_DEBT from the latest balance-sheet date.",
+                             reason="Bridge enterprise value to equity value using the latest available balance sheet.",
+                             source_ids=fact_ids(net_debt_point), as_of=period, version="net-cash-bridge.v1"),
+        "shares": metadata(shares, source_type="canonical_fact", source="SEC canonical diluted weighted-average shares",
+                           rule="Use latest FY diluted weighted-average shares as a per-share approximation.",
+                           reason="Use the disclosed diluted basis; current point-in-time shares are not yet modeled.",
+                           source_ids=fact_ids(shares_point), as_of=period, basis=share_basis),
+        "share_basis_label": metadata(share_basis, source_type="canonical_fact",
+                                     source="Share fact accounting basis",
+                                     rule="Copy the basis label from the selected diluted-share fact policy.",
+                                     reason="Display the actual selected share basis without inferring from magnitude.",
+                                     source_ids=fact_ids(shares_point), as_of=period),
+        "terminal_roic": metadata(terminal_roic, source_type="config_assumption",
+                                  source=terminal_roic_cfg["source"],
+                                  rule="Stable reinvestment rate = terminal growth / terminal ROIC.",
+                                  reason="Link stable growth to required reinvestment.",
+                                  version=terminal_roic_cfg.get("version") or config_version),
+    }
+    # Compatibility alias for old saved-run readers; executable inputs use the
+    # explicit start/end keys above.
+    meta["op_margin"] = dict(meta["op_margin_start"])
     return inputs, meta

@@ -22,11 +22,11 @@
 
 **Files:** `config/valuation/wacc_defaults.yaml`, `equitylens/valuation/defaults.py`, `equitylens/valuation/service.py`, `apps/web/src/components/sections/ValuationSection.tsx`, `tests/golden/test_golden_valuation.py`, `tests/integration/test_api.py`
 
-- [ ] Add API regressions requiring metadata for every `DcfInputs` field: source type, evidence IDs or config version, period/date, rule, default reason, and fallback reason when used.
-- [ ] Add versioned issuer reasons for growth, margin, working capital, terminal growth, capital weights, beta, debt cost, ERP, and terminal ROIC. Reject unknown issuers.
-- [ ] Normalize fact-derived and fallback metadata. Record tax normalization and the exact revenue/margin/share periods; label share basis from metadata rather than value magnitude.
-- [ ] Show the current company reference, default reason, source/date/version, and calculation rule beside each editable assumption.
-- [ ] Run focused backend tests, TypeScript, ESLint, update Batch 4 evidence/progress, and commit.
+- [x] Add API regressions requiring metadata for every `DcfInputs` field: source type, evidence IDs or config version, period/date, rule, default reason, and fallback reason when used.
+- [x] Add versioned issuer reasons for growth, margin, working capital, terminal growth, capital weights, beta, debt cost, ERP, and terminal ROIC. Reject unknown issuers.
+- [x] Normalize fact-derived and fallback metadata. Record tax normalization and the exact revenue/margin/share periods; label share basis from metadata rather than value magnitude.
+- [x] Show the current company reference, default reason, source/date/version, and calculation rule beside each editable assumption.
+- [x] Run focused backend tests, TypeScript, ESLint, update Batch 4 evidence/progress, and commit.
 
 ---
 

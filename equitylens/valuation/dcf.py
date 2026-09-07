@@ -300,6 +300,7 @@ def implied_growth(inputs: DcfInputs, target_price: float, lo: float = -0.05,
             tax_rate=inputs.tax_rate, da_pct=inputs.da_pct, capex_pct=inputs.capex_pct,
             nwc_pct=inputs.nwc_pct, wacc=inputs.wacc, terminal_growth=inputs.terminal_growth,
             net_cash=inputs.net_cash, shares=inputs.shares, terminal_roic=inputs.terminal_roic,
+            share_basis_label=inputs.share_basis_label,
         )
         return run_dcf(trial).fair_value_per_share
 

@@ -2,10 +2,39 @@
 # Every number carries a source/date label — never an unexplained constant.
 # The risk-free rate is normally refreshed from the US Treasury feed when it
 # is reachable; this file is the documented fallback (value + as_of + source).
-# v3: per-issuer growth paths plus a versioned stable-period ROIC assumption.
+# v4: per-issuer paths plus structured reasons/rules for every executable input.
 # Growth remains a hand-versioned research
 # prior, NOT historical CAGR extrapolated into the future).
-version: 3
+version: 4
+defaults:
+  op_margin_end_delta:
+    value: 0.005
+    version: "margin-path.v1"
+    reason: "五年内仅假设营业利润率改善 0.5 个百分点，避免把短期高利润机械外推。"
+  tax_rate_fallback:
+    value: 0.17
+    version: "tax-fallback.v1"
+    reason: "最新财年有效税率无法可靠计算时使用的明确回退；不冒充公司披露。"
+  da_pct_fallback:
+    value: 0.03
+    version: "da-fallback.v1"
+    reason: "同期间折旧摊销事实不完整时使用的简化回退。"
+  capex_pct_fallback:
+    value: 0.05
+    version: "capex-fallback.v1"
+    reason: "同期间资本开支事实缺失时使用的简化回退。"
+  nwc_pct:
+    value: 0.002
+    version: "nwc.v1"
+    reason: "营运资金变动按收入增量的 0.2% 估计；当前 SEC 映射不足以稳定拆出经营性营运资金。"
+  terminal_growth:
+    value: 0.025
+    version: "terminal-growth.v1"
+    reason: "成熟期名义增长假设，低于长期经济增长的审慎区间上沿。"
+  debt_weight:
+    value: 0.10
+    version: "capital-weight.v1"
+    reason: "当前版本使用 10% 债务权重；待市场价值资本结构接入后替换。"
 risk_free_rate:
   value: 0.0425
   as_of: "2026-08-01"
@@ -27,6 +56,8 @@ issuers:
     debt_cost_source: "assumption (AA-rated issuer; cross-checked on next market sync)"
     growth_path: [0.06, 0.05, 0.045, 0.04, 0.035]
     growth_path_source: "assumption v2 (mature hardware/services; hand-versioned prior, not historical CAGR)"
+    growth_path_version: "aapl-growth.v2"
+    growth_path_reason: "成熟硬件与服务组合：首年 6%，随后逐步回落；这是研究先验，不是历史增速外推。"
   MSFT:
     beta: 1.0
     beta_source: "assumption (no market-data provider configured; ~1.0 based on 3Y weekly vs SPX)"
@@ -34,3 +65,5 @@ issuers:
     debt_cost_source: "assumption (AAA-rated issuer; cross-checked on next market sync)"
     growth_path: [0.12, 0.11, 0.10, 0.09, 0.08]
     growth_path_source: "assumption v2 (cloud/AI-driven software; hand-versioned prior, not historical CAGR)"
+    growth_path_version: "msft-growth.v2"
+    growth_path_reason: "云与 AI 驱动的软件组合：首年 12%，随后逐步回落；这是研究先验，不是历史增速外推。"

@@ -22,7 +22,7 @@ type RunResponse = {
   valuation_run_id?: string;
   assumptions: {
     inputs: DcfInputs;
-    meta: Record<string, { value?: number; source?: string; as_of?: string }>;
+    meta: Record<string, AssumptionMeta>;
   };
   result: {
     fair_value_per_share: number; enterprise_value: number; equity_value: number;
@@ -80,6 +80,20 @@ type RunResponse = {
     };
   };
   risk_free?: { value: number; as_of?: string; source?: string };
+};
+
+type AssumptionMeta = {
+  value?: unknown;
+  source_type?: string;
+  source?: string;
+  source_ids?: string[];
+  as_of?: string;
+  version?: string;
+  rule?: string;
+  reason?: string;
+  fallback_reason?: string | null;
+  basis?: string;
+  components?: Record<string, number>;
 };
 
 type ValuationPlan = {
@@ -410,6 +424,19 @@ export function ValuationSection({
 
   const i = draft ?? base.assumptions.inputs;
   const meta = base.assumptions.meta;
+  const assumptionNote = (key: string) => {
+    const item = meta[key];
+    if (!item) return null;
+    const identity = item.as_of || item.version || "未标注版本";
+    return (
+      <div className="assumption-context" data-testid={`assumption-${key}`}>
+        <strong>{item.reason}</strong>
+        <span>{item.source_type ?? "unknown"} · {identity} · {item.source}</span>
+        <span>规则：{item.rule}</span>
+        {item.fallback_reason ? <span>回退原因：{item.fallback_reason}</span> : null}
+      </div>
+    );
+  };
   const mkt = base.market && base.market.quote ? base.market : null;
   const mktQuote = mkt?.quote ?? null;
   const mktStale = base.market?.status === "STALE";
@@ -512,7 +539,7 @@ export function ValuationSection({
           <div className="dcf-output">
             <div className="card-sub">当前假设下每股内在价值</div>
             <div className="fair" style={{ fontSize: 34 }} data-testid="fair-value">${fair != null ? fair.toFixed(0) : "—"}</div>
-            <div className="delta">净现金 ${fmtMoney(base.result.net_cash)} · 股本 {Math.round(i.shares / 1e6)}M（{i.shares > 1e9 ? "稀释加权" : "basis"}）</div>
+            <div className="delta">净现金 ${fmtMoney(base.result.net_cash)} · 股本 {Math.round(i.shares / 1e6)}M（{meta.shares?.basis ?? i.share_basis_label ?? "股数口径未标注"}）</div>
           </div>
           <div className="dcf-sliders">
             <div className="dcf-control">
@@ -520,30 +547,35 @@ export function ValuationSection({
               <input id="growth-slider" type="range" min={RNG.growth.min} max={RNG.growth.max} step={RNG.growth.step}
                 value={growthPct} onChange={(e) => edit({ field: "growth", percent: Number(e.target.value) })} />
               <output>{growthPct.toFixed(1)}%</output>
+              {assumptionNote("revenue_growth")}
             </div>
             <div className="dcf-control">
               <label htmlFor="margin-slider">第5年营业利润率</label>
               <input id="margin-slider" type="range" min={RNG.margin.min} max={RNG.margin.max} step={RNG.margin.step}
                 value={marginPct} onChange={(e) => edit({ field: "margin", percent: Number(e.target.value) })} />
               <output>{marginPct.toFixed(1)}%</output>
+              {assumptionNote("op_margin_end")}
             </div>
             <div className="dcf-control">
               <label htmlFor="wacc-slider">WACC 折现率</label>
               <input id="wacc-slider" type="range" min={RNG.wacc.min} max={RNG.wacc.max} step={RNG.wacc.step}
                 value={waccPct} onChange={(e) => edit({ field: "wacc", percent: Number(e.target.value) })} />
               <output>{waccPct.toFixed(2)}%</output>
+              {assumptionNote("wacc")}
             </div>
             <div className="dcf-control">
               <label htmlFor="terminal-slider">永续增长率</label>
               <input id="terminal-slider" type="range" min={RNG.terminal.min} max={RNG.terminal.max} step={RNG.terminal.step}
                 value={terminalPct} onChange={(e) => edit({ field: "terminal", percent: Number(e.target.value) })} />
               <output>{terminalPct.toFixed(2)}%</output>
+              {assumptionNote("terminal_growth")}
             </div>
             <div className="dcf-control">
               <label htmlFor="roic-slider">稳定期增量资本回报率</label>
               <input id="roic-slider" type="range" min={RNG.roic.min} max={RNG.roic.max} step={RNG.roic.step}
                 value={roicPct} onChange={(e) => edit({ field: "roic", percent: Number(e.target.value) })} />
               <output>{roicPct.toFixed(0)}%</output>
+              {assumptionNote("terminal_roic")}
             </div>
           </div>
           <div className="card-sub" style={{ marginBottom: 8 }}>
@@ -662,8 +694,9 @@ export function ValuationSection({
             {Object.entries(meta).map(([k, v]) => (
               <div key={k} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)" }}>
                 <strong style={{ color: "var(--navy)" }}>{k}</strong>
-                <span> = {typeof v.value === "number" ? (k === "beta" ? v.value.toFixed(2) : k.includes("pct") || k.includes("rate") || k.includes("margin") || k === "wacc" ? `${(v.value * 100).toFixed(1)}%` : v.value.toLocaleString()) : String(v.value ?? "")}</span>
-                <div>{v.source}</div>
+                <span> = {typeof v.value === "number" ? (k === "beta" ? v.value.toFixed(2) : k.includes("pct") || k.includes("rate") || k.includes("margin") || k === "wacc" ? `${(v.value * 100).toFixed(1)}%` : v.value.toLocaleString()) : Array.isArray(v.value) ? v.value.join(" → ") : String(v.value ?? "")}</span>
+                <div>{v.source_type ?? "unknown"} · {v.as_of ?? v.version ?? "未标注"} · {v.source}</div>
+                <div>{v.rule}</div>
               </div>
             ))}
           </div>

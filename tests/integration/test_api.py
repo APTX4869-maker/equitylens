@@ -224,6 +224,36 @@ def test_market_quote_in_valuation_default(client):
     assert "price_vs_fair_pct" in market["derived"]
 
 
+def test_default_valuation_exposes_complete_assumption_metadata(client):
+    response = client.get("/api/v1/companies/AAPL/valuation/default")
+    assert response.status_code == 200
+    body = response.json()
+    inputs = body["assumptions"]["inputs"]
+    meta = body["assumptions"]["meta"]
+    assert set(inputs) <= set(meta)
+    assert meta["revenue_growth"]["version"]
+    assert meta["revenue_growth"]["reason"]
+    assert meta["op_margin_end"]["rule"]
+    assert meta["terminal_growth"]["source_type"] == "config_assumption"
+    assert meta["shares"]["basis"] == "FY diluted weighted-average shares"
+
+
+def test_user_override_metadata_clears_fact_identity_and_share_basis_guess(client):
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        json={"persist": False, "assumptions": {"shares": 10, "wacc": 0.12}},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assumptions"]["inputs"]["share_basis_label"] == "user-supplied share count"
+    assert body["assumptions"]["meta"]["shares"]["basis"] == "user-supplied share count"
+    for field in ("shares", "wacc"):
+        item = body["assumptions"]["meta"][field]
+        assert item["source_type"] == "user_override"
+        assert item["source_ids"] == []
+        assert item["version"] == "user-input.v1"
+
+
 @pytest.mark.parametrize("bad", [
     {"tax_rate": 1.5},
     {"op_margin_end": 2.0},

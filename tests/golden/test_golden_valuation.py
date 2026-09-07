@@ -361,6 +361,34 @@ def test_per_issuer_default_growth_paths_differ(company_db):
     assert len(meta_a["revenue_growth"]["value"]) == 5
 
 
+def test_every_default_assumption_has_structured_provenance(company_db):
+    """P01: each executable DCF input explains source, time/version and rule."""
+    from dataclasses import fields
+
+    from equitylens.valuation.defaults import default_assumption_set
+
+    inputs, meta = default_assumption_set(company_db, "0000320193", "AAPL")
+    expected = {field.name for field in fields(inputs)}
+    assert expected <= set(meta)
+    for name in expected:
+        item = meta[name]
+        assert item["source_type"] in {
+            "canonical_fact", "deterministic_formula", "config_assumption", "user_override"
+        }, name
+        assert item.get("source"), name
+        assert item.get("rule"), name
+        assert item.get("reason"), name
+        assert item.get("as_of") or item.get("version"), name
+        assert item.get("source_ids") or item.get("version"), name
+        assert "fallback_reason" in item, name
+
+    shares = meta["shares"]
+    assert shares["basis"] == "FY diluted weighted-average shares"
+    assert shares["as_of"].startswith("FY")
+    assert meta["wacc"]["components"]["debt_weight"] == pytest.approx(0.10)
+    assert meta["tax_rate"]["normalization_rule"]
+
+
 def test_msft_depreciation_sums_separate_components(company_db):
     """D02: MSFT reports Depreciation (34.3B) and AmortizationOfIntangibleAssets
     (4.7B) as separate tags; estimate_depreciation must sum them to 39B instead
