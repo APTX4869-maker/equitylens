@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -14,17 +13,6 @@ from equitylens.metrics.engine import MetricEngine
 from equitylens.storage.duckdb_store import DuckDBStore
 
 router = APIRouter(prefix="/api/v1")
-
-# P08: in-process per-company refresh locks so a second refresh of the same
-# company cannot start a conflicting write while the first is running.
-_REFRESH_LOCKS: dict[str, threading.Lock] = {}
-_REFRESH_LOCKS_GUARD = threading.Lock()
-
-
-def _refresh_lock(ticker: str) -> threading.Lock:
-    with _REFRESH_LOCKS_GUARD:
-        return _REFRESH_LOCKS.setdefault(ticker, threading.Lock())
-
 
 def _store() -> DuckDBStore:
     s = DuckDBStore()
@@ -824,49 +812,14 @@ def company_freshness(ticker: str):
 
 
 @router.post("/companies/{ticker}/refresh")
-def company_refresh(ticker: str):
-    """P08: one-click refresh of a company's financial data.
+def company_refresh(ticker: str, payload: dict | None = None):
+    """Refresh all modules or retry an explicit subset with independent status."""
+    from equitylens.refresh.service import RefreshBusy, refresh_company
 
-    Serialized per company (no conflicting concurrent writes). Runs the existing
-    sync pipeline synchronously; returns per-module status. Segments/management/
-    quotes run best-effort after financials.
-    """
     company = _resolve_company(ticker)
-    lock = _refresh_lock(company.ticker)
-    if not lock.acquire(blocking=False):
-        raise HTTPException(409, f"{ticker} 正在刷新中，请稍后")
-
-    modules: dict[str, dict] = {}
     try:
-        store = _store()
-        from equitylens.ingestion.sec.sync import sync_company
-
-        report = sync_company(company.ticker, fetch=True, store=store)
-        modules["financials"] = {
-            "status": "ok",
-            "facts_accepted": report.facts_accepted,
-            "canonical_count": report.canonical_count,
-            "warnings": report.warnings,
-        }
-
-        # best-effort segment refresh (may not have fetched filing docs)
-        try:
-            from equitylens.ingestion.sec.sync import sync_segments
-            seg = sync_segments(company.ticker, fetch=True, store=store)
-            modules["segments"] = {"status": "ok", "facts_accepted": seg.facts_accepted}
-        except Exception as exc:
-            modules["segments"] = {"status": "error", "reason": str(exc)}
-
-        # best-effort quote refresh
-        try:
-            from equitylens.market.service import sync_quotes
-            q = sync_quotes([company.ticker], fetch=True, store=store)
-            modules["quotes"] = {"status": "ok", "reports": [r.line() for r in q]}
-        except Exception as exc:
-            modules["quotes"] = {"status": "error", "reason": str(exc)}
-
-        return {"ticker": ticker, "status": "ok", "modules": modules}
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
-    finally:
-        lock.release()
+        return refresh_company(_store(), company.ticker, modules=(payload or {}).get("modules"))
+    except RefreshBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

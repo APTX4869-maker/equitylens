@@ -582,25 +582,115 @@ def test_plan_fields_survive_store_restart(tmp_path):
     assert loaded["review_status"] == "current"
 
 
-def test_refresh_endpoint_serialized_with_module_status(client, monkeypatch):
-    """P08: one-click refresh runs the sync pipeline and reports per-module status."""
+def test_refresh_reports_all_modules_and_partial_failure(client, monkeypatch):
+    """P08: all four modules report independently; one failure stays retryable."""
     import equitylens.ingestion.sec.sync as sec_sync
+    import equitylens.ingestion.sec.management as management_sync
     import equitylens.market.service as mkt_svc
+    from equitylens.ingestion.sec.management import ManagementSyncReport
     from equitylens.ingestion.sec.sync import SyncReport
+    from equitylens.market.service import SyncReport as QuoteSyncReport
 
     monkeypatch.setattr(sec_sync, "sync_company",
                         lambda ticker, **kw: SyncReport(company=ticker, facts_accepted=5,
                                                         canonical_count=5, warnings=[]))
-    monkeypatch.setattr(sec_sync, "sync_segments",
-                        lambda ticker, **kw: SyncReport(company=ticker, facts_accepted=2))
-    monkeypatch.setattr(mkt_svc, "sync_quotes", lambda tickers, **kw: [])
+    monkeypatch.setattr(sec_sync, "sync_segments", lambda ticker, **kw: (_ for _ in ()).throw(RuntimeError("segment unavailable")))
+    monkeypatch.setattr(management_sync, "sync_management",
+                        lambda ticker, **kw: ManagementSyncReport(company=ticker, executives=3))
+    monkeypatch.setattr(mkt_svc, "sync_quotes",
+                        lambda tickers, **kw: [QuoteSyncReport(company=tickers[0], quotes=[{
+                            "provider": "test", "price": 100, "observed_at": "2026-09-06"
+                        }])])
 
     r = client.post("/api/v1/companies/AAPL/refresh")
     assert r.status_code == 200
     d = r.json()
     assert d["modules"]["financials"]["status"] == "ok"
     assert d["modules"]["financials"]["facts_accepted"] == 5
-    assert d["modules"]["segments"]["status"] == "ok"
+    assert d["modules"]["segments"]["status"] == "error"
+    assert d["modules"]["segments"]["retryable"] is True
+    assert d["modules"]["management"]["status"] == "ok"
+    assert d["modules"]["quotes"]["status"] == "ok"
+    assert d["status"] == "partial"
+
+
+def test_refresh_retries_only_selected_failed_module(client, monkeypatch):
+    import equitylens.ingestion.sec.sync as sec_sync
+    import equitylens.ingestion.sec.management as management_sync
+    import equitylens.market.service as mkt_svc
+    from equitylens.ingestion.sec.sync import SyncReport
+
+    calls: list[str] = []
+    monkeypatch.setattr(sec_sync, "sync_company", lambda *a, **k: calls.append("financials"))
+    monkeypatch.setattr(sec_sync, "sync_segments",
+                        lambda ticker, **kw: calls.append("segments") or SyncReport(company=ticker, facts_accepted=2))
+    monkeypatch.setattr(management_sync, "sync_management", lambda *a, **k: calls.append("management"))
+    monkeypatch.setattr(mkt_svc, "sync_quotes", lambda *a, **k: calls.append("quotes"))
+
+    response = client.post("/api/v1/companies/AAPL/refresh", json={"modules": ["segments"]})
+    assert response.status_code == 200
+    assert calls == ["segments"]
+    assert response.json()["modules"]["segments"]["status"] == "ok"
+    assert response.json()["modules"]["financials"]["status"] == "skipped"
+
+
+def test_refresh_rolls_back_failed_module_writes(client, company_db, monkeypatch):
+    import equitylens.ingestion.sec.sync as sec_sync
+
+    def write_then_fail(ticker, **kwargs):
+        store = kwargs["store"]
+        store._conn.execute(
+            "INSERT INTO company (company_id, ticker) VALUES ('refresh-sentinel', 'BAD')"
+        )
+        raise RuntimeError("after write")
+
+    monkeypatch.setattr(sec_sync, "sync_company", write_then_fail)
+    response = client.post(
+        "/api/v1/companies/AAPL/refresh", json={"modules": ["financials"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["modules"]["financials"]["status"] == "error"
+    assert company_db.query_one(
+        "SELECT company_id FROM company WHERE company_id = 'refresh-sentinel'"
+    ) is None
+
+
+def test_refresh_marks_existing_plan_for_review_without_recalculation(client, monkeypatch):
+    import equitylens.market.service as market_service
+    from equitylens.market.service import SyncReport as QuoteSyncReport
+
+    run = _save_v2_run(client)
+    plan = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={"valuation_run_id": run["valuation_run_id"], "scenario_key": "base",
+              "margin_of_safety": 0.2},
+    ).json()
+    old_price = plan["reference_price"]
+
+    def sync_new_quote(tickers, **kwargs):
+        kwargs["store"].insert_market_quote({
+            "quote_id": "quote-after-refresh", "company_id": "0000320193", "ticker": "AAPL",
+            "provider": "test", "observed_at": "2026-09-07T10:00:00+00:00",
+            "price": 333.0, "currency": "USD", "source_label": "test",
+            "source_url": "https://example.test/quote", "fetched_at": "2099-01-01T00:00:00+00:00",
+        })
+        return [QuoteSyncReport(company="AAPL", quotes=[{
+            "provider": "test", "price": 333.0, "observed_at": "2026-09-07T10:00:00+00:00"
+        }])]
+
+    monkeypatch.setattr(market_service, "sync_quotes", sync_new_quote)
+    refreshed = client.post(
+        "/api/v1/companies/AAPL/refresh", json={"modules": ["quotes"]}
+    ).json()
+    assert refreshed["review_required"] is True
+    assert refreshed["modules"]["quotes"]["changed"] is True
+
+    loaded = client.get(
+        f"/api/v1/companies/AAPL/valuation/plans/{plan['plan_id']}"
+    ).json()
+    assert loaded["review_status"] == "needs_review"
+    assert "行情" in loaded["review_reason"]
+    assert loaded["reference_price"] == pytest.approx(old_price)
 
 
 def test_reverse_dcf_endpoint_returns_implied_growth(client):

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3  # noqa: F401  (reminder: not used; DuckDB only)
+from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
@@ -182,6 +183,19 @@ class DuckDBStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    @contextmanager
+    def transaction(self):
+        """Commit one publication unit or roll every database write back."""
+        self.connect()
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            yield self
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        else:
+            self._conn.execute("COMMIT")
 
     def init_schema(self) -> None:
         self.connect()

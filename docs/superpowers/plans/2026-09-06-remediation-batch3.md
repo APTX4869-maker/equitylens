@@ -218,31 +218,31 @@ git commit -m "feat: complete personal valuation plan workflow"
 - `POST /companies/{ticker}/refresh` accepts optional `{modules: [...]}` for failed-module retry.
 - Response includes `refresh_id`, per-module status/timestamps/error/retryable, `changed`, and `review_required`.
 
-- [ ] **Step 1: Add failing four-module and retry tests**
+- [x] **Step 1: Add failing four-module and retry tests**
 
 Monkeypatch all four synchronizers. Make segments fail while the other three succeed; assert HTTP 200, exact per-module statuses, retry eligibility, and that management ran. Retry only segments and assert no other synchronizer runs. Add a transaction regression where a module writes a sentinel row then raises; assert that module's sentinel is rolled back while successful sibling commits remain.
 
-- [ ] **Step 2: Verify current refresh omits management and returns 500 on required failure**
+- [x] **Step 2: Verify current refresh omits management and returns 500 on required failure**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k refresh -q -p no:cacheprovider`
 
 Expected: new four-module, selective retry and rollback assertions fail.
 
-- [ ] **Step 3: Add serialized per-module transactions and staged raw publication**
+- [x] **Step 3: Add serialized per-module transactions and staged raw publication**
 
 Add a process-wide write lock plus the existing per-company lock. For each selected module, copy the needed current raw inputs into a temporary staging directory, run the synchronizer against that directory inside its own DuckDB transaction, and call `sync_management` as the fourth source. After computation succeeds, publish staged immutable files/manifests while retaining the prior manifests, then commit the database transaction. On any publication or commit error, roll back and atomically restore the prior manifests; new immutable files may remain unreferenced. A failed module must leave both visible latest pointers and database rows at the prior complete state.
 
-- [ ] **Step 4: Calculate review impact**
+- [x] **Step 4: Calculate review impact**
 
 Before and after refresh, capture the latest financial filing identity and quote observation identity. Set `changed` per module and `review_required=true` when either valuation input source changed. Update existing plan rows to `needs_review` with a reason; never recalculate stored runs or plan reference prices.
 
-- [ ] **Step 5: Verify refresh integration**
+- [x] **Step 5: Verify refresh integration**
 
 Run: `.venv/bin/python -m pytest tests/integration/test_api.py -k refresh -q -p no:cacheprovider`
 
 Expected: partial failure, failed-only retry, transaction rollback, serialization and review-state tests pass.
 
-- [ ] **Step 6: Commit the coordinator**
+- [x] **Step 6: Commit the coordinator**
 
 ```bash
 git add equitylens/refresh/service.py equitylens/api/routes.py equitylens/storage/duckdb_store.py tests/integration/test_api.py
