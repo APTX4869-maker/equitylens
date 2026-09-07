@@ -72,7 +72,9 @@ def sync_management(
 
     try:
         # ---------- 1) DEF 14A proxy ----------
-        proxy_filings = list_filing_docs(ticker, forms=("DEF 14A",), limit_per_form=1)
+        proxy_filings = list_filing_docs(
+            ticker, forms=("DEF 14A",), limit_per_form=1, raw_dir=raw_dir
+        )
         if proxy_filings:
             row = proxy_filings[0]
             accn = row["accessionNumber"]
@@ -108,7 +110,9 @@ def sync_management(
 
         # ---------- 2) Form 4 ----------
         ins_rows: list[dict] = []
-        for row in list_filing_docs(ticker, forms=("4",), limit_per_form=forms4_limit):
+        for row in list_filing_docs(
+            ticker, forms=("4",), limit_per_form=forms4_limit, raw_dir=raw_dir
+        ):
             accn = row["accessionNumber"]
             accn_nodash = accn.replace("-", "")
             directory = raw_dir / "sec" / cik / "filing_docs" / accn

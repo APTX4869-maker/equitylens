@@ -1,5 +1,7 @@
 # EquityLens 真实库只读盘点报告
 
+> **后续状态（2026-09-07）：** 本文记录的是迁移前历史盘点。真实库后来已包含 v2 规范化结果；副本重放、幂等验证和原子切换已完成，最终证据见 `docs/reviews/2026-09-07-real-db-migration-rehearsal.md`。
+
 > 生成于代码修复完成后（基线 `418a8c6` → 修复后工作树）。本文只读检查 `data/equitylens.duckdb`，**未做任何写入**。
 > 依据：修复规格 `docs/reviews/2026-09-05-equitylens-remediation-handoff.md` §8.3 第 1 步。
 
@@ -68,7 +70,7 @@
 
 两家公司 `companyfacts.json` / `submissions.json` 均在盘且 `source_document.content_sha256` 已记录（AAPL `73a86c6a…`、`2503475b…`；MSFT `f8aae296…`、`ef3d1eed…`）。`filing_docs/` 下 10-K/10-Q/DEF14A/Form4 文档齐全。因此可在副本上做 hash 校验回放，无需重新联网抓取。
 
-## 7. 建议的下一步（§8.3 第 2–6 步，需你授权后才执行）
+## 7. 当时建议的下一步（现已执行）
 
 1. **备份**：复制 `data/equitylens.duckdb` 与 `data/raw/` 到带日期的副本路径。
 2. **副本演练**：在副本上新建空库，用新 `mappings.v2` + 财年修复 + 派生传播，从 hash 校验的 `companyfacts.json`/`submissions.json` 重放并重规范化；分段/管理层/行情照旧回放。
@@ -77,4 +79,4 @@
 5. **旧运行**：11 条 valuation_run 显示“旧方法/需复核”，用户主动重算才生成新 run。
 6. **切库**：确认副本对比通过后，替换真实库并保留回滚路径。
 
-> 本次仅完成盘点（第 1 步），未执行任何写库/重建/迁移操作。
+> 本文生成时仅完成盘点（第 1 步）；此历史说明不代表当前状态。当前状态以 2026-09-07 迁移演练与切换记录为准。
