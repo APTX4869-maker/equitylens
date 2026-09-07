@@ -21,6 +21,18 @@ type FreshnessModule = {
   detail: string; status: "ok" | "stale" | "missing"; days_ago: number | null;
 };
 type Freshness = { modules: FreshnessModule[]; stale_modules: string[]; hint: string | null };
+type RefreshModule = {
+  status: "ok" | "error" | "skipped";
+  retryable: boolean;
+  reason?: string | null;
+  changed?: boolean;
+};
+type RefreshResult = {
+  refresh_id: string;
+  status: "ok" | "partial" | "error";
+  modules: Record<string, RefreshModule>;
+  review_required: boolean;
+};
 
 export default function Home() {
   const [company, setCompany] = useState("AAPL");
@@ -36,10 +48,20 @@ export default function Home() {
   const [sourceEntity, setSourceEntity] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
 
   useEffect(() => {
     document.body.classList.toggle("pro", mode === "pro");
   }, [mode]);
+
+  const selectCompany = useCallback((next: string) => {
+    setMetricKey(null);
+    setMetricFact(null);
+    setSourceEntity(null);
+    setRefreshMsg(null);
+    setRefreshResult(null);
+    setCompany(next);
+  }, []);
 
   // Escape closes any open drawer (metric knowledge / source lineage).
   useEffect(() => {
@@ -90,15 +112,23 @@ export default function Home() {
     setSourceEntity(entityId);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (modules?: string[]) => {
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      const d = await api.fetchJson<{ modules: Record<string, { status: string; reason?: string }> }>(
+      const d = await api.fetchJson<RefreshResult>(
         `/api/v1/companies/${company}/refresh`,
-        { method: "POST" }
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(modules?.length ? { modules } : {}),
+        }
       );
-      const parts = Object.entries(d.modules ?? {}).map(([k, m]) => `${k}:${m.status === "ok" ? "成功" : "失败"}`);
+      setRefreshResult(d);
+      const parts = Object.entries(d.modules ?? {}).map(([k, m]) => {
+        const label = m.status === "ok" ? "成功" : m.status === "skipped" ? "未执行" : "失败";
+        return `${k}:${label}`;
+      });
       setRefreshMsg(`刷新完成：${parts.join("、")}`);
       setReloadKey((k) => k + 1);  // re-fetch the company's data
     } catch (e) {
@@ -112,9 +142,9 @@ export default function Home() {
 
   return (
     <div className="app">
-      <Sidebar company={company} tab={tab} onCompany={setCompany} onTab={setTab} />
+      <Sidebar company={company} tab={tab} onCompany={selectCompany} onTab={setTab} />
       <main>
-        <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} onCompany={setCompany} />
+        <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} onCompany={selectCompany} />
         <div className="content">
           <Hero company={entry?.info ?? null} market={market[company] ?? null} />
           <div className="research-toolbar">
@@ -153,6 +183,13 @@ export default function Home() {
             </div>
             <div className="tool-right">
               {refreshMsg ? <span className="tool-value" style={{ marginRight: 8 }}>{refreshMsg}</span> : null}
+              {Object.entries(refreshResult?.modules ?? {})
+                .filter(([, module]) => module.status === "error" && module.retryable)
+                .map(([module]) => (
+                  <button key={module} className="tool-chip" onClick={() => void refresh([module])} disabled={refreshing}>
+                    重试 {module}
+                  </button>
+                ))}
               <button className="tool-chip" onClick={() => void refresh()} disabled={refreshing}>
                 {refreshing ? "刷新中…" : "↻ 刷新数据"}
               </button>
@@ -174,37 +211,42 @@ export default function Home() {
           ) : null}
           {tab === "business" ? (
             <section className="section active" id="section-business">
-              <BusinessSection key={company} ticker={company} />
+              <BusinessSection key={`${company}:${reloadKey}`} ticker={company} />
             </section>
           ) : null}
           {tab === "financials" ? (
             <section className="section active" id="section-financials">
-              <FinancialsSection key={company} ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
+              <FinancialsSection key={`${company}:${reloadKey}`} ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
             </section>
           ) : null}
           {tab === "moat" ? (
             <section className="section active" id="section-moat">
-              <MoatSection key={company} ticker={company} onOpenSource={openSource} />
+              <MoatSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "management" ? (
             <section className="section active" id="section-management">
-              <ManagementSection key={company} ticker={company} />
+              <ManagementSection key={`${company}:${reloadKey}`} ticker={company} />
             </section>
           ) : null}
           {tab === "valuation" ? (
             <section className="section active" id="section-valuation">
-              <ValuationSection key={company} ticker={company} />
+              <ValuationSection
+                key={company}
+                ticker={company}
+                refreshGeneration={reloadKey}
+                refreshReviewRequired={refreshResult?.review_required ?? false}
+              />
             </section>
           ) : null}
           {tab === "risks" ? (
             <section className="section active" id="section-risks">
-              <RisksSection key={company} ticker={company} />
+              <RisksSection key={`${company}:${reloadKey}`} ticker={company} />
             </section>
           ) : null}
           {tab === "ai" ? (
             <section className="section active" id="section-ai">
-              <AiSection key={company} ticker={company} />
+              <AiSection key={`${company}:${reloadKey}`} ticker={company} />
             </section>
           ) : null}
         </div>

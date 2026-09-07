@@ -265,21 +265,21 @@ git commit -m "feat: coordinate retryable four module refresh"
 - Failed modules render individual retry actions.
 - Valuation drafts and stored plans show review-required state after changed inputs.
 
-- [ ] **Step 1: Write the failing refresh browser test**
+- [x] **Step 1: Write the failing refresh browser test**
 
 Stub a first financial response, refresh response with one failed module, and a second changed financial response. Assert the visible active Financials section reloads, the failed module gets a retry button that posts only that module, and a valuation draft/plan displays a review warning without being silently recalculated.
 
-- [ ] **Step 2: Run collection and the browser test when possible**
+- [x] **Step 2: Run collection and the browser test when possible**
 
 Run: `cd apps/web && pnpm exec playwright test e2e/refresh-state.spec.ts --list`
 
 Expected: collection succeeds; execution fails because child sections ignore the parent reload key.
 
-- [ ] **Step 3: Thread refresh generation through active sections**
+- [x] **Step 3: Thread refresh generation through active sections**
 
 Key every data section by `${ticker}:${reloadKey}` or pass `reloadKey` into its fetch effect. Clear company-specific drawers and refresh messages when ticker changes. Render all four module outcomes and a retry button for each `retryable` failure. Do not clear unsaved valuation inputs; mark them as requiring recalculation.
 
-- [ ] **Step 4: Run Batch 3 verification**
+- [x] **Step 4: Run Batch 3 verification**
 
 Run: `.venv/bin/python -m pytest -q -p no:cacheprovider`
 
@@ -289,7 +289,7 @@ If Chromium is available, run: `cd apps/web && pnpm exec playwright test`
 
 Expected: all available checks pass; browser execution limitation, if any, is recorded exactly.
 
-- [ ] **Step 5: Update evidence and commit**
+- [x] **Step 5: Update evidence and commit**
 
 Record P02/P06/P08 behavior, exact test commands/counts, schema compatibility and remaining browser limitations. Update the consolidated progress state only from current evidence.
 

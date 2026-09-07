@@ -655,7 +655,7 @@ def test_refresh_rolls_back_failed_module_writes(client, company_db, monkeypatch
     ) is None
 
 
-def test_refresh_marks_existing_plan_for_review_without_recalculation(client, monkeypatch):
+def test_refresh_marks_existing_plan_for_review_without_recalculation(client, company_db, monkeypatch):
     import equitylens.market.service as market_service
     from equitylens.market.service import SyncReport as QuoteSyncReport
 
@@ -679,18 +679,26 @@ def test_refresh_marks_existing_plan_for_review_without_recalculation(client, mo
         }])]
 
     monkeypatch.setattr(market_service, "sync_quotes", sync_new_quote)
-    refreshed = client.post(
-        "/api/v1/companies/AAPL/refresh", json={"modules": ["quotes"]}
-    ).json()
-    assert refreshed["review_required"] is True
-    assert refreshed["modules"]["quotes"]["changed"] is True
+    try:
+        refreshed = client.post(
+            "/api/v1/companies/AAPL/refresh", json={"modules": ["quotes"]}
+        ).json()
+        assert refreshed["review_required"] is True
+        assert refreshed["modules"]["quotes"]["changed"] is True
 
-    loaded = client.get(
-        f"/api/v1/companies/AAPL/valuation/plans/{plan['plan_id']}"
-    ).json()
-    assert loaded["review_status"] == "needs_review"
-    assert "行情" in loaded["review_reason"]
-    assert loaded["reference_price"] == pytest.approx(old_price)
+        loaded = client.get(
+            f"/api/v1/companies/AAPL/valuation/plans/{plan['plan_id']}"
+        ).json()
+        assert loaded["review_status"] == "needs_review"
+        assert "行情" in loaded["review_reason"]
+        assert loaded["reference_price"] == pytest.approx(old_price)
+    finally:
+        # company_db is session-scoped because building the golden fixture is
+        # expensive. Restore the quote table so this mutation cannot affect
+        # reverse-DCF/freshness tests that run later in the same process.
+        company_db._conn.execute(
+            "DELETE FROM market_quote WHERE quote_id = 'quote-after-refresh'"
+        )
 
 
 def test_reverse_dcf_endpoint_returns_implied_growth(client):

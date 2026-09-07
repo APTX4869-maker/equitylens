@@ -1,10 +1,10 @@
 # EquityLens 修复返工 Batch 3 证据记录
 
-日期：2026-09-06。分支：`codex/remediation-rework`。执行计划：`docs/superpowers/plans/2026-09-06-remediation-batch3.md`。
+日期：2026-09-07。分支：`codex/remediation-rework`。执行计划：`docs/superpowers/plans/2026-09-06-remediation-batch3.md`。
 
 ## 当前状态
 
-Batch 3 的 P02、P06 已完成；P08 执行中。
+Batch 3 的 P02、P06、P08 已完成。
 
 ## P02 `fcff_dcf.v2`
 
@@ -33,3 +33,21 @@ Batch 3 的 P02、P06 已完成；P08 执行中。
 - API `plan_` 聚焦测试 4 passed，覆盖任意价格拒绝、服务端派生、非正结果、公司隔离、复制、比较与重启读取。
 - TypeScript、ESLint、Playwright 收集通过。
 - 通过 `PLAYWRIGHT_CHROME_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` 使用系统 Chrome 实际执行 3 个浏览器用例，结果 **3 passed**。
+
+## P08 四模块刷新与浏览器状态
+
+- 刷新协调器分别执行 financials、segments、management、quotes；每个模块有独立事务、状态、变更标记与可重试错误。选择性重试只调用指定失败模块。
+- 原始数据先写入私有暂存目录；模块成功后才发布不可变文件与 manifest。发布或数据库提交失败时恢复原 manifest，避免半完成快照成为最新版本。
+- DuckDB 写入由全局锁与公司锁串行化；测试使用临时数据库对应的 raw 目录，不接触仓库现有快照。
+- 财务 filing 或行情 observation 身份变化时，已保存方案只标记 `needs_review`，历史 run 与参考价保持不可变。
+- 浏览器刷新后重新加载当前数据区，显示四模块结果，并为可重试失败提供单模块按钮。切换公司会关闭旧公司的指标/来源抽屉并清除刷新消息。
+- 估值页保留用户草稿；影响估值输入的刷新会禁用保存并要求按当前草稿重算。每个估值请求绑定启动时的刷新代次，刷新前发出的晚到响应不能错误解除过期状态。
+- 通用 `Card` 组件现会透传标准 DOM 属性，使现有 `data-testid` 可被真实浏览器测试定位。
+
+回归证据：
+
+- 刷新 API 聚焦测试 4 passed，覆盖部分失败、选择性重试、模块事务回滚和方案复核状态。
+- 全量后端：**205 passed**，另有 1 条既有 Starlette/httpx 弃用警告。
+- 前端 TypeScript `--noEmit` 与 ESLint 通过。
+- 使用系统 Chrome 执行全部 Playwright：**5 passed**。其中新增 2 个刷新用例覆盖活动模块重载、失败模块单独重试、估值草稿保留、保存禁用和显式重算恢复。
+- 全量回归首次发现 session 级 golden fixture 中测试行情泄漏；测试现用 `finally` 清理插入行情，随后全量 205 项通过。

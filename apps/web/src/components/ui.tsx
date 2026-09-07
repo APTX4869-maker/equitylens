@@ -1,10 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
-export function Card({ children, className = "", style }: { children: ReactNode; className?: string; style?: React.CSSProperties }) {
+type CardProps = HTMLAttributes<HTMLDivElement> & { children: ReactNode };
+
+export function Card({ children, className = "", ...props }: CardProps) {
   return (
-    <div className={`card ${className}`} style={style}>
+    <div className={`card ${className}`} {...props}>
       {children}
     </div>
   );

@@ -108,7 +108,15 @@ const RNG = {
   roic: { min: 8, max: 40, step: 1 },
 };
 
-export function ValuationSection({ ticker }: { ticker: string }) {
+export function ValuationSection({
+  ticker,
+  refreshGeneration = 0,
+  refreshReviewRequired = false,
+}: {
+  ticker: string;
+  refreshGeneration?: number;
+  refreshReviewRequired?: boolean;
+}) {
   const [base, setBase] = useState<RunResponse | null>(null);
   const [draft, setDraft] = useState<DcfInputs | null>(null);
   const [appliedInputs, setAppliedInputs] = useState<DcfInputs | null>(null);
@@ -128,12 +136,18 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [changedFields, setChangedFields] = useState<string[]>([]);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
+  const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
   const reqSeq = useRef(0);
   const draftRef = useRef<DcfInputs | null>(null);
+  const refreshGenerationRef = useRef(refreshGeneration);
 
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => {
+    refreshGenerationRef.current = refreshGeneration;
+  }, [refreshGeneration]);
 
   // M8: when a synced quote is present, prefill the reverse-DCF reference once,
   // preserving the exact market decimals (326.68 stays 326.68, not 327).
@@ -144,7 +158,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
     }
   }, []);
 
-  const applyResponse = useCallback((d: RunResponse, persist: boolean) => {
+  const applyResponse = useCallback((d: RunResponse, persist: boolean, calculatedRefresh: number) => {
     const inputs = draftFromInputs(d.assumptions.inputs);
     setBase(d);
     setDraft(inputs);
@@ -152,6 +166,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
     setAppliedInputs(inputs);
     setAppliedFingerprint(d.input_fingerprint ?? null);
     setSaved(persist);
+    setLastCalculatedRefresh(calculatedRefresh);
     setError(null);
   }, []);
 
@@ -169,6 +184,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const preview = useCallback(
     async (next: DcfInputs, persist = false) => {
       const seq = ++reqSeq.current;
+      const calculatedRefresh = refreshGenerationRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -178,7 +194,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
           body: JSON.stringify(buildPreviewRequest(next, persist)),
         });
         if (seq !== reqSeq.current) return; // stale response: ignore
-        applyResponse(d, persist);
+        applyResponse(d, persist, calculatedRefresh);
       } catch (e) {
         if (seq !== reqSeq.current) return;
         // a failed newest request leaves the prior result stale; save stays off
@@ -208,7 +224,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const loadDefault = useCallback(async () => {
     try {
       const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
-      applyResponse(d, false);
+      applyResponse(d, false, refreshGenerationRef.current);
       prefillReverseTarget(d);
       setReverse(null);
     } catch (e) {
@@ -224,7 +240,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       try {
         const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
         if (cancelled) return;
-        applyResponse(d, false);
+        applyResponse(d, false, refreshGenerationRef.current);
         prefillReverseTarget(d);
         setReverse(null);
         setError(null);
@@ -237,6 +253,11 @@ export function ValuationSection({ ticker }: { ticker: string }) {
       cancelled = true;
     };
   }, [ticker, applyResponse, prefillReverseTarget, loadPlans]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadPlans(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshGeneration, loadPlans]);
 
   const saveRun = useCallback(() => {
     const current = draftRef.current;
@@ -368,7 +389,8 @@ export function ValuationSection({ ticker }: { ticker: string }) {
   const isDirty = appliedInputs != null && draft != null
     ? draftFingerprint(draft) !== draftFingerprint(appliedInputs)
     : true;
-  const canSave = !isDirty && !error && !loading && appliedFingerprint != null;
+  const refreshStale = refreshReviewRequired && refreshGeneration > lastCalculatedRefresh;
+  const canSave = !refreshStale && !isDirty && !error && !loading && appliedFingerprint != null;
 
   const forecastChart = useMemo(() => {
     if (!base) return null;
@@ -415,6 +437,17 @@ export function ValuationSection({ ticker }: { ticker: string }) {
         </Pill>
       </div>
 
+      {refreshStale ? (
+        <Card data-testid="refresh-review-warning" style={{ marginBottom: 16 }}>
+          <div className="card-sub" style={{ color: "#b7791f" }}>
+            财务或行情快照已更新。当前草稿仍保留，但页面上的估值结果来自刷新前的数据，请重新计算后再保存。
+          </div>
+          <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => draftRef.current && void preview(draftRef.current, false)} disabled={loading}>
+            按当前草稿重新计算
+          </button>
+        </Card>
+      ) : null}
+
       <Card className="valuation-snapshot" style={{ marginBottom: 16 }}>
         <div className="card-sub">Reference Value Snapshot · SEC 事实 + 确定性模型（研究参考，非目标价）</div>
         <div className="value-band">
@@ -457,7 +490,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
         <div className="valuation-tags">
           <span>模型：{base.result.model_version}</span>
           <span>无风险利率 {base.risk_free ? `${(base.risk_free.value * 100).toFixed(2)}%（${base.risk_free.as_of ?? ""}）` : "—"}</span>
-          <span>{saved && base.valuation_run_id ? `已保存 · run ${base.valuation_run_id}` : saved ? "已保存方案" : isDirty ? "未保存（预览已过期）" : "未保存（预览）"}</span>
+          <span>{saved && !refreshStale && base.valuation_run_id ? `已保存 · run ${base.valuation_run_id}` : saved && !refreshStale ? "已保存方案" : isDirty || refreshStale ? "未保存（预览已过期）" : "未保存（预览）"}</span>
           <button className="tab-btn" onClick={saveRun} disabled={!canSave}>
             保存本次运行
           </button>
@@ -607,7 +640,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
             </div>
             {reverse ? (
               <div style={{ marginTop: 14 }}>
-                {reverse.stale ? <div className="card-sub" style={{ color: "#b7791f" }}>假设或价格已修改，以下结果已过期，请重新计算。</div> : null}
+                {reverse.stale || refreshStale ? <div className="card-sub" style={{ color: "#b7791f" }}>假设、价格或底层数据已修改，以下结果已过期，请重新计算。</div> : null}
                 <div className="reverse-number">
                   <span>市场隐含 5Y 收入 CAGR</span>
                   <strong>{reverse.implied != null ? `${(reverse.implied * 100).toFixed(1)}%` : "无根"}</strong>
@@ -691,7 +724,7 @@ export function ValuationSection({ ticker }: { ticker: string }) {
             style={{ width: 160, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}
           />
           <button className="tab-btn" onClick={savePlan}
-            disabled={loading || !saved || !base.valuation_run_id || selectedPlanValue == null}>
+            disabled={loading || refreshStale || !saved || !base.valuation_run_id || selectedPlanValue == null}>
             保存参考价方案
           </button>
         </div>
