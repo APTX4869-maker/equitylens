@@ -82,6 +82,7 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
         elif recent[-1] < 0.03:
             add("execution", "MEDIUM", "增长动能偏弱",
                 f"最近季度收入同比仅 {recent[-1]*100:.1f}%（低于 3% 阈值）。",
+                evidence_ids=_evs(growth[-1:]),
                 monitoring="下季度收入同比是否回升至 3% 以上")
         return "OK", None, _evs(growth[-2:])
     record_check("growth", _growth)
@@ -98,7 +99,7 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
         if delta < -0.02:
             add("financial", "MEDIUM", "营业利润率走低",
                 f"营业利润率近 5 季从 {vals[0]*100:.1f}% 降至 {vals[-1]*100:.1f}%（{(vals[0]-vals[-1])*100:.1f}pp）。",
-                evidence_ids=_evs(opm[-1:]),
+                evidence_ids=_evs(opm[-5:]),
                 monitoring="下季度利润率能否止跌")
         return "OK", None, _evs(opm[-1:])
     record_check("profitability", _profitability)
@@ -148,12 +149,18 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
 
         dv = default_valuation(store, company_id, ticker)
         tv_share = dv["result"]["terminal_value_share"]
+        evidence = sorted({
+            fact_id
+            for item in dv["assumptions"]["meta"].values()
+            if isinstance(item, dict)
+            for fact_id in (item.get("source_ids") or [])
+        })
         if tv_share > 0.80:
             add("valuation", "MEDIUM", "DCF 价值对终值假设高度敏感",
                 f"终值占企业价值 {tv_share*100:.0f}%（>80%）。永续增长或 WACC 的小幅变动会显著改变结论。",
-                evidence_ids=["valuation_model:fcff_dcf.v1"],
+                evidence_ids=evidence,
                 monitoring="敏感性矩阵中心格附近波动幅度")
-        return "OK", None, ["valuation_model:fcff_dcf.v1"]
+        return "OK", None, evidence
     record_check("valuation", _valuation)
 
     # ---- concentration (segment AND product views) ----
@@ -169,17 +176,22 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
                 continue
             checked.append(kind)
             top = max((s for s in seg["segments"] if s.get("share")), key=lambda s: s["share"] or 0)
+            source_ids = [
+                source["source_document_id"] for source in top.get("sources", [])
+                if source.get("source_document_id")
+            ]
             if top and (top["share"] or 0) > 0.45:
                 # avoid double-reporting when segment already flagged
                 add("structural", "HIGH" if (top["share"] or 0) > 0.6 else "MEDIUM",
                     "收入集中度偏高",
                     f"{kind_label}维度最大项「{top['name']}」占收入 {(top['share'] or 0)*100:.0f}%（>45% 阈值）。单一市场/客户/产品波动会显著影响整体。",
-                    evidence_ids=[f"segment:{top['name']}"],
+                    evidence_ids=source_ids,
                     monitoring="下一年度集中度变化")
-                evidence.append(f"segment:{top['name']}")
+                evidence.extend(source_ids)
             elif kind == "segment" and len(seg["segments"]) <= 3:
                 add("structural", "LOW", "分部数量少，多元化有限",
                     f"仅 {len(seg['segments'])} 个报告分部。",
+                    evidence_ids=source_ids,
                     monitoring="是否新增高增长分部")
         return "OK", None, evidence
     record_check("concentration", _concentration)
@@ -191,7 +203,7 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
         sc = management_scorecard(store, company_id, ticker)
         if sc.get("overall_score") is None:
             add("execution", "LOW", "管理层可验证证据不足",
-                f"管理评分证据覆盖率 {sc['coverage']*100:.0f}%（<{sc['minimum_coverage']*100:.0f}%），战略/治理维度暂不可量化。",
+                "管理评分未达到规则要求的证据覆盖，战略与治理维度暂不可量化。",
                 monitoring="接入更多 DEF 14A 章节与 Earnings Call 证据")
         return "OK", None, []
     record_check("management", _management)
@@ -199,4 +211,13 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
     # severity ordering
     order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     risks.sort(key=lambda r: (order.get(r["severity"], 3), r["category"]))
-    return {"ticker": ticker, "generated_by": "deterministic-rules.v1", "risks": risks, "checks": checks}
+    unavailable = [check for check in checks if check["status"] != "OK"]
+    completed = len(checks) - len(unavailable)
+    return {
+        "ticker": ticker, "generated_by": "deterministic-rules.v1",
+        "risks": risks, "checks": checks,
+        "coverage": {
+            "total": len(checks), "completed": completed,
+            "complete": not unavailable, "unavailable": unavailable,
+        },
+    }

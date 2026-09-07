@@ -14,6 +14,12 @@ type RiskItem = {
   confidence: string;
   generated_by: string;
 };
+type RiskCheck = { key: string; status: string; reason?: string | null; evidence_ids: string[] };
+type RiskResponse = {
+  risks: RiskItem[];
+  checks: RiskCheck[];
+  coverage: { total: number; completed: number; complete: boolean; unavailable: RiskCheck[] };
+};
 
 const CATEGORY_LABEL: Record<string, string> = {
   structural: "结构性风险",
@@ -24,8 +30,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   valuation: "估值风险",
 };
 
-export function RisksSection({ ticker }: { ticker: string }) {
-  const [data, setData] = useState<{ risks: RiskItem[] } | null>(null);
+export function RisksSection({ ticker, onOpenSource }: { ticker: string; onOpenSource: (id: string) => void }) {
+  const [data, setData] = useState<RiskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -33,7 +39,7 @@ export function RisksSection({ ticker }: { ticker: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.fetchJson<{ risks: RiskItem[] }>(`/api/v1/companies/${ticker}/risks`);
+        const d = await api.fetchJson<RiskResponse>(`/api/v1/companies/${ticker}/risks`);
         if (!cancelled) { setData(d); setError(null); }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -49,15 +55,27 @@ export function RisksSection({ ticker }: { ticker: string }) {
     <>
       <div className="demo-banner real">
         <strong>✓ 风险清单</strong> — 风险信号由确定性规则从 SEC 财务事实、分部与估值输出生成
-        （{data.risks[0]?.generated_by ?? "deterministic-rules.v1"}）；每条都带证据与可回访的观察信号。
+        （{data.risks[0]?.generated_by ?? "deterministic-rules.v1"}）；规则可复现，但不保证结论正确。
       </div>
       <div className="section-head">
         <div>
           <h2>风险清单</h2>
           <div className="card-sub">风险不是列得越多越专业，而是明确“什么事情发生，会让投资逻辑失效”。</div>
         </div>
-        <Pill tone="warn">共 {data.risks.length} 项信号</Pill>
+        <Pill tone={data.coverage.complete ? "warn" : "bad"}>
+          {data.coverage.completed}/{data.coverage.total} 项检查完成 · {data.risks.length} 项信号
+        </Pill>
       </div>
+      {!data.coverage.complete ? (
+        <Card className="card-pad" data-testid="risk-coverage-warning" style={{ marginBottom: 14 }}>
+          <div className="card-title">检查范围不完整</div>
+          {data.coverage.unavailable.map((check) => (
+            <div className="card-sub" key={check.key}>
+              {CATEGORY_LABEL[check.key] ?? check.key}：{check.status} · {check.reason || "没有可用证据"}
+            </div>
+          ))}
+        </Card>
+      ) : null}
       <div className="grid grid-2">
         <div className="risk-list">
           {data.risks.map((r) => (
@@ -75,6 +93,11 @@ export function RisksSection({ ticker }: { ticker: string }) {
                 <div className="source-row">
                   <span className="source-chip-sm">↗ 监控：{r.monitoring}</span>
                   <span className="source-chip-sm">依据：{r.generated_by}</span>
+                  {r.evidence_ids.map((id) => (
+                    <button className="source-chip-sm" key={id} onClick={() => onOpenSource(id)}>
+                      查看证据 {id.slice(0, 12)}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -82,7 +105,11 @@ export function RisksSection({ ticker }: { ticker: string }) {
           {data.risks.length === 0 ? (
             <Card className="card-pad">
               <div className="card-title">当前规则未命中显著风险</div>
-              <div className="card-sub">增长、利润率、现金流、资产负债表、集中度与估值敏感性检查均未超阈值。</div>
+              <div className="card-sub">
+                {data.coverage.complete
+                  ? `已完成 ${data.coverage.total} 项规则检查，当前没有指标超过已定义阈值。`
+                  : `仅完成 ${data.coverage.completed}/${data.coverage.total} 项检查；未命中不代表未完成模块没有风险。`}
+              </div>
             </Card>
           ) : null}
         </div>

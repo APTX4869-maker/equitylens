@@ -6,6 +6,8 @@ import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 
 type Claim = { claim: string; confidence: string; evidence_ids: string[] };
 type AskResponse = {
+  intent: string;
+  supported_topics: string[];
   answer: string;
   claims: Claim[];
   metric_ids: string[];
@@ -21,7 +23,7 @@ const SUGGESTIONS = [
   "估值怎么看？",
 ];
 
-export function AiSection({ ticker }: { ticker: string }) {
+export function AiSection({ ticker, onOpenSource }: { ticker: string; onOpenSource: (id: string) => void }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<(AskResponse & { _t: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,15 +53,14 @@ export function AiSection({ ticker }: { ticker: string }) {
   return (
     <>
       <div className="demo-banner real">
-        <strong>✓ AI 研究助手（证据优先）</strong> — 确定性检索引擎：答案只引用真实 SEC 事实与衍生指标，
-        每条结论带证据标识；LLM 解释层可后续接入，但永远不生成财务数字。
+        <strong>✓ 研究助手（规则检索）</strong> — 当前不是任意问答 AI。它只处理增长、利润率、现金流、风险、估值、业务构成和指标解释，无法支持的问题会直接说明。
       </div>
       <div className="section-head">
         <div>
-          <h2>AI 研究助手</h2>
+          <h2>研究助手</h2>
           <div className="card-sub">问真实数据能回答的问题：增长/利润率/现金流/风险/估值/业务构成。</div>
         </div>
-        <Pill tone="good">Evidence-first · 确定性引擎</Pill>
+        <Pill tone="good">证据优先 · 规则检索</Pill>
       </div>
 
       <div className="ai-layout">
@@ -99,7 +100,7 @@ export function AiSection({ ticker }: { ticker: string }) {
           ) : null}
           {answer && !loading && answer._t === ticker ? (
             <>
-              <div className="ai-kicker">AI RESEARCHER · 确定性证据引擎</div>
+              <div className="ai-kicker">RESEARCH HELPER · 规则检索</div>
               <h2 style={{ fontSize: 17 }}>{answer.answer}</h2>
               {answer.claims.map((c, i) => (
                 <div className="answer-point" key={i}>
@@ -108,10 +109,13 @@ export function AiSection({ ticker }: { ticker: string }) {
                     <strong>{c.claim}</strong>
                     <span className="card-sub">
                       置信度 {c.confidence}
-                      {c.evidence_ids.length
-                        ? ` · 证据 ${c.evidence_ids.map((id) => id.slice(0, 12)).join(", ")}`
-                        : " · 结构性说明（无数字）"}
+                      {c.evidence_ids.length ? " · " : " · 结构性说明（无数字）"}
                     </span>
+                    {c.evidence_ids.map((id) => (
+                      <button className="text-link" key={id} onClick={() => onOpenSource(id)}>
+                        证据 {id.slice(0, 12)}
+                      </button>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -124,7 +128,7 @@ export function AiSection({ ticker }: { ticker: string }) {
                 </div>
               ) : null}
               <div className="ai-disclaimer">
-                本助手不能创造或“修复”财务数字；所有数值均来自 SEC 规范化事实与确定性公式。证据 ID 可在来源抽屉中溯源。
+                本助手当前使用确定性规则检索。规则固定只表示同输入可复现，不保证解释或投资结论正确；数值证据可点击溯源。
               </div>
             </>
           ) : null}

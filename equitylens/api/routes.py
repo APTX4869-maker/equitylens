@@ -395,6 +395,20 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
             },
             "parents": [],
         }
+    quote = store.query_one("SELECT * FROM market_quote WHERE quote_id = ?", [entity_id])
+    if quote:
+        return {
+            "entity_id": entity_id,
+            "kind": "market_observation",
+            "label": f"{quote.get('ticker')} market quote",
+            "fields": {
+                "ticker": quote.get("ticker"), "provider": quote.get("provider"),
+                "observed_at": quote.get("observed_at"), "price": quote.get("price"),
+                "currency": quote.get("currency"), "source_label": quote.get("source_label"),
+                "source_url": quote.get("source_url"), "fetched_at": quote.get("fetched_at"),
+            },
+            "parents": [],
+        }
     return None
 
 

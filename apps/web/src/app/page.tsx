@@ -241,12 +241,12 @@ export default function Home() {
           ) : null}
           {tab === "risks" ? (
             <section className="section active" id="section-risks">
-              <RisksSection key={`${company}:${reloadKey}`} ticker={company} />
+              <RisksSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "ai" ? (
             <section className="section active" id="section-ai">
-              <AiSection key={`${company}:${reloadKey}`} ticker={company} />
+              <AiSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
         </div>

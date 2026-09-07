@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-P01、P03 已完成；P05、P04 待按顺序执行。
+P01、P03、P05 已完成；P04 待执行。
 
 ## P01 默认假设来源
 
@@ -35,3 +35,19 @@ P01、P03 已完成；P05、P04 待按顺序执行。
 
 - 新增 −5% 收入压力和亏损利润率回归；估值 golden + API：**84 passed**。
 - TypeScript、ESLint 通过；使用系统 Chrome 执行全部 Playwright：**5 passed**。
+
+## P05 证据与结论边界
+
+- 风险结果新增实际 coverage：总检查数、成功数、是否完整及不可用模块。页面显示失败状态与原因；零风险时只说明已完成规则未超阈值，不把未检查模块当作安全。
+- 风险严重度与证据置信度继续独立。`HIGH` 严重度不会自动变成 `HIGH` 置信度。
+- 增长、利润率、现金流、资产负债表、估值和集中度的数字风险均引用可解析的 canonical fact 或 source document；原先不可解析的 `segment:*`、`valuation_model:*` 伪身份已移除。
+- provenance API 新增 `market_observation` 节点，使行情数字可以追溯到 provider、观察时间、价格、币种、来源 URL 与抓取时间。
+- 研究助手所有带数字的 claim 都有可解析证据。DCF 结论报告实际 `fcff_dcf.v2`，终值结论使用实际占比，不再无条件套用“>60% 敏感”模板。
+- 未支持问题返回 `intent=unsupported`、支持主题和下一步，不附带当前公司总览数字。页面明确当前能力是规则检索，确定性只表示可复现，不承诺结论正确。
+- 风险与研究页的证据可点击打开来源抽屉；切换 ticker 时父页面卸载旧状态并关闭旧来源抽屉。
+
+回归证据：
+
+- 研究 golden：**16 passed**，覆盖 AAPL/MSFT 数字风险和六类研究问题的证据解析。
+- 风险/研究/API 聚焦：**12 passed**。
+- TypeScript、ESLint 通过；新增 `research-boundaries.spec.ts`：**2 passed**。

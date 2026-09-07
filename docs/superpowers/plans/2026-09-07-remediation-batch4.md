@@ -46,11 +46,11 @@
 
 **Files:** `equitylens/domain/risks.py`, `equitylens/research/engine.py`, `equitylens/api/routes.py`, `apps/web/src/components/sections/RisksSection.tsx`, `apps/web/src/components/sections/AiSection.tsx`, `apps/web/src/components/SourceDrawer.tsx`, tests under `tests/unit` and `tests/integration`
 
-- [ ] Add regressions showing failed risk checks remain unavailable, numeric claims have resolvable evidence IDs, and unsupported research questions return capability guidance without unrelated claims.
-- [ ] Return risk coverage counts/statuses and keep severity independent from evidence confidence. Replace unconditional “no risk” language with the actual completed-check boundary.
-- [ ] Make every numeric research claim use canonical or derived identities that the provenance endpoint can resolve; mark structural statements separately.
-- [ ] Present deterministic rules as reproducible rules, not correctness guarantees; expose evidence and unavailable checks in the risk/research UI.
-- [ ] Verify ticker changes clear source/research context, run focused checks, update Batch 4 evidence/progress, and commit.
+- [x] Add regressions showing failed risk checks remain unavailable, numeric claims have resolvable evidence IDs, and unsupported research questions return capability guidance without unrelated claims.
+- [x] Return risk coverage counts/statuses and keep severity independent from evidence confidence. Replace unconditional “no risk” language with the actual completed-check boundary.
+- [x] Make every numeric research claim use canonical or derived identities that the provenance endpoint can resolve; mark structural statements separately.
+- [x] Present deterministic rules as reproducible rules, not correctness guarantees; expose evidence and unavailable checks in the risk/research UI.
+- [x] Verify ticker changes clear source/research context, run focused checks, update Batch 4 evidence/progress, and commit.
 
 ---
 

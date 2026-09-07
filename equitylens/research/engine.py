@@ -20,6 +20,7 @@ from equitylens.metrics.engine import MetricEngine
 from equitylens.valuation.service import default_valuation
 
 EVIDENCE_MISSING = "NO_EVIDENCE_FOR_THIS_CLAIM"
+SUPPORTED_TOPICS = ["增长", "利润率", "现金流", "风险", "估值", "业务构成", "指标解释"]
 
 
 def _num(store, company_id: str, metric: str, freq="quarterly"):
@@ -38,23 +39,19 @@ def ask(store, company_id: str, ticker: str, question: str) -> dict:
     q = question.strip()
     intent = _route(q)
 
-    if intent == "metric_explain":
-        return _metric_explain(q)
-    if intent == "risk":
-        return _answer_risks(store, company_id, ticker)
-    if intent == "compare":
-        return _answer_compare(store, company_id, ticker, q)
-    if intent == "margin":
-        return _answer_margin(store, company_id, ticker)
-    if intent == "cash":
-        return _answer_cash(store, company_id, ticker)
-    if intent == "growth":
-        return _answer_growth(store, company_id, ticker)
-    if intent == "business":
-        return _answer_business(store, company_id, ticker)
-    if intent == "valuation":
-        return _answer_valuation(store, company_id, ticker)
-    return _answer_overview(store, company_id, ticker)
+    builders = {
+        "metric_explain": lambda: _metric_explain(q),
+        "risk": lambda: _answer_risks(store, company_id, ticker),
+        "compare": lambda: _answer_compare(store, company_id, ticker, q),
+        "margin": lambda: _answer_margin(store, company_id, ticker),
+        "cash": lambda: _answer_cash(store, company_id, ticker),
+        "growth": lambda: _answer_growth(store, company_id, ticker),
+        "business": lambda: _answer_business(store, company_id, ticker),
+        "valuation": lambda: _answer_valuation(store, company_id, ticker),
+        "overview": lambda: _answer_overview(store, company_id, ticker),
+        "unsupported": _answer_unsupported,
+    }
+    return {"intent": intent, "supported_topics": SUPPORTED_TOPICS, **builders[intent]()}
 
 
 def _route(q: str) -> str:
@@ -76,7 +73,9 @@ def _route(q: str) -> str:
         return "business"
     if any(k in ql for k in ("估值", "dcf", "价值", "便宜", "贵", "fair")):
         return "valuation"
-    return "overview"
+    if any(k in ql for k in ("总览", "概况", "概览", "overview")):
+        return "overview"
+    return "unsupported"
 
 
 # ---------------- answer builders ----------------
@@ -101,6 +100,14 @@ def _metric_explain(q: str) -> dict:
         "claims": [],
         "metric_ids": [],
         "limitations": ["指标字典解释由前端提供；本助手不做无证据的指标外数字猜测"],
+    }
+
+
+def _answer_unsupported() -> dict:
+    return {
+        "answer": "这个问题超出当前规则检索能力。当前支持：增长、利润率、现金流、风险、估值、业务构成和指标解释。请从这些主题提问，或到对应页面查看来源。",
+        "claims": [], "metric_ids": [],
+        "limitations": ["当前是确定性规则检索，不具备任意问答或公司内部预测能力。"],
     }
 
 
@@ -256,7 +263,8 @@ def _answer_business(store, company_id: str, ticker: str) -> dict:
                 growth_txt = f"，同比 {s['growth_yoy']*100:+.1f}%"
             claims.append(_claim(
                 f"分部「{s['name']}」收入占比 {(s['share'] or 0)*100:.0f}%{growth_txt}。",
-                "HIGH", [f"segment:{s['name']}"]))
+                "HIGH", [source["source_document_id"] for source in s.get("sources", [])
+                         if source.get("source_document_id")]))
         top = max(seg["segments"], key=lambda x: x["share"] or 0)
         answer = f"{ticker} 分部构成：{ ' / '.join(lines) }。最大分部是「{top['name']}」。"
     else:
@@ -273,20 +281,32 @@ def _answer_valuation(store, company_id: str, ticker: str) -> dict:
         bear = dv["scenarios"]["bear"]["result"]["fair_value_per_share"]
         bull = dv["scenarios"]["bull"]["result"]["fair_value_per_share"]
         market = dv.get("market") or {}
+        market_claim = None
         if market.get("status") == "OK" and market.get("quote") and "price_vs_fair_pct" in (market.get("derived") or {}):
             price = market["quote"]["price"]
             premium = market["derived"]["price_vs_fair_pct"]
             side = f"现价 ${price:.2f} 较公允价 {premium:+.1f}%（确定性 price_vs_fair.v1）"
+            market_claim = _claim(side + "。", "HIGH", [market["quote"]["observation_id"]])
         else:
             side = "行情未同步，无法与市场价格对比（运行 sync-quotes 后可见）"
+        evidence = sorted({
+            fact_id
+            for item in dv["assumptions"]["meta"].values()
+            if isinstance(item, dict)
+            for fact_id in (item.get("source_ids") or [])
+        })
+        claims = [
+            _claim(f"DCF Base 每股价值 ${fair:.0f}（{dv['model_version']}，假设可溯源）。",
+                   "MEDIUM", evidence),
+            _claim(f"终值占企业价值 {tv*100:.0f}%，表示估值中依赖较远未来的比例。",
+                   "MEDIUM", evidence),
+        ]
+        if market_claim:
+            claims.append(market_claim)
         return {
             "answer": (f"{ticker} 确定性 FCFF DCF：Base ${fair:.0f}，参考区间 ${bear:.0f}–${bull:.0f}，"
                        f"终值占 EV {tv*100:.0f}%。{side}。"),
-            "claims": [
-                _claim(f"DCF Base 每股价值 ${fair:.0f}（fcff_dcf.v1，假设可溯源）。", "MEDIUM",
-                       ["valuation_model:fcff_dcf.v1"]),
-                _claim("估值对终值假设敏感度较高（>60% 场景）。", "MEDIUM", ["valuation_model:sensitivity"]),
-            ],
+            "claims": claims,
             "metric_ids": [],
             "limitations": ["无风险利率为配置回退值（Treasury 当前不可达）；模型假设均可调整", "研究参考，非目标价"],
         }

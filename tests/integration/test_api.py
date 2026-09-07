@@ -757,6 +757,28 @@ def test_moat_endpoint_real_evidence(client):
     assert d["qualitative_gaps"], "evidence gaps must be explicit"
 
 
+def test_risk_endpoint_exposes_actual_check_coverage(client):
+    response = client.get("/api/v1/companies/AAPL/risks")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coverage"]["total"] == len(body["checks"])
+    assert body["coverage"]["completed"] == sum(
+        check["status"] == "OK" for check in body["checks"]
+    )
+    assert body["coverage"]["complete"] == (body["coverage"]["completed"] == body["coverage"]["total"])
+
+
+def test_research_unsupported_question_returns_capability_boundary(client):
+    response = client.post("/api/v1/research/ask", json={
+        "ticker": "AAPL", "question": "公司2027年收入的内部预测是多少？",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "unsupported"
+    assert body["claims"] == []
+    assert "增长" in body["supported_topics"]
+
+
 def test_promises_endpoint_deterministic_verification(client, company_db):
     import json as _json
     from pathlib import Path

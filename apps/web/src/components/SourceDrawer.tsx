@@ -72,7 +72,10 @@ export function SourceDrawer({
     if (!entityId) return;
     api
       .provenance(entityId)
-      .then((d) => setData({ tree: d.tree, entity: entityId }))
+      .then((d) => {
+        setData({ tree: d.tree, entity: entityId });
+        setError(null);
+      })
       .catch((e) => setError(String(e)));
   }, [entityId]);
 

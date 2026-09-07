@@ -90,6 +90,9 @@ def test_risks_report_incomplete_ttm_and_module_failure(db, monkeypatch):
     # a partial TTM window must not produce a capital-intensity or net-debt risk
     assert not any("资本开支" in r["title"] for r in result["risks"])
     assert not any("净债务" in r["title"] for r in result["risks"])
+    assert result["coverage"]["complete"] is False
+    assert result["coverage"]["completed"] < result["coverage"]["total"]
+    assert {item["key"] for item in result["coverage"]["unavailable"]} >= {"cash_flow", "management"}
 
 
 def test_risks_coverage_text_names_failed_modules(company_db):
@@ -123,3 +126,37 @@ def test_ai_never_fabricates_unknown_metric(company_db):
     d = ask(company_db, "0000320193", "AAPL", "公司2027年收入的内部预测是多少？")
     # the engine routes this to overview/fallback; no claim may present a made-up future number
     assert not any("2027" in c["claim"] and "$" in c["claim"] for c in d["claims"])
+    assert d["intent"] == "unsupported"
+    assert d["claims"] == []
+    assert "当前支持" in d["answer"]
+
+
+@pytest.mark.parametrize("ticker,company_id", [
+    ("AAPL", "0000320193"), ("MSFT", "0000789019"),
+])
+def test_every_numeric_risk_claim_has_resolvable_evidence(company_db, ticker, company_id):
+    from equitylens.api.routes import _build_provenance
+    from equitylens.domain.risks import risk_signals
+
+    result = risk_signals(company_db, company_id, ticker)
+    for risk in result["risks"]:
+        if any(ch.isdigit() for ch in risk["description"]):
+            assert risk["evidence_ids"], risk["title"]
+        for evidence_id in risk["evidence_ids"]:
+            assert _build_provenance(company_db, evidence_id, 4, set()) is not None, evidence_id
+
+
+@pytest.mark.parametrize("question", [
+    "收入增长为什么放缓？", "利润率现在怎么样？", "现金流和回购情况？",
+    "公司最近的风险有哪些？", "估值怎么看？", "业务构成如何？",
+])
+def test_every_numeric_research_claim_has_resolvable_evidence(company_db, question):
+    from equitylens.api.routes import _build_provenance
+    from equitylens.research.engine import ask
+
+    response = ask(company_db, "0000320193", "AAPL", question)
+    for claim in response["claims"]:
+        if any(ch.isdigit() for ch in claim["claim"]):
+            assert claim["evidence_ids"], claim["claim"]
+        for evidence_id in claim["evidence_ids"]:
+            assert _build_provenance(company_db, evidence_id, 4, set()) is not None, evidence_id

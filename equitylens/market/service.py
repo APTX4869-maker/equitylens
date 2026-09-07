@@ -183,6 +183,7 @@ def quote_block(store: DuckDBStore, company_id: str, ticker: str) -> dict:
         return {"status": "UNAVAILABLE", "configured": bool(cfg.active_providers),
                 "synced": False, "reason": _reason_no_sync(ticker)}
     quote = {
+        "observation_id": row["quote_id"],
         "price": row["price"], "currency": row["currency"],
         "observed_at": row["observed_at"], "provider": row["provider"],
         "provider_label": _provider_label(cfg, row["provider"]),
