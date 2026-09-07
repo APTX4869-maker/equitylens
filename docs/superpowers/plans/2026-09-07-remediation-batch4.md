@@ -63,4 +63,4 @@
 - [x] Add plain-language parameter explanations with raise/lower effects; do not describe WACC as a promised return. Keep edited inputs when switching modes.
 - [x] Confirm ratio titles/units follow the selected metric and all drawers are company-safe.
 - [x] Run full backend, TypeScript, ESLint, and all Playwright tests. Update the Batch 4 evidence and consolidated progress documents after completion.
-- [ ] Apply verification-before-completion and finish the development branch workflow.
+- [x] Apply verification-before-completion and finish the development branch workflow.
