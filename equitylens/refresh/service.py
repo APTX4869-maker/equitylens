@@ -80,8 +80,8 @@ def _restore_manifests(backups: list[tuple[Path, bytes | None]]) -> None:
 def _identity_snapshot(store, company_id: str) -> dict[str, str | None]:
     filing = store.query_one(
         """SELECT source_document_id FROM source_document
-           WHERE company_id = ? AND form_type IN ('10-K','10-Q')
-           ORDER BY COALESCE(filed_at, published_at) DESC NULLS LAST LIMIT 1""",
+           WHERE company_id = ? AND document_type = 'COMPANYFACTS_SNAPSHOT'
+           ORDER BY fetched_at DESC NULLS LAST, source_document_id DESC LIMIT 1""",
         [company_id],
     )
     proxy = store.query_one(
@@ -146,9 +146,9 @@ def refresh_company(store, ticker: str, modules: list[str] | None = None,
         company_lock.release()
         raise RefreshBusy("另一个公司正在写入 DuckDB，请稍后")
 
-    before = _identity_snapshot(store, company.cik)
-    results = {module: {"status": "skipped", "retryable": False} for module in MODULES}
     try:
+        before = _identity_snapshot(store, company.cik)
+        results = {module: {"status": "skipped", "retryable": False} for module in MODULES}
         for module in selected:
             started = _now()
             backups: list[tuple[Path, bytes | None]] = []

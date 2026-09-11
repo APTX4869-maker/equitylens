@@ -102,7 +102,7 @@ def _summary(db_path: Path) -> dict:
             if table in tables
         }
         source_identity = conn.execute(
-            """SELECT source_document_id, content_sha256
+            """SELECT source_document_id, content_sha256, fetched_at, local_path
                FROM source_document ORDER BY source_document_id"""
         ).fetchall()
         return {

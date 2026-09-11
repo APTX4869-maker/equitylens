@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from equitylens.config import PARSER_VERSION, RAW_DIR, SEC_ARCHIVES_URL
@@ -19,7 +18,7 @@ from equitylens.ingestion.sec.filing_docs import list_filing_docs
 from equitylens.normalization.insider import parse_form4
 from equitylens.normalization.proxy import parse_proxy
 from equitylens.storage.duckdb_store import DuckDBStore
-from equitylens.storage.raw_store import load_snapshot, save_snapshot
+from equitylens.storage.raw_store import load_snapshot_record, save_snapshot
 
 
 @dataclass
@@ -40,7 +39,10 @@ def _slug(name: str) -> str:
 def _fetch_doc(client: SECClient, url: str, directory: Path, doc_name: str,
                company_id: str, form_type: str, accn: str, filed_at: str | None) -> tuple[bytes, SourceDocument]:
     _, content, meta = client.get(url)
-    path, sha = save_snapshot(directory, doc_name, content)
+    path, sha = save_snapshot(
+        directory, doc_name, content,
+        metadata={"fetched_at": meta.get("fetched_at") or ""},
+    )
     doc = SourceDocument(
         provider="SEC", document_type="FILING_DOCUMENT", form_type=form_type,
         accession_number=accn, filed_at=filed_at,
@@ -84,17 +86,17 @@ def sync_management(
                 content, doc = _fetch_doc(own_client, url, directory, "proxy.html",
                                           cik, "DEF 14A", accn, row.get("filingDate"))
             else:
-                cached = load_snapshot(directory, "proxy.html")
-                if cached is None:
+                record = load_snapshot_record(directory, "proxy.html")
+                if record is None:
                     report.warnings.append("no cached proxy; run with --fetch")
                     content, doc = None, None
                 else:
-                    content = cached[0]
+                    content = record.content
                     doc = SourceDocument(provider="SEC", document_type="FILING_DOCUMENT",
                                          form_type="DEF 14A", accession_number=accn,
                                          filed_at=row.get("filingDate"), source_url=url,
-                                         content_sha256=cached[1], local_path=str(directory / "proxy.html"),
-                                         fetched_at=str(datetime.now(timezone.utc).replace(microsecond=0).isoformat()),
+                                         content_sha256=record.sha256, local_path=str(record.path),
+                                         fetched_at=record.fetched_at,
                                          parser_version=PARSER_VERSION, company_id=cik)
             if content is not None and doc is not None:
                 docs_to_persist.append(doc)
@@ -121,15 +123,15 @@ def sync_management(
                 content, doc = _fetch_doc(own_client, url, directory, "form4.xml",
                                           cik, "4", accn, row.get("filingDate"))
             else:
-                cached = load_snapshot(directory, "form4.xml")
-                if cached is None:
+                record = load_snapshot_record(directory, "form4.xml")
+                if record is None:
                     continue
-                content = cached[0]
+                content = record.content
                 doc = SourceDocument(provider="SEC", document_type="FILING_DOCUMENT",
                                      form_type="4", accession_number=accn,
                                      filed_at=row.get("filingDate"), source_url=url,
-                                     content_sha256=cached[1], local_path=str(directory / "form4.xml"),
-                                     fetched_at=str(datetime.now(timezone.utc).replace(microsecond=0).isoformat()),
+                                     content_sha256=record.sha256, local_path=str(record.path),
+                                     fetched_at=record.fetched_at,
                                      parser_version=PARSER_VERSION, company_id=cik)
             docs_to_persist.append(doc)
             parsed = parse_form4(content)

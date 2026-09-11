@@ -22,7 +22,7 @@ from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.storage.duckdb_store import DuckDBStore
-from equitylens.storage.raw_store import load_snapshot, save_snapshots, snapshot_path
+from equitylens.storage.raw_store import load_snapshot, load_snapshot_record, save_snapshots
 
 DOC_SUBMISSIONS = "submissions.json"
 DOC_COMPANYFACTS = "companyfacts.json"
@@ -96,10 +96,17 @@ def sync_company(
                 cf_meta = {**cf_meta, "status": cf_status}
                 fetched_bytes += len(subs_content) + len(cf_content)
                 submissions_data = json.loads(subs_content)
-                published = save_snapshots(directory, {
-                    DOC_SUBMISSIONS: subs_content,
-                    DOC_COMPANYFACTS: cf_content,
-                })
+                published = save_snapshots(
+                    directory,
+                    {
+                        DOC_SUBMISSIONS: subs_content,
+                        DOC_COMPANYFACTS: cf_content,
+                    },
+                    metadata={
+                        DOC_SUBMISSIONS: {"fetched_at": subs_meta["fetched_at"]},
+                        DOC_COMPANYFACTS: {"fetched_at": cf_meta["fetched_at"]},
+                    },
+                )
                 subs_path, subs_sha = published[DOC_SUBMISSIONS]
                 cf_path, cf_sha = published[DOC_COMPANYFACTS]
                 subs_doc = _snapshot_document(
@@ -117,23 +124,25 @@ def sync_company(
             report.fetched = True
         else:
             # load from cache (idempotent second sync without downloads)
-            subs = load_snapshot(directory, DOC_SUBMISSIONS)
-            cf = load_snapshot(directory, DOC_COMPANYFACTS)
+            subs = load_snapshot_record(directory, DOC_SUBMISSIONS)
+            cf = load_snapshot_record(directory, DOC_COMPANYFACTS)
             if subs is None or cf is None:
                 raise FileNotFoundError(
                     f"No cached snapshots for {ticker}; run with --fetch first"
                 )
-            submissions_data = json.loads(subs[0])
-            cf_content = cf[0]
+            submissions_data = json.loads(subs.content)
+            cf_content = cf.content
             docs = [
                 SourceDocument(provider="SEC", document_type="SUBMISSIONS_SNAPSHOT",
                               source_url=SEC_SUBMISSIONS_URL + f"CIK{cik}.json",
-                              content_sha256=subs[1], local_path=str(snapshot_path(directory, DOC_SUBMISSIONS, subs[1])),
-                              company_id=cik, parser_version=PARSER_VERSION),
+                              content_sha256=subs.sha256, local_path=str(subs.path),
+                              fetched_at=subs.fetched_at, company_id=cik,
+                              parser_version=PARSER_VERSION),
                 SourceDocument(provider="SEC", document_type="COMPANYFACTS_SNAPSHOT",
                               source_url=SEC_COMPANYFACTS_URL + f"CIK{cik}.json",
-                              content_sha256=cf[1], local_path=str(snapshot_path(directory, DOC_COMPANYFACTS, cf[1])),
-                              company_id=cik, parser_version=PARSER_VERSION),
+                              content_sha256=cf.sha256, local_path=str(cf.path),
+                              fetched_at=cf.fetched_at, company_id=cik,
+                              parser_version=PARSER_VERSION),
             ]
 
         # persist source documents (idempotent by hash)

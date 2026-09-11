@@ -7,7 +7,30 @@ import json
 
 import pytest
 
-from equitylens.storage.raw_store import load_snapshot, save_snapshot, sha256_bytes
+from equitylens.storage.raw_store import (
+    load_snapshot,
+    load_snapshot_record,
+    save_snapshot,
+    sha256_bytes,
+)
+
+
+def test_snapshot_record_preserves_fetch_time_and_exact_version_path(tmp_path):
+    d = tmp_path / "snap"
+    save_snapshot(
+        d, "primary.html", b"v1", metadata={"fetched_at": "2025-01-01T00:00:00+00:00"}
+    )
+    v2_path, v2_sha = save_snapshot(
+        d, "primary.html", b"v2", metadata={"fetched_at": "2026-02-03T04:05:06+00:00"}
+    )
+
+    record = load_snapshot_record(d, "primary.html")
+
+    assert record is not None
+    assert record.content == b"v2"
+    assert record.sha256 == v2_sha
+    assert record.path == v2_path
+    assert record.fetched_at == "2026-02-03T04:05:06+00:00"
 
 
 def test_save_load_defaults_to_latest(tmp_path):
@@ -133,6 +156,75 @@ def test_sync_offline_reads_latest_snapshot(tmp_path, db):
 
     content, _ = load_snapshot(raw / "sec" / "0000320193", "companyfacts.json")
     assert b"Revenues" in content  # latest (v2), not the v1 fixed-name file
+
+
+def test_company_offline_replay_does_not_refresh_source_fetch_time(tmp_path, db):
+    from equitylens.ingestion.sec.sync import sync_company
+
+    class StubClient:
+        def get(self, url):
+            content = (
+                b'{"filings": {"recent": []}}'
+                if "submissions" in url
+                else b'{"facts": {"us-gaap": {}}}'
+            )
+            return 200, content, {
+                "fetched_at": "2020-01-02T03:04:05+00:00",
+                "content_length": len(content),
+                "status": 200,
+            }
+
+        def close(self):
+            pass
+
+    raw = tmp_path / "raw-fetch-time"
+    sync_company("AAPL", fetch=True, store=db, client=StubClient(), raw_dir=raw)
+    sync_company("AAPL", fetch=False, store=db, raw_dir=raw)
+
+    rows = db.query(
+        """SELECT fetched_at FROM source_document
+           WHERE company_id = '0000320193'
+             AND document_type IN ('SUBMISSIONS_SNAPSHOT', 'COMPANYFACTS_SNAPSHOT')"""
+    )
+    assert len(rows) == 2
+    assert {str(row["fetched_at"]) for row in rows} == {"2020-01-02 03:04:05"}
+
+
+def test_filing_offline_replay_reads_manifest_version_path(tmp_path, db):
+    from equitylens.ingestion.sec.filing_docs import fetch_filing_documents
+
+    cik = "0000320193"
+    raw = tmp_path / "raw-filing-version"
+    company_dir = raw / "sec" / cik
+    filing_dir = company_dir / "filing_docs" / "0000320193-26-000001"
+    submissions = {
+        "filings": {"recent": [{
+            "form": "10-K",
+            "accessionNumber": "0000320193-26-000001",
+            "primaryDocument": "aapl-2026.htm",
+            "reportDate": "2026-09-26",
+            "filingDate": "2026-10-30",
+        }]}
+    }
+    save_snapshot(company_dir, "submissions.json", json.dumps(submissions).encode())
+    save_snapshot(filing_dir, "primary.html", b"old filing")
+    expected_path, expected_sha = save_snapshot(
+        filing_dir,
+        "primary.html",
+        b"restated filing",
+        metadata={"fetched_at": "2026-11-01T00:00:00+00:00"},
+    )
+
+    docs = fetch_filing_documents(
+        "AAPL", forms=("10-K",), limit_per_form=1,
+        fetch=False, store=db, raw_dir=raw,
+    )
+
+    assert len(docs) == 1
+    assert docs[0].content_sha256 == expected_sha
+    assert docs[0].local_path == str(expected_path)
+    assert expected_path.read_bytes() == b"restated filing"
+    assert docs[0].fetched_at == "2026-11-01T00:00:00+00:00"
 
 
 def test_two_snapshot_restatement_replays_latest_into_fresh_database(tmp_path, db):

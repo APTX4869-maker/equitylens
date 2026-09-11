@@ -18,9 +18,19 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 MANIFEST_NAME = "_manifest.json"
+
+
+@dataclass(frozen=True)
+class SnapshotRecord:
+    content: bytes
+    sha256: str
+    path: Path
+    fetched_at: str
 
 
 def sha256_bytes(content: bytes) -> str:
@@ -103,7 +113,11 @@ def _versioned_name(doc_name: str, sha: str) -> str:
     return f"{p.stem}.{sha[:8]}{p.suffix}"
 
 
-def save_snapshots(directory: Path, documents: dict[str, bytes]) -> dict[str, tuple[Path, str]]:
+def save_snapshots(
+    directory: Path,
+    documents: dict[str, bytes],
+    metadata: dict[str, dict] | None = None,
+) -> dict[str, tuple[Path, str]]:
     """Durably publish a related set of snapshots with one manifest update.
 
     All immutable files are written before any latest pointer changes. If a
@@ -127,16 +141,29 @@ def save_snapshots(directory: Path, documents: dict[str, bytes]) -> dict[str, tu
                 path = base
                 _write_immutable(path, content)
             results[doc_name] = (path, sha)
-            next_manifest[doc_name] = {"sha256": sha, "path": path.name}
+            next_manifest[doc_name] = {
+                "sha256": sha,
+                "path": path.name,
+                **dict((metadata or {}).get(doc_name) or {}),
+            }
         # Publish the complete set only after every immutable file is durable.
         manifest = next_manifest
         _write_manifest(directory, manifest)
     return results
 
 
-def save_snapshot(directory: Path, doc_name: str, content: bytes) -> tuple[Path, str]:
+def save_snapshot(
+    directory: Path,
+    doc_name: str,
+    content: bytes,
+    metadata: dict | None = None,
+) -> tuple[Path, str]:
     """Save one immutable snapshot and update its latest pointer."""
-    return save_snapshots(directory, {doc_name: content})[doc_name]
+    return save_snapshots(
+        directory,
+        {doc_name: content},
+        metadata={doc_name: metadata or {}},
+    )[doc_name]
 
 
 def snapshot_path(directory: Path, doc_name: str, sha: str) -> Path:
@@ -160,6 +187,31 @@ def load_snapshot(directory: Path, doc_name: str, sha: str | None = None) -> tup
     if sha is not None:
         return _load_by_sha(directory, doc_name, sha)
     return _load_latest(directory, doc_name)
+
+
+def load_snapshot_record(
+    directory: Path, doc_name: str, sha: str | None = None
+) -> SnapshotRecord | None:
+    """Load verified bytes together with their exact path and capture time.
+
+    New manifests persist the provider fetch time. Legacy snapshots fall back
+    to the immutable file's mtime, which is stable across offline replays and
+    is preserved by migration copies.
+    """
+    loaded = load_snapshot(directory, doc_name, sha=sha)
+    if loaded is None:
+        return None
+    content, computed = loaded
+    path = snapshot_path(directory, doc_name, computed)
+    entry = _read_manifest(directory).get(doc_name) or {}
+    fetched_at = None
+    if entry.get("sha256") == computed and entry.get("path") == path.name:
+        fetched_at = entry.get("fetched_at")
+    if not fetched_at:
+        fetched_at = datetime.fromtimestamp(
+            path.stat().st_mtime, tz=timezone.utc
+        ).replace(microsecond=0).isoformat()
+    return SnapshotRecord(content, computed, path, str(fetched_at))
 
 
 def _load_by_sha(directory: Path, doc_name: str, sha: str) -> tuple[bytes, str] | None:

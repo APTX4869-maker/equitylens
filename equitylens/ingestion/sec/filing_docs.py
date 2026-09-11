@@ -15,7 +15,7 @@ from equitylens.domain.companies import get_company
 from equitylens.domain.filings import SourceDocument
 from equitylens.ingestion.sec.client import SECClient
 from equitylens.storage.duckdb_store import DuckDBStore
-from equitylens.storage.raw_store import load_snapshot, save_snapshot
+from equitylens.storage.raw_store import load_snapshot, load_snapshot_record, save_snapshot
 
 FORMS_SUPPORTED = ("10-K", "10-Q")
 
@@ -80,16 +80,16 @@ def fetch_filing_documents(
 
             if fetch:
                 _, content, meta = own_client.get(url)
-                path, sha = save_snapshot(directory, doc_name, content)
+                path, sha = save_snapshot(
+                    directory, doc_name, content,
+                    metadata={"fetched_at": meta.get("fetched_at") or ""},
+                )
             else:
-                cached = load_snapshot(directory, doc_name)
-                if cached is None:
+                record = load_snapshot_record(directory, doc_name)
+                if record is None:
                     continue
-                content, sha = cached
-                path = directory / doc_name
-                from datetime import datetime, timezone
-                meta = {"fetched_at": datetime.fromtimestamp(
-                    path.stat().st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat()}
+                content, sha, path = record.content, record.sha256, record.path
+                meta = {"fetched_at": record.fetched_at}
 
             doc = SourceDocument(
                 provider="SEC",

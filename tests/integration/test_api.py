@@ -743,6 +743,36 @@ def test_refresh_marks_existing_plan_for_review_without_recalculation(client, co
         )
 
 
+def test_refresh_marks_financial_restatement_for_review(client, company_db, monkeypatch):
+    import equitylens.ingestion.sec.sync as sec_sync
+    from equitylens.domain.filings import SourceDocument
+    from equitylens.ingestion.sec.sync import SyncReport
+
+    def sync_restatement(ticker, **kwargs):
+        doc = SourceDocument(
+            provider="SEC",
+            document_type="COMPANYFACTS_SNAPSHOT",
+            company_id="0000320193",
+            source_url="https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+            content_sha256="f" * 64,
+            local_path="/tmp/restated-companyfacts.json",
+            fetched_at="2099-01-01T00:00:00+00:00",
+            parser_version="test",
+        )
+        kwargs["store"].upsert_source_documents([doc.to_row()])
+        return SyncReport(company=ticker, canonical_count=1)
+
+    monkeypatch.setattr(sec_sync, "sync_company", sync_restatement)
+    refreshed = client.post(
+        "/api/v1/companies/AAPL/refresh", json={"modules": ["financials"]}
+    )
+
+    assert refreshed.status_code == 200
+    body = refreshed.json()
+    assert body["modules"]["financials"]["changed"] is True
+    assert body["review_required"] is True
+
+
 def test_reverse_dcf_endpoint_returns_implied_growth(client):
     r = client.post("/api/v1/companies/AAPL/valuation/reverse-dcf",
                     json={"target_price": 300.0})
