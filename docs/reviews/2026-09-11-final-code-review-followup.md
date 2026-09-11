@@ -39,7 +39,8 @@
 - [x] 税率只有单边事实或税前利润为零时，数值与来源元数据一致采用配置回退。
 - [x] 公司切换期间隔离迟到的刷新响应。
 - [x] Reverse DCF 拒绝非对象 `assumptions` 并返回结构化 400。
-- [ ] 完成最终全量验证和独立复审。
+- [x] 完成最终全量验证。
+- [ ] 完成第二轮独立复审。
 
 ## 审查基线验证
 
@@ -81,4 +82,4 @@
 
 ## 当前结论
 
-原 10 个 Important 审查项均已完成返工并有反例覆盖。独立复审确认的 4 个 Important 已全部补修：Reverse DCF 加载状态、税率回退来源、刷新响应跨公司污染和非对象 `assumptions` 输入契约。Reverse DCF 非法输入聚焦测试 7 passed。下一步执行最终全量验证和第二轮独立复审。
+原 10 个 Important 审查项和独立复审确认的 4 个 Important 均已返工并有反例覆盖。最终全量验证：后端 251 passed，TypeScript 与 ESLint 通过，系统 Chrome Playwright 12 passed，Git 差异检查通过；仅有 1 条既有 Starlette/httpx 弃用警告。等待第二轮独立复审后再进入分支集成选择。
