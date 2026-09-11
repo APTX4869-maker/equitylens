@@ -245,6 +245,7 @@ export function ValuationSection({
       if (!current) return;
       const next = updateDraft(current, e);
       reverseReqSeq.current += 1;
+      setReverseLoading(false);
       draftRef.current = next;
       setDraft(next);
       void preview(next, false);
@@ -751,6 +752,7 @@ export function ValuationSection({
                 value={targetPrice}
                 onChange={(e) => {
                   reverseReqSeq.current += 1;
+                  setReverseLoading(false);
                   targetPriceRef.current = e.target.value;
                   setTargetPrice(e.target.value);
                 }}

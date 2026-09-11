@@ -52,6 +52,22 @@ async function stubShell(page: Page) {
   }}));
 }
 
+async function stubMicrosoftShell(page: Page) {
+  await page.route("**/api/v1/companies/MSFT", (route) => route.fulfill({ json: {
+    ticker: "MSFT", cik: "0000789019", name: "Microsoft Corp.", exchange: "NASDAQ",
+    fiscal_year_end: "06-30", source_freshness: {},
+  }}));
+  await page.route("**/api/v1/companies/MSFT/overview", (route) => route.fulfill({ json: {
+    ticker: "MSFT", latest_period: null, kpis: {}, trend: {}, provenance_available: true,
+  }}));
+  await page.route("**/api/v1/companies/MSFT/market/quote", (route) => route.fulfill({ json: {
+    status: "UNAVAILABLE", configured: true, synced: false, reason: "test",
+  }}));
+  await page.route("**/api/v1/companies/MSFT/freshness", (route) => route.fulfill({ json: {
+    modules: [], stale_modules: [], hint: null,
+  }}));
+}
+
 test("refresh reloads the active module and retries only a failed module", async ({ page }) => {
   await stubShell(page);
   let metricRequests = 0;
@@ -150,4 +166,32 @@ test("module retry cannot clear valuation review before recalculation", async ({
   await expect(page.getByTestId("refresh-review-warning")).toBeHidden();
   await expect(growth).toHaveValue("10");
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
+});
+
+test("late refresh response cannot pollute a newly selected company", async ({ page }) => {
+  await stubShell(page);
+  await stubMicrosoftShell(page);
+  await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.fulfill({ json: {
+      refresh_id: "late-aapl-refresh",
+      status: "partial",
+      review_required: false,
+      modules: {
+        financials: { status: "ok", retryable: false, changed: false },
+        segments: { status: "error", retryable: true, changed: false, reason: "AAPL only" },
+        management: { status: "ok", retryable: false, changed: false },
+        quotes: { status: "ok", retryable: false, changed: false },
+      },
+    }});
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+  await page.getByRole("button", { name: /MSFT Microsoft/ }).click();
+  await expect(page.getByRole("heading", { name: /Microsoft Corp/ })).toBeVisible();
+
+  await page.waitForTimeout(700);
+  await expect(page.getByRole("button", { name: "重试 segments" })).toHaveCount(0);
+  await expect(page.getByText(/刷新完成：/)).toHaveCount(0);
 });

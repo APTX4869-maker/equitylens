@@ -169,7 +169,8 @@ def default_assumption_set(store, company_id: str, ticker: str,
     op_margin = op_income / revenue
     # Zero is a valid value: a real zero tax rate / CapEx / D&A must stay zero,
     # not be silently replaced by an assumption. Only genuine absence falls back.
-    tax_rate = (tax / pretax) if (tax is not None and pretax) else float(defaults["tax_rate_fallback"]["value"])
+    tax_rate_from_facts = tax is not None and pretax is not None and pretax != 0
+    tax_rate = (tax / pretax) if tax_rate_from_facts else float(defaults["tax_rate_fallback"]["value"])
     capex_pct = (capex / revenue) if capex is not None else float(defaults["capex_pct_fallback"]["value"])
     da_pct = (da / revenue) if da is not None else float(defaults["da_pct_fallback"]["value"])
     # NET_DEBT = debt - cash - ST investments (positive = net debt);
@@ -232,7 +233,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
             else f"{first.period}–{last.period}"
         )
     op_ids = fact_ids(op_income_point) + fact_ids(revenue_point)
-    tax_ids = fact_ids(tax_point) + fact_ids(pretax_point)
+    tax_ids = fact_ids(tax_point) + fact_ids(pretax_point) if tax_rate_from_facts else []
     meta: dict = {
         "risk_free": metadata(rf, source_type="config_assumption", source=wacc_cfg["risk_free_rate"]["source"],
                               rule="Use latest Treasury 10Y when available; otherwise documented fallback.",
@@ -275,13 +276,13 @@ def default_assumption_set(store, company_id: str, ticker: str,
                                   reason=defaults["op_margin_end_delta"]["reason"], source_ids=op_ids,
                                   as_of=period, version=defaults["op_margin_end_delta"]["version"]),
         "tax_rate": metadata(tax_rate,
-                             source_type="deterministic_formula" if tax_ids else "config_assumption",
-                             source="INCOME_TAX_EXPENSE / PRETAX_INCOME" if tax_ids else "Tax-rate config fallback",
+                             source_type="deterministic_formula" if tax_rate_from_facts else "config_assumption",
+                             source="INCOME_TAX_EXPENSE / PRETAX_INCOME" if tax_rate_from_facts else "Tax-rate config fallback",
                              rule="Use latest same-FY reported effective tax rate; do not silently adjust one-offs.",
                              reason="Use a reproducible effective tax rate and disclose when normalization data is unavailable.",
-                             source_ids=tax_ids, as_of=period if tax_ids else None,
-                             version="effective-tax-rate.v1" if tax_ids else defaults["tax_rate_fallback"]["version"],
-                             fallback_reason=None if tax_ids else defaults["tax_rate_fallback"]["reason"],
+                             source_ids=tax_ids, as_of=period if tax_rate_from_facts else None,
+                             version="effective-tax-rate.v1" if tax_rate_from_facts else defaults["tax_rate_fallback"]["version"],
+                             fallback_reason=None if tax_rate_from_facts else defaults["tax_rate_fallback"]["reason"],
                              normalization_rule="Latest reported FY effective rate; no one-off normalization without identified evidence."),
         "da_pct": metadata(da_pct, source_type="deterministic_formula" if da is not None else "config_assumption",
                            source="Canonical D&A / revenue" if da is not None else "D&A ratio config fallback",

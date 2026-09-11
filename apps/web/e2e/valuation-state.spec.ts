@@ -201,4 +201,5 @@ test("ignores reverse DCF response after target price changes", async ({ page })
 
   await page.waitForTimeout(700);
   await expect(page.getByText("31.0%", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "计算隐含增长" })).toBeEnabled();
 });

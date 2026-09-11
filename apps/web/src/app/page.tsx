@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { CompanyInfo, Fact, MarketQuote, OverviewResponse } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
@@ -50,12 +50,17 @@ export default function Home() {
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
   const [valuationReviewGeneration, setValuationReviewGeneration] = useState<Record<string, number>>({});
+  const companyRef = useRef(company);
+  const refreshRequestSeq = useRef(0);
 
   useEffect(() => {
     document.body.classList.toggle("pro", mode === "pro");
   }, [mode]);
 
   const selectCompany = useCallback((next: string) => {
+    companyRef.current = next;
+    refreshRequestSeq.current += 1;
+    setRefreshing(false);
     setMetricKey(null);
     setMetricFact(null);
     setSourceEntity(null);
@@ -114,17 +119,20 @@ export default function Home() {
   }, []);
 
   const refresh = useCallback(async (modules?: string[]) => {
+    const requestCompany = company;
+    const requestSeq = ++refreshRequestSeq.current;
     setRefreshing(true);
     setRefreshMsg(null);
     try {
       const d = await api.fetchJson<RefreshResult>(
-        `/api/v1/companies/${company}/refresh`,
+        `/api/v1/companies/${requestCompany}/refresh`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(modules?.length ? { modules } : {}),
         }
       );
+      if (requestSeq !== refreshRequestSeq.current || companyRef.current !== requestCompany) return;
       setRefreshResult((previous) => {
         if (!modules?.length || !previous) return d;
         const mergedModules = { ...previous.modules };
@@ -140,7 +148,7 @@ export default function Home() {
       if (d.review_required) {
         setValuationReviewGeneration((previous) => ({
           ...previous,
-          [company]: (previous[company] ?? 0) + 1,
+          [requestCompany]: (previous[requestCompany] ?? 0) + 1,
         }));
       }
       const parts = Object.entries(d.modules ?? {}).map(([k, m]) => {
@@ -150,9 +158,13 @@ export default function Home() {
       setRefreshMsg(`刷新完成：${parts.join("、")}`);
       setReloadKey((k) => k + 1);  // re-fetch the company's data
     } catch (e) {
-      setRefreshMsg(`刷新失败：${String(e)}`);
+      if (requestSeq === refreshRequestSeq.current && companyRef.current === requestCompany) {
+        setRefreshMsg(`刷新失败：${String(e)}`);
+      }
     } finally {
-      setRefreshing(false);
+      if (requestSeq === refreshRequestSeq.current && companyRef.current === requestCompany) {
+        setRefreshing(false);
+      }
     }
   }, [company]);
 

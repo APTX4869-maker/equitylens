@@ -418,6 +418,32 @@ def test_defaults_use_fallback_instead_of_prior_year_capex(company_db):
         company_db._conn.execute("ROLLBACK")
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "DELETE FROM canonical_fact WHERE company_id = '0000320193' AND canonical_metric = 'PRETAX_INCOME' AND fiscal_year = 2025",
+        "DELETE FROM canonical_fact WHERE company_id = '0000320193' AND canonical_metric = 'INCOME_TAX_EXPENSE' AND fiscal_year = 2025",
+        "UPDATE canonical_fact SET value = 0 WHERE company_id = '0000320193' AND canonical_metric = 'PRETAX_INCOME' AND fiscal_year = 2025",
+    ],
+)
+def test_tax_rate_fallback_provenance_requires_both_valid_inputs(company_db, mutation):
+    from equitylens.valuation.defaults import default_assumption_set
+
+    company_db._conn.execute("BEGIN")
+    try:
+        company_db._conn.execute(mutation)
+        inputs, meta = default_assumption_set(company_db, "0000320193", "AAPL")
+        tax_meta = meta["tax_rate"]
+        assert inputs.tax_rate == pytest.approx(0.17)
+        assert tax_meta["source_type"] == "config_assumption"
+        assert tax_meta["source"] == "Tax-rate config fallback"
+        assert tax_meta["source_ids"] == []
+        assert tax_meta["as_of"] is None
+        assert tax_meta["fallback_reason"]
+    finally:
+        company_db._conn.execute("ROLLBACK")
+
+
 def test_per_issuer_default_growth_paths_differ(company_db):
     """P01: AAPL and MSFT no longer share one unexplained default growth path."""
     from equitylens.valuation.defaults import default_assumption_set

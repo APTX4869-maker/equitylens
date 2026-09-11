@@ -357,7 +357,11 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
 def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
     rf = risk_free_rate()
     base, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
-    a = payload.get("assumptions") or {}
+    if "assumptions" in payload and not isinstance(payload["assumptions"], dict):
+        raise ValuationError(
+            "INVALID_INPUT", "assumptions must be an object", "assumptions"
+        )
+    a = payload.get("assumptions", {})
 
     def number(name: str, default: float) -> float:
         try:

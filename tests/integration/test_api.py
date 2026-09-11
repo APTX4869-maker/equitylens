@@ -813,6 +813,9 @@ def test_reverse_dcf_endpoint_returns_implied_growth(client):
         ({"target_price": 0}, "target_price"),
         ({"target_price": "NaN"}, "target_price"),
         ({"target_price": 300, "assumptions": {"wacc": -0.5, "terminal_growth": -0.51}}, "wacc"),
+        ({"target_price": 300, "assumptions": "bad"}, "assumptions"),
+        ({"target_price": 300, "assumptions": []}, "assumptions"),
+        ({"target_price": 300, "assumptions": None}, "assumptions"),
     ],
 )
 def test_reverse_dcf_rejects_invalid_input_with_structured_400(client, payload, field):
