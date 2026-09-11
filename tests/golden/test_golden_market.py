@@ -8,6 +8,7 @@ formulas over stored facts; missing data is an explicit state.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,21 @@ from equitylens.valuation.service import default_valuation
 AAPL_CIK = get_company("AAPL").cik
 MSFT_CIK = get_company("MSFT").cik
 _FX = Path(__file__).parent.parent / "fixtures" / "market"
+
+
+class _FixtureClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        captured_at = cls(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        return captured_at if tz is None else captured_at.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _fix_quote_age_clock(monkeypatch):
+    """Captured quotes stay fresh for golden parsing/derivation assertions."""
+    import equitylens.market.age as market_age
+
+    monkeypatch.setattr(market_age, "datetime", _FixtureClock)
 
 
 def _seed_quote(db, company_id: str, quote_id: str) -> None:

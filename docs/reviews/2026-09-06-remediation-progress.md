@@ -78,3 +78,5 @@
 2026-09-11 独立复审补修全量验证已完成：后端 251 passed，TypeScript 与 ESLint 通过，系统 Chrome Playwright 12 passed，Git 差异检查通过；仅有 1 条既有 Starlette/httpx 弃用警告。下一步第二轮独立复审 `edb0e1c`。
 
 2026-09-11 第二轮独立复审已完成：4 个 Important 均关闭，未发现新的 Critical 或 Important；独立聚焦验证后端 10 passed、系统 Chrome 竞态 6 passed，TypeScript、ESLint 和 `git diff --check` 通过，工作树干净。当前进入分支集成选择。
+
+2026-09-11 本地集成进行中：`codex/remediation-rework` 已无冲突快进合并到 `main`。合并后验收发现行情黄金测试依赖真实当前日期，MSFT 的固定 2026-09-03 快照跨过 7 天边界后由 `OK` 变为 `STALE`；黄金测试现固定在快照捕获次日，生产新鲜度逻辑不变，行情聚焦测试 9 passed。下一步重新执行合并后全量验收。
