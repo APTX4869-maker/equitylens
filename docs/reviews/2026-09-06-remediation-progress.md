@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**合并前独立代码审查发现的 10 个 Important 组合路径缺陷和独立复审确认的 4 个 Important 已全部返工；后端 251 passed、TypeScript/ESLint 通过、Playwright 12 passed。第二轮独立复审未发现新的 Critical 或 Important，可以进入分支集成选择。**
+**修复已无冲突快进合并到本地 `main`。合并后后端 251 passed、TypeScript/ESLint 通过、Playwright 12 passed；第二轮独立复审未发现新的 Critical 或 Important。本机仓库尚未配置 Git 远端，因此推送和 PR 等待远端配置。**
 
 - Batch 1（正确数字与输入身份）：当前 TTM 契约、市场倍数回退、风险/研究失败覆盖、DCF 边界、估值输入指纹与结构化错误、前端完整草稿身份。
 - Batch 2（可复现/来源/新鲜度）：D08 快照 SHA 严格匹配、D10 新鲜度语义、V05 完整估值 run 持久化、D09 派生结果来源身份。
@@ -80,3 +80,5 @@
 2026-09-11 第二轮独立复审已完成：4 个 Important 均关闭，未发现新的 Critical 或 Important；独立聚焦验证后端 10 passed、系统 Chrome 竞态 6 passed，TypeScript、ESLint 和 `git diff --check` 通过，工作树干净。当前进入分支集成选择。
 
 2026-09-11 本地集成进行中：`codex/remediation-rework` 已无冲突快进合并到 `main`。合并后验收发现行情黄金测试依赖真实当前日期，MSFT 的固定 2026-09-03 快照跨过 7 天边界后由 `OK` 变为 `STALE`；黄金测试现固定在快照捕获次日，生产新鲜度逻辑不变，行情聚焦测试 9 passed。下一步重新执行合并后全量验收。
+
+2026-09-11 本地集成已完成：合并后的 `main` 后端 251 passed，TypeScript 通过，ESLint 串行复跑通过，系统 Chrome Playwright 12 passed；仅有 1 条既有 Starlette/httpx 弃用警告。本机没有配置 Git 远端，暂不能推送或创建 PR；保留 `codex/remediation-rework` 作为后续 PR 源分支。
