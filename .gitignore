@@ -21,6 +21,8 @@ data/parquet/
 data/raw/sec/*/companyfacts.json
 data/raw/sec/*/submissions.json
 data/raw/sec/_registry/company_tickers.json
+data/raw/**/_manifest.json
+data/raw/**/.manifest.lock
 
 # Keep raw snapshots small in git; fixtures live under tests/fixtures
 *.log

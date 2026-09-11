@@ -29,9 +29,9 @@
 
 ### 第四组：数据与验收
 
-- [ ] 恢复真实库中被离线重放覆盖的历史 `fetched_at`，核对来源路径。
-- [ ] 更新迁移演练摘要和进度文档。
-- [ ] 后端、TypeScript、ESLint、Playwright 全量通过后重新审查合并条件。
+- [x] 恢复真实库中被离线重放覆盖的历史 `fetched_at`，核对来源路径。
+- [x] 更新迁移演练摘要和进度文档。
+- [x] 后端、TypeScript、ESLint、Playwright 全量通过后重新审查合并条件。
 
 ## 审查基线验证
 
@@ -61,3 +61,16 @@
 - 父页面为每家公司维护估值复核代数；只有财务或行情身份真正变化才递增。局部重试只合并被重试模块，不能用 `review_required=false` 覆盖仍待重新计算的状态。
 - Reverse DCF 使用独立请求序号，并绑定 ticker 组件实例、完整草稿指纹、目标价格和复核代数；编辑期间返回的旧响应被忽略。
 - TypeScript 与 ESLint 通过；刷新重试和估值竞态组合 Playwright 5 passed。
+
+## 第四组交付记录
+
+- 对比切换前回滚库后确认 22/42 条来源记录曾被旧离线逻辑改写抓取时间；按相同 `source_document_id + content_sha256` 恢复后，时间差异为 0。
+- 42 个原始文件逐一通过 SHA-256 与数据库校验，为 40 个旧布局目录创建带原始抓取时间的 manifest；数据库、确切路径、内容 SHA 和 manifest 时间 42/42 一致。
+- 修复前备份：`/Users/vincent/.local/share/equitylens-migration-rehearsal/20260911-fetched-at-repair/source-before-repair.duckdb`，SHA-256 `659565323afad87e52f5874f962887db5a7c9bf8738d7b540fffd1d1b1878d1d`。
+- 修复后真实库 SHA-256：`ebfbaf7374235d71b2a016b70f5bf9c83591e2408e3b868f3cd6b156b63bdfe5`。
+- 严格副本演练：`/Users/vincent/.local/share/equitylens-migration-rehearsal/20260911T010942Z/report.json`；业务表、来源时间/路径、旧估值运行、DB 与 raw 备份 5 项全部通过，两轮来源摘要均为 `7bf861ac936a46826f8aeb27464b31af695edb2addc75ec76d30010aba0b2d4e`。
+- 最终验证：后端 245 passed；TypeScript、ESLint 通过；系统 Chrome Playwright 11 passed。
+
+## 当前结论
+
+10 个 Important 审查项均已完成返工并有反例覆盖。等待对新增提交进行独立复审后再进入分支集成选择。

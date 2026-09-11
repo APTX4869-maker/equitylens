@@ -108,7 +108,7 @@ def _summary(db_path: Path) -> dict:
         return {
             "material_tables": material,
             "source_document_identity": hashlib.sha256(
-                json.dumps(source_identity).encode()
+                json.dumps(source_identity, default=str, ensure_ascii=False).encode()
             ).hexdigest(),
             "source_document_rows": len(source_identity),
             "ingestion_run_rows": conn.execute(
