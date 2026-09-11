@@ -384,7 +384,7 @@ def test_restart_does_not_duplicate_completed_step(runner_case):
 
 接口：CompanyDiscovery.discover、IssuerProfileService.import_profile（先提供验证部分）；采集输出固定 source manifest。
 
-- [ ] 写身份改变反例：
+- [x] 写身份改变反例：
 
 ```python
 def test_changed_identity_cannot_create_task(discovery_case):
@@ -395,11 +395,11 @@ def test_changed_identity_cannot_create_task(discovery_case):
     assert response.json()['error']['code'] == 'IDENTITY_CHANGED'
 ```
 
-- [ ] 运行 `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_company_discovery.py -q` 确认失败。
-- [ ] 实现身份缓存/过期核对、资格证据、SEC 历史申报分页采集；下载范围覆盖所需财年和季度，不只依赖最近 submissions 列表。
-- [ ] 实现严格配置 schema、展开通用映射、原始报表定位、候选未知字段待适配；不把自动候选标为复核通过。
-- [ ] 补充 ETF 拒绝、未知资格停留、多股类不重复抓财务、坏 YAML/可执行字段拒绝测试；同一测试命令通过。
-- [ ] 更新进度并提交 `feat: discover issuers and build evidence-backed profiles`。
+- [x] 运行 `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_company_discovery.py -q` 确认失败。
+- [x] 实现身份缓存/过期核对、资格证据、SEC 历史申报分页采集；下载范围覆盖所需财年和季度，不只依赖最近 submissions 列表。
+- [x] 实现严格配置 schema、展开通用映射、原始报表定位、候选未知字段待适配；不把自动候选标为复核通过。
+- [x] 补充 ETF 拒绝、未知资格停留、多股类不重复抓财务、坏 YAML/可执行字段拒绝测试；同一测试命令通过。
+- [x] 更新进度并提交 `feat: discover issuers and build evidence-backed profiles`。
 
 ### T05：质量规则和可解释报告
 

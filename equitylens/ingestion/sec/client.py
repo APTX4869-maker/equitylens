@@ -64,14 +64,19 @@ class SECClient:
             except httpx.HTTPError as exc:  # network errors: retry with backoff
                 last_error = exc
                 if attempt < self.max_retries - 1:
-                    time.sleep(2**attempt)
+                    time.sleep(2 ** (attempt + 1))
                     continue
                 raise RuntimeError(f"SEC request failed after retries: {exc}") from exc
 
             if response.status_code in (429, 500, 502, 503, 504):
                 last_error = RuntimeError(f"HTTP {response.status_code} from {url}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(2**attempt)
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after) if retry_after is not None else 0.0
+                    except ValueError:
+                        delay = 0.0
+                    time.sleep(max(2 ** (attempt + 1), delay))
                     continue
             elif response.status_code >= 400:
                 response.raise_for_status()

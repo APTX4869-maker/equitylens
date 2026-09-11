@@ -178,6 +178,17 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
 CREATE INDEX IF NOT EXISTS onboarding_company_idx ON company_onboarding(company_id, state);
 CREATE INDEX IF NOT EXISTS onboarding_runnable_idx ON company_onboarding(state, next_attempt_at);
 
+CREATE TABLE IF NOT EXISTS company_discovery (
+  discovery_id VARCHAR PRIMARY KEY,
+  ticker VARCHAR NOT NULL,
+  identity_hash VARCHAR NOT NULL,
+  payload_json JSON NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS discovery_ticker_idx ON company_discovery(ticker, expires_at);
+
 CREATE TABLE IF NOT EXISTS source_document (
   source_document_id VARCHAR PRIMARY KEY,
   company_id VARCHAR,

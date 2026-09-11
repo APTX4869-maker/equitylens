@@ -464,6 +464,24 @@ def _persistent_onboarding(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(statement)
 
 
+def _discovery_cache(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_discovery (
+          discovery_id VARCHAR PRIMARY KEY,
+          ticker VARCHAR NOT NULL,
+          identity_hash VARCHAR NOT NULL,
+          payload_json JSON NOT NULL,
+          expires_at TIMESTAMP NOT NULL,
+          created_at TIMESTAMP NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS discovery_ticker_idx ON company_discovery(ticker, expires_at)"
+    )
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -492,6 +510,12 @@ MIGRATIONS = (
         onboarding_step_attempt:v1;api_idempotency:v1
         """.strip(),
         apply=lambda conn: _persistent_onboarding(conn),
+    ),
+    Migration(
+        version=4,
+        name="company_discovery_cache",
+        signature="company_discovery:v1:15-minute-identity-cache",
+        apply=lambda conn: _discovery_cache(conn),
     ),
 )
 

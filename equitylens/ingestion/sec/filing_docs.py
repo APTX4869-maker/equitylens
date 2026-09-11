@@ -22,10 +22,20 @@ FORMS_SUPPORTED = ("10-K", "10-Q")
 
 def _recent_filings(submissions: dict) -> list[dict]:
     recent = submissions.get("filings", {}).get("recent") or []
-    if isinstance(recent, dict):
-        keys = list(recent.keys())
-        return [dict(zip(keys, vals)) for vals in zip(*recent.values())]
-    return recent
+    return submission_rows(recent)
+
+
+def submission_rows(value: dict | list) -> list[dict]:
+    """Normalize SEC's columnar recent/history filing payloads."""
+    if isinstance(value, list):
+        return [dict(item) for item in value]
+    if isinstance(value, dict):
+        keys = list(value.keys())
+        columns = [value[key] for key in keys]
+        if not columns:
+            return []
+        return [dict(zip(keys, row)) for row in zip(*columns)]
+    return []
 
 
 def list_filing_docs(ticker: str, forms: tuple[str, ...] = FORMS_SUPPORTED,
