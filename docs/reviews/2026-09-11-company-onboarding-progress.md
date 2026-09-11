@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T04 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T05 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -10,7 +10,7 @@
 | T02 发布版本隔离 | 已完成 | 5 passed；真实库副本双次迁移通过 | 已自检 | `docs/reviews/2026-09-11-company-onboarding-publication-rehearsal.md` |
 | T03 持久化任务与写入 | 已完成 | 7 passed；T01—T03 回归 20 passed | 已自检 | writer 跨进程、恢复、取消、重试和真实刷新/估值互斥测试 |
 | T04 发现采集与候选 | 已完成 | 12 passed；T01—T04 回归 29 passed | 已自检 | SEC 身份快照、历史分页、严格 profile 与候选反例 |
-| T05 质量门槛 | 未开始 | 未运行 | 未开始 | — |
+| T05 质量门槛 | 已完成 | 9 passed；T01—T05 回归 38 passed | 已自检 | 舍入区间、期间口径、规则调度及持久化报告反例 |
 | T06 维护者复核闭环 | 未开始 | 未运行 | 未开始 | — |
 | T07 API 与版本读取 | 未开始 | 未运行 | 未开始 | — |
 | T08 估值门禁 | 未开始 | 未运行 | 未开始 | — |
@@ -92,3 +92,19 @@
 证据文件/报告：`tests/unit/test_issuer_profile.py`、`tests/integration/test_company_discovery.py`、`config/issuers/schema-v1.json`。
 
 遗留问题与下一步：默认 SEC 网络发现要求配置真实 `EQUITYLENS_USER_AGENT` 联系方式，拒绝示例占位地址；自动候选始终为 `NEEDS_ADAPTATION`。T05 实现质量报告和强制规则。
+
+## T05 质量规则和可解释报告
+
+阶段与提交号：T05；提交在本阶段记录更新后创建。
+
+实际改动：新增检查状态/严重度模型、基于 XBRL decimals 的舍入区间、资产负债勾稽、同定义现金桥、同财年/同 restatement set 季度差分、显式 EPS 方法、分部抵销、期间覆盖与 N/A 证据规则；QualityEngine 调度第 7 节规则族并持久化固定指纹报告及逐项证据。
+
+测试命令及结果：
+
+- RED：`uv run pytest tests/unit/test_onboarding_quality.py -q`，因 quality 包不存在而 collection 失败。
+- GREEN：同一命令，`9 passed in 0.19s`。
+- T01—T05 回归组合：`38 passed in 1.87s`。
+
+证据文件/报告：`tests/unit/test_onboarding_quality.py`、`config/quality/us_gaap_operating_v1.yaml`。
+
+遗留问题与下一步：缺必需输入、未知精度、未证明 EPS 方法和不支持模板均保持 BLOCKER，不做运行时降级；真实发行人可能因此在 T10 保留阻塞。T06 实现审查包、复核指纹与发布闭环。

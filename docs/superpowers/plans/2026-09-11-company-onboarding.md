@@ -407,7 +407,7 @@ def test_changed_identity_cannot_create_task(discovery_case):
 
 接口：QualityEngine.validate 返回报告及固定指纹；规则必须有 check_id 和 scope_key。
 
-- [ ] 写受限现金及累计季度反例：
+- [x] 写受限现金及累计季度反例：
 
 ```python
 def test_cash_bridge_uses_same_cash_definition(quality_case):
@@ -418,10 +418,10 @@ def test_cash_bridge_uses_same_cash_definition(quality_case):
         investing=-5, financing=-10, fx=2, closing=117).result == 'FAIL'
 ```
 
-- [ ] 运行 `uv run pytest tests/unit/test_onboarding_quality.py -q` 确认失败。
-- [ ] 实现第 7 节规则族、舍入区间和来源校验；复用现有期间解析但增加重述兼容条件。
-- [ ] 加入 EPS 非恒等式、分部抵销、无季度披露、来源损坏、NOT_APPLICABLE 无证据的失败样例；未支持行业明确阻塞。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: enforce issuer quality gates`。
+- [x] 运行 `uv run pytest tests/unit/test_onboarding_quality.py -q` 确认失败。
+- [x] 实现第 7 节规则族、舍入区间和来源校验；复用现有期间解析但增加重述兼容条件。
+- [x] 加入 EPS 非恒等式、分部抵销、无季度披露、来源损坏、NOT_APPLICABLE 无证据的失败样例；未支持行业明确阻塞。
+- [x] 同一测试命令通过，更新进度并提交 `feat: enforce issuer quality gates`。
 
 ### T06：复核、维护者命令和发布闭环
 

@@ -64,6 +64,7 @@ class IssuerProfile(StrictModel):
     metrics: dict[str, MetricConfig] = Field(min_length=1)
     segments: SegmentConfig
     cash_debt: CashDebtConfig
+    eps_method: Literal["reported_diluted", "two_class", "preferred_adjusted"] | None = None
     securities: list[SecurityConfig] = Field(min_length=1)
     applicability: dict[str, Literal["required", "not_disclosed", "not_applicable"]]
     evidence: list[EvidenceConfig] = Field(min_length=1)
