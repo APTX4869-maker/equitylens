@@ -17,7 +17,7 @@
 
 ## 当前状态
 
-**合并前独立代码审查发现的 10 个 Important 组合路径缺陷和独立复审确认的 4 个 Important 已全部返工；后端 251 passed、TypeScript/ESLint 通过、Playwright 12 passed。等待第二轮独立复审。**
+**合并前独立代码审查发现的 10 个 Important 组合路径缺陷和独立复审确认的 4 个 Important 已全部返工；后端 251 passed、TypeScript/ESLint 通过、Playwright 12 passed。第二轮独立复审未发现新的 Critical 或 Important，可以进入分支集成选择。**
 
 - Batch 1（正确数字与输入身份）：当前 TTM 契约、市场倍数回退、风险/研究失败覆盖、DCF 边界、估值输入指纹与结构化错误、前端完整草稿身份。
 - Batch 2（可复现/来源/新鲜度）：D08 快照 SHA 严格匹配、D10 新鲜度语义、V05 完整估值 run 持久化、D09 派生结果来源身份。
@@ -76,3 +76,5 @@
 2026-09-11 独立复审补修 4 已完成：Reverse DCF 显式提供的 `assumptions` 必须为 JSON 对象，字符串、数组和 `null` 统一返回 `field=assumptions` 的结构化 400；非法输入聚焦测试 7 passed。下一步最终全量验证和第二轮独立复审。
 
 2026-09-11 独立复审补修全量验证已完成：后端 251 passed，TypeScript 与 ESLint 通过，系统 Chrome Playwright 12 passed，Git 差异检查通过；仅有 1 条既有 Starlette/httpx 弃用警告。下一步第二轮独立复审 `edb0e1c`。
+
+2026-09-11 第二轮独立复审已完成：4 个 Important 均关闭，未发现新的 Critical 或 Important；独立聚焦验证后端 10 passed、系统 Chrome 竞态 6 passed，TypeScript、ESLint 和 `git diff --check` 通过，工作树干净。当前进入分支集成选择。
