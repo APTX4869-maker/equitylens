@@ -20,6 +20,7 @@ class Company:
     name: str
     exchange: str | None = None
     fiscal_year_end: str | None = None  # "MM-DD"
+    security_id: str | None = None
 
 
 SUPPORTED: dict[str, Company] = {

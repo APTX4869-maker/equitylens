@@ -320,8 +320,8 @@ recover_interrupted() -> int
 
 接口：产生 CompanyRegistry.resolve 和 SecurityIdentity；证券不是 company 的别名。
 
-- [ ] 从真实库只读盘点 CIK、ticker、行情、来源与估值关联，保存迁移前报告。
-- [ ] 写身份隔离和迁移幂等反例：
+- [x] 从真实库只读盘点 CIK、ticker、行情、来源与估值关联，保存迁移前报告。
+- [x] 写身份隔离和迁移幂等反例：
 
 ```python
 def test_share_classes_keep_separate_identity(registry_with_two_classes):
@@ -331,10 +331,10 @@ def test_share_classes_keep_separate_identity(registry_with_two_classes):
     assert a.security_id != b.security_id
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_company_registry.py tests/integration/test_onboarding_migration.py -q`，确认失败来自尚未实现的契约。
-- [ ] 实现第 4 节身份表、migration checksum、有效期重叠校验和 AAPL/MSFT 种子；对重名 ticker 必须抛 AMBIGUOUS_SECURITY，不取第一行。
-- [ ] 在备份副本执行两次迁移，验证旧记录摘要完全一致及二次无变化；同一测试命令通过。
-- [ ] 更新进度、提交 `feat: add issuer and security registry`。真实库此时不切换新行为。
+- [x] 运行 `uv run pytest tests/integration/test_company_registry.py tests/integration/test_onboarding_migration.py -q`，确认失败来自尚未实现的契约。
+- [x] 实现第 4 节身份表、migration checksum、有效期重叠校验和 AAPL/MSFT 种子；对重名 ticker 必须抛 AMBIGUOUS_SECURITY，不取第一行。
+- [x] 在备份副本执行两次迁移，验证旧记录摘要完全一致及二次无变化；同一测试命令通过。
+- [x] 更新进度、提交 `feat: add issuer and security registry`。真实库此时不切换新行为。
 
 ### T02：固定数据版本和发布隔离
 

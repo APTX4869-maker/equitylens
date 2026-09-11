@@ -7,9 +7,37 @@ CREATE TABLE IF NOT EXISTS company (
   legal_name VARCHAR,
   fiscal_year_end VARCHAR,
   exchange VARCHAR,
+  reporting_template VARCHAR,
+  active_publication_id VARCHAR,
+  quality_status VARCHAR,
   created_at TIMESTAMP,
   updated_at TIMESTAMP
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS company_cik_unique ON company(cik);
+
+CREATE TABLE IF NOT EXISTS security (
+  security_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL REFERENCES company(company_id),
+  class_label VARCHAR,
+  exchange VARCHAR NOT NULL,
+  currency VARCHAR NOT NULL,
+  instrument_type VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  identity_evidence_json JSON NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS security_ticker_alias (
+  alias_id VARCHAR PRIMARY KEY,
+  security_id VARCHAR NOT NULL REFERENCES security(security_id),
+  ticker VARCHAR NOT NULL,
+  exchange VARCHAR NOT NULL,
+  valid_from DATE NOT NULL,
+  valid_to DATE
+);
+
+CREATE INDEX IF NOT EXISTS security_company_idx ON security(company_id);
+CREATE INDEX IF NOT EXISTS security_alias_lookup_idx ON security_ticker_alias(ticker, exchange);
 
 CREATE TABLE IF NOT EXISTS source_document (
   source_document_id VARCHAR PRIMARY KEY,

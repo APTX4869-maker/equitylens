@@ -206,6 +206,9 @@ class DuckDBStore:
             self._conn.execute(statement)
         for statement in _MIGRATIONS:
             self._conn.execute(statement)
+        from equitylens.storage.migrations import apply_migrations
+
+        apply_migrations(self._conn)
 
     @staticmethod
     def _split_statements(sql: str) -> list[str]:
