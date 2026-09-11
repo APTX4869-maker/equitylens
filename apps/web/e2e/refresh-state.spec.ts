@@ -100,7 +100,7 @@ test("refresh reloads the active module and retries only a failed module", async
   await expect(page.getByText(/segments:成功/)).toBeVisible();
 });
 
-test("refresh preserves a valuation draft and requires recalculation when inputs changed", async ({ page }) => {
+test("module retry cannot clear valuation review before recalculation", async ({ page }) => {
   await stubShell(page);
   await page.route("**/api/v1/companies/AAPL/valuation/default", (route) =>
     route.fulfill({ json: valuationResponse() }));
@@ -110,15 +110,26 @@ test("refresh preserves a valuation draft and requires recalculation when inputs
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
     return route.fulfill({ json: valuationResponse(body.assumptions.revenue_growth) });
   });
-  await page.route("**/api/v1/companies/AAPL/refresh", (route) => route.fulfill({ json: {
-    refresh_id: "refresh-valuation", status: "ok", review_required: true,
-    modules: {
-      financials: { status: "ok", retryable: false, changed: true },
-      segments: { status: "ok", retryable: false, changed: false },
-      management: { status: "ok", retryable: false, changed: false },
-      quotes: { status: "ok", retryable: false, changed: true },
-    },
-  } }));
+  await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
+    const body = route.request().postDataJSON() as { modules?: string[] };
+    const retry = body.modules?.[0] === "segments";
+    return route.fulfill({ json: {
+      refresh_id: retry ? "refresh-retry" : "refresh-valuation",
+      status: retry ? "ok" : "partial",
+      review_required: !retry,
+      modules: retry ? {
+        financials: { status: "skipped", retryable: false, changed: false },
+        segments: { status: "ok", retryable: false, changed: false },
+        management: { status: "skipped", retryable: false, changed: false },
+        quotes: { status: "skipped", retryable: false, changed: false },
+      } : {
+        financials: { status: "ok", retryable: false, changed: true },
+        segments: { status: "error", retryable: true, changed: false, reason: "retry me" },
+        management: { status: "ok", retryable: false, changed: false },
+        quotes: { status: "ok", retryable: false, changed: true },
+      },
+    } });
+  });
 
   await page.goto("/");
   await page.getByRole("button", { name: "估值" }).click();
@@ -129,6 +140,10 @@ test("refresh preserves a valuation draft and requires recalculation when inputs
   await page.getByRole("button", { name: "↻ 刷新数据" }).click();
   await expect(page.getByTestId("refresh-review-warning")).toBeVisible({ timeout: 10_000 });
   await expect(growth).toHaveValue("10");
+  await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "重试 segments" }).click();
+  await expect(page.getByTestId("refresh-review-warning")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
 
   await page.getByRole("button", { name: "按当前草稿重新计算" }).click();

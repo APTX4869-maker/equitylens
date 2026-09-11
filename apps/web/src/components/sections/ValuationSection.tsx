@@ -142,7 +142,13 @@ export function ValuationSection({
   const [appliedFingerprint, setAppliedFingerprint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [targetPrice, setTargetPrice] = useState("");
-  const [reverse, setReverse] = useState<{ implied: number | null; hist: number | null; note?: string; stale?: boolean } | null>(null);
+  const [reverse, setReverse] = useState<{
+    implied: number | null;
+    hist: number | null;
+    note?: string;
+    requestIdentity: string;
+  } | null>(null);
+  const [reverseLoading, setReverseLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [marginOfSafety, setMarginOfSafety] = useState("");
@@ -157,7 +163,9 @@ export function ValuationSection({
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
   const reqSeq = useRef(0);
+  const reverseReqSeq = useRef(0);
   const draftRef = useRef<DcfInputs | null>(null);
+  const targetPriceRef = useRef("");
   const refreshGenerationRef = useRef(refreshGeneration);
 
   useEffect(() => {
@@ -173,7 +181,11 @@ export function ValuationSection({
   const prefillReverseTarget = useCallback((d: RunResponse) => {
     const q = d.market?.status === "OK" ? d.market.quote : null;
     if (q && q.price > 0) {
-      setTargetPrice((prev) => (prev === "" ? String(q.price) : prev));
+      setTargetPrice((prev) => {
+        const next = prev === "" ? String(q.price) : prev;
+        targetPriceRef.current = next;
+        return next;
+      });
     }
   }, []);
 
@@ -232,9 +244,9 @@ export function ValuationSection({
       const current = draftRef.current;
       if (!current) return;
       const next = updateDraft(current, e);
+      reverseReqSeq.current += 1;
       draftRef.current = next;
       setDraft(next);
-      setReverse((r) => (r ? { ...r, stale: true } : r));
       void preview(next, false);
     },
     [preview]
@@ -369,11 +381,18 @@ export function ValuationSection({
   }, [ticker, compareIds]);
 
   const runReverse = useCallback(async () => {
-    const price = parseFloat(targetPrice);
+    const price = parseFloat(targetPriceRef.current);
     if (!price || price <= 0) return;
     const current = draftRef.current;
     if (!current) return;
-    setLoading(true);
+    const seq = ++reverseReqSeq.current;
+    const requestIdentity = [
+      ticker,
+      draftFingerprint(current),
+      String(price),
+      String(refreshGenerationRef.current),
+    ].join("|");
+    setReverseLoading(true);
     try {
       const d = await api.fetchJson<{ implied_revenue_cagr: number | null; historical_revenue_cagr: number | null; no_root_reason?: string | null }>(
         `/api/v1/companies/${ticker}/valuation/reverse-dcf`,
@@ -383,13 +402,29 @@ export function ValuationSection({
           body: JSON.stringify({ target_price: price, assumptions: buildPreviewRequest(current).assumptions }),
         }
       );
-      setReverse({ implied: d.implied_revenue_cagr, hist: d.historical_revenue_cagr, note: d.no_root_reason ?? undefined });
+      const latestDraft = draftRef.current;
+      const latestPrice = parseFloat(targetPriceRef.current);
+      const latestIdentity = latestDraft ? [
+        ticker,
+        draftFingerprint(latestDraft),
+        String(latestPrice),
+        String(refreshGenerationRef.current),
+      ].join("|") : "";
+      if (seq !== reverseReqSeq.current || latestIdentity !== requestIdentity) return;
+      setReverse({
+        implied: d.implied_revenue_cagr,
+        hist: d.historical_revenue_cagr,
+        note: d.no_root_reason ?? undefined,
+        requestIdentity,
+      });
     } catch (e) {
-      setError(String(e));
+      if (seq === reverseReqSeq.current) {
+        setReverse({ implied: null, hist: null, note: String(e), requestIdentity });
+      }
     } finally {
-      setLoading(false);
+      if (seq === reverseReqSeq.current) setReverseLoading(false);
     }
-  }, [ticker, targetPrice]);
+  }, [ticker]);
 
   const fair = base?.result.fair_value_per_share;
   const bear = base?.scenarios.bear.result?.fair_value_per_share;
@@ -409,6 +444,13 @@ export function ValuationSection({
     ? draftFingerprint(draft) !== draftFingerprint(appliedInputs)
     : true;
   const refreshStale = refreshReviewRequired && refreshGeneration > lastCalculatedRefresh;
+  const currentReverseIdentity = draft ? [
+    ticker,
+    draftFingerprint(draft),
+    String(parseFloat(targetPrice)),
+    String(refreshGeneration),
+  ].join("|") : "";
+  const reverseStale = reverse != null && reverse.requestIdentity !== currentReverseIdentity;
   const canSave = !refreshStale && !isDirty && !error && !loading && appliedFingerprint != null;
 
   const forecastChart = useMemo(() => {
@@ -707,14 +749,20 @@ export function ValuationSection({
                 type="number" step="0.01" min="1"
                 placeholder="输入参考价格 $"
                 value={targetPrice}
-                onChange={(e) => { setTargetPrice(e.target.value); setReverse((r) => (r ? { ...r, stale: true } : r)); }}
+                onChange={(e) => {
+                  reverseReqSeq.current += 1;
+                  targetPriceRef.current = e.target.value;
+                  setTargetPrice(e.target.value);
+                }}
                 style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", width: 140 }}
               />
-              <button className="tab-btn" onClick={runReverse} disabled={loading}>计算隐含增长</button>
+              <button className="tab-btn" onClick={runReverse} disabled={reverseLoading}>
+                {reverseLoading ? "计算中…" : "计算隐含增长"}
+              </button>
             </div>
             {reverse ? (
               <div style={{ marginTop: 14 }}>
-                {reverse.stale || refreshStale ? <div className="card-sub" style={{ color: "#b7791f" }}>假设、价格或底层数据已修改，以下结果已过期，请重新计算。</div> : null}
+                {reverseStale || refreshStale ? <div className="card-sub" style={{ color: "#b7791f" }}>假设、价格或底层数据已修改，以下结果已过期，请重新计算。</div> : null}
                 <div className="reverse-number">
                   <span>市场隐含 5Y 收入 CAGR</span>
                   <strong>{reverse.implied != null ? `${(reverse.implied * 100).toFixed(1)}%` : "无根"}</strong>

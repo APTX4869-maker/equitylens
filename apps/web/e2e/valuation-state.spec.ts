@@ -179,3 +179,26 @@ test("a failed newest request marks the result stale and disables save", async (
   // The failed preview must not be saveable as if it produced the visible result.
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
 });
+
+
+test("ignores reverse DCF response after target price changes", async ({ page }) => {
+  await stubPage(page);
+  await page.route("**/api/v1/companies/AAPL/valuation/reverse-dcf", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.fulfill({ json: {
+      implied_revenue_cagr: 0.31,
+      historical_revenue_cagr: 0.08,
+      no_root_reason: null,
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "估值" }).click();
+  const target = page.getByPlaceholder("输入参考价格 $");
+  await target.fill("300");
+  await page.getByRole("button", { name: "计算隐含增长" }).click();
+  await target.fill("200");
+
+  await page.waitForTimeout(700);
+  await expect(page.getByText("31.0%", { exact: true })).toHaveCount(0);
+});

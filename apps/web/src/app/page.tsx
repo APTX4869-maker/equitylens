@@ -49,6 +49,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const [valuationReviewGeneration, setValuationReviewGeneration] = useState<Record<string, number>>({});
 
   useEffect(() => {
     document.body.classList.toggle("pro", mode === "pro");
@@ -124,7 +125,24 @@ export default function Home() {
           body: JSON.stringify(modules?.length ? { modules } : {}),
         }
       );
-      setRefreshResult(d);
+      setRefreshResult((previous) => {
+        if (!modules?.length || !previous) return d;
+        const mergedModules = { ...previous.modules };
+        for (const moduleName of modules) {
+          if (d.modules[moduleName]) mergedModules[moduleName] = d.modules[moduleName];
+        }
+        return {
+          ...d,
+          modules: mergedModules,
+          review_required: previous.review_required || d.review_required,
+        };
+      });
+      if (d.review_required) {
+        setValuationReviewGeneration((previous) => ({
+          ...previous,
+          [company]: (previous[company] ?? 0) + 1,
+        }));
+      }
       const parts = Object.entries(d.modules ?? {}).map(([k, m]) => {
         const label = m.status === "ok" ? "成功" : m.status === "skipped" ? "未执行" : "失败";
         return `${k}:${label}`;
@@ -234,8 +252,8 @@ export default function Home() {
               <ValuationSection
                 key={company}
                 ticker={company}
-                refreshGeneration={reloadKey}
-                refreshReviewRequired={refreshResult?.review_required ?? false}
+                refreshGeneration={valuationReviewGeneration[company] ?? 0}
+                refreshReviewRequired={(valuationReviewGeneration[company] ?? 0) > 0}
               />
             </section>
           ) : null}
