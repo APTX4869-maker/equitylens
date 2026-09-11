@@ -2,13 +2,13 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T02 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T03 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
 | T01 身份注册与迁移 | 已完成 | 5 passed；真实库副本双次迁移通过 | 已自检 | `docs/reviews/2026-09-11-company-onboarding-pre-migration-inventory.md` |
 | T02 发布版本隔离 | 已完成 | 5 passed；真实库副本双次迁移通过 | 已自检 | `docs/reviews/2026-09-11-company-onboarding-publication-rehearsal.md` |
-| T03 持久化任务与写入 | 未开始 | 未运行 | 未开始 | — |
+| T03 持久化任务与写入 | 已完成 | 7 passed；T01—T03 回归 20 passed | 已自检 | writer 跨进程、恢复、取消、重试和真实刷新/估值互斥测试 |
 | T04 发现采集与候选 | 未开始 | 未运行 | 未开始 | — |
 | T05 质量门槛 | 未开始 | 未运行 | 未开始 | — |
 | T06 维护者复核闭环 | 未开始 | 未运行 | 未开始 | — |
@@ -59,3 +59,20 @@
 证据文件/报告：`docs/reviews/2026-09-11-company-onboarding-publication-rehearsal.md`。
 
 遗留问题与下一步：旧测试 fixture 在 schema 初始化后才写入事实，因此其 legacy publication 不自动包含后写数据；正式迁移对已有真实数据正确封存，T07 测试 fixture 将显式使用 publication 构建路径。T03 开始实现统一 writer 与持久化任务。
+
+## T03 统一写入与持久化任务
+
+阶段与提交号：T03；提交在本阶段记录更新后创建。
+
+实际改动：新增进程级文件锁和可重入线程串行 writer；DuckDBStore、身份、dataset/publication、refresh、估值运行和估值方案写入统一经过该入口；新增持久化任务、证券关联、attempt、expected revision、取消边界、三次总尝试退避、中断恢复和 lifespan 执行器。
+
+测试命令及结果：
+
+- RED：`uv run pytest tests/integration/test_onboarding_runner.py -q`，因 onboarding 包尚不存在而 collection 失败。
+- GREEN：同一命令，`7 passed in 0.61s`；覆盖完成步骤不重复、revision 冲突、同发行人任务复用、发布边界取消、三次重试上限、第二进程拒绝以及 refresh/valuation 实际写路径互斥。
+- 回归：T01—T03 专属测试及 `tests/unit/test_replay_paths.py`，`20 passed in 1.46s`。
+- API/刷新回归：`56 passed, 3 failed`；三项失败与开发前基线相同，均为 2026-09-03 行情 fixture 在当前日期被判 `STALE`，无新增失败。
+
+证据文件/报告：`tests/integration/test_onboarding_runner.py`；知识库记录 `20260911233000`。
+
+遗留问题与下一步：任务子表未声明指向高频可变 parent 的 DuckDB 外键，改由统一 writer 事务校验，原因和复现已记录。T04 接入真实发现、来源缓存和严格 profile。

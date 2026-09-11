@@ -12,6 +12,7 @@ from datetime import date
 
 from equitylens.companies.models import CompanyIdentity, SecurityIdentity
 from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.storage.writer import writer_for
 
 
 class CompanyRegistryError(ValueError):
@@ -44,7 +45,7 @@ class CompanyRegistry:
     def register_company(
         self, company: CompanyIdentity, *, legacy_ticker: str
     ) -> CompanyIdentity:
-        with self.store.transaction():
+        with writer_for(self.store).transaction(self.store):
             self.store._conn.execute(
                 """
                 INSERT INTO company (
@@ -76,7 +77,7 @@ class CompanyRegistry:
         valid_from: date | None = None,
         valid_to: date | None = None,
     ) -> SecurityIdentity:
-        with self.store.transaction():
+        with writer_for(self.store).transaction(self.store):
             self.store._conn.execute(
                 """
                 INSERT INTO security (
@@ -113,7 +114,7 @@ class CompanyRegistry:
         valid_from: date | None = None,
         valid_to: date | None = None,
     ) -> None:
-        with self.store.transaction():
+        with writer_for(self.store).transaction(self.store):
             self._add_ticker_alias(
                 security_id,
                 ticker=ticker,

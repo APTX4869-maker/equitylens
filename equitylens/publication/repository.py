@@ -17,6 +17,7 @@ from equitylens.publication.models import (
     validate_dataset_payload,
 )
 from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.storage.writer import writer_for
 
 
 class PublicationConflict(RuntimeError):
@@ -55,12 +56,13 @@ class PublicationRepository:
                 )
             return existing["profile_id"]
         profile_id = str(uuid.uuid4())
-        self.store._conn.execute(
-            """
-            INSERT INTO issuer_profile_version VALUES (?, ?, ?, ?, ?, ?, now())
-            """,
-            [profile_id, company_id, version, schema_version, content_json, digest],
-        )
+        with writer_for(self.store).transaction(self.store):
+            self.store._conn.execute(
+                """
+                INSERT INTO issuer_profile_version VALUES (?, ?, ?, ?, ?, ?, now())
+                """,
+                [profile_id, company_id, version, schema_version, content_json, digest],
+            )
         return profile_id
 
     def context(
@@ -189,7 +191,7 @@ class PublicationRepository:
             raise PublicationConflict("REVIEW_STALE", "publication fingerprint changed")
 
         publication_id = str(uuid.uuid4())
-        with self.store.transaction():
+        with writer_for(self.store).transaction(self.store):
             company = self.store._conn.execute(
                 "SELECT active_publication_id FROM company WHERE company_id = ?",
                 [company_id],

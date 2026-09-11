@@ -27,8 +27,24 @@ def _warm_risk_free() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from equitylens.api import routes as routes_module
+    from equitylens.onboarding.repository import OnboardingRepository
+    from equitylens.onboarding.runner import OnboardingExecutor, OnboardingRunner
+    from equitylens.storage.writer import writer_for
+
+    store = routes_module._store()
+    writer = writer_for(store)
+    writer.start()
+    repository = OnboardingRepository(store)
+    executor = OnboardingExecutor(OnboardingRunner(store, repository))
+    executor.start()
+    app.state.onboarding_executor = executor
     threading.Thread(target=_warm_risk_free, daemon=True).start()
-    yield
+    try:
+        yield
+    finally:
+        executor.close()
+        writer.close()
 
 
 app = FastAPI(

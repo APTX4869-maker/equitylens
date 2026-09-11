@@ -14,6 +14,7 @@ from equitylens.publication.models import (
     validate_dataset_payload,
 )
 from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.storage.writer import writer_for
 
 
 DatasetRows = Iterable[tuple[str, str, dict[str, Any]]]
@@ -105,7 +106,7 @@ class DatasetBuilder:
             "\n".join(f"{a}:{b}:{d}" for a, b, _, d in prepared).encode()
         ).hexdigest()
         dataset_id = str(uuid.uuid4())
-        with self.store.transaction():
+        with writer_for(self.store).transaction(self.store):
             self.store._conn.execute(
                 """
                 INSERT INTO dataset_version (

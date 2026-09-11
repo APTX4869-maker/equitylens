@@ -459,13 +459,16 @@ def _output_dict(output) -> dict:
 
 
 def _persist_run(store, run: dict) -> None:
+    from equitylens.storage.writer import writer_for
+
     store.connect()
     cols = list(run.keys())
     placeholders = ", ".join("?" for _ in cols)
-    store._conn.execute(
-        f"INSERT INTO valuation_run ({', '.join(cols)}) VALUES ({placeholders})",
-        [run[c] for c in cols],
-    )
+    with writer_for(store).transaction(store):
+        store._conn.execute(
+            f"INSERT INTO valuation_run ({', '.join(cols)}) VALUES ({placeholders})",
+            [run[c] for c in cols],
+        )
 
 
 # --- P06: personal reference-price plans -------------------------------------
@@ -564,13 +567,16 @@ def create_plan(
         "source_quote_observed_at": quote_observed_at,
         "created_at": _now(),
     }
+    from equitylens.storage.writer import writer_for
+
     store.connect()
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
-    store._conn.execute(
-        f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
-        [row[c] for c in cols],
-    )
+    with writer_for(store).transaction(store):
+        store._conn.execute(
+            f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
+            [row[c] for c in cols],
+        )
     out = dict(row)
     return _plan_out(row)
 

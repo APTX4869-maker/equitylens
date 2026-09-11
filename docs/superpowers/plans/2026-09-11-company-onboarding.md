@@ -362,7 +362,7 @@ def test_candidate_does_not_change_visible_facts(publication_case):
 
 接口：OnboardingRunner.run_once/recover_interrupted；所有正式库写入调用统一 writer，不允许 CLI 旁路。
 
-- [ ] 写中断恢复反例：
+- [x] 写中断恢复反例：
 
 ```python
 def test_restart_does_not_duplicate_completed_step(runner_case):
@@ -373,10 +373,10 @@ def test_restart_does_not_duplicate_completed_step(runner_case):
     assert runner_case.fetch_call_count == 1
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_runner.py -q` 确认失败。
-- [ ] 实现持久化状态转换、expected_revision、attempt 哈希、进程锁、串行 writer、取消检查和有上限重试；lifespan 启停和测试隔离。
-- [ ] 测第二进程写锁拒绝、发布时取消、同发行人重复任务、旧 refresh 与估值保存串行互斥；不要只测试线程锁本身。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: persist and recover onboarding jobs`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_runner.py -q` 确认失败。
+- [x] 实现持久化状态转换、expected_revision、attempt 哈希、进程锁、串行 writer、取消检查和有上限重试；lifespan 启停和测试隔离。
+- [x] 测第二进程写锁拒绝、发布时取消、同发行人重复任务、旧 refresh 与估值保存串行互斥；不要只测试线程锁本身。
+- [x] 同一测试命令通过，更新进度并提交 `feat: persist and recover onboarding jobs`。
 
 ### T04：真实发现、采集和专属候选
 

@@ -410,6 +410,60 @@ def _immutable_publications(conn: duckdb.DuckDBPyConnection) -> None:
         )
 
 
+def _persistent_onboarding(conn: duckdb.DuckDBPyConnection) -> None:
+    for statement in (
+        """
+        CREATE TABLE IF NOT EXISTS company_onboarding (
+          onboarding_id VARCHAR PRIMARY KEY,
+          company_id VARCHAR NOT NULL REFERENCES company(company_id),
+          state VARCHAR NOT NULL,
+          current_step VARCHAR,
+          revision INTEGER NOT NULL,
+          cancel_requested BOOLEAN NOT NULL,
+          input_fingerprint VARCHAR NOT NULL,
+          error_json JSON,
+          next_attempt_at TIMESTAMP,
+          created_at TIMESTAMP NOT NULL,
+          updated_at TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS onboarding_security (
+          onboarding_id VARCHAR NOT NULL,
+          security_id VARCHAR NOT NULL REFERENCES security(security_id),
+          PRIMARY KEY(onboarding_id, security_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS onboarding_step_attempt (
+          attempt_id VARCHAR PRIMARY KEY,
+          onboarding_id VARCHAR NOT NULL,
+          step VARCHAR NOT NULL,
+          attempt_no INTEGER NOT NULL,
+          input_hash VARCHAR NOT NULL,
+          output_hash VARCHAR,
+          state VARCHAR NOT NULL,
+          started_at TIMESTAMP NOT NULL,
+          finished_at TIMESTAMP,
+          heartbeat_at TIMESTAMP,
+          error_json JSON,
+          UNIQUE(onboarding_id, step, attempt_no)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS api_idempotency (
+          key VARCHAR PRIMARY KEY,
+          request_hash VARCHAR NOT NULL,
+          response_json JSON NOT NULL,
+          created_at TIMESTAMP NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS onboarding_company_idx ON company_onboarding(company_id, state)",
+        "CREATE INDEX IF NOT EXISTS onboarding_runnable_idx ON company_onboarding(state, next_attempt_at)",
+    ):
+        conn.execute(statement)
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -429,6 +483,15 @@ MIGRATIONS = (
         adaptation_review:v1;company_capability:v1;legacy-publications:AAPL,MSFT
         """.strip(),
         apply=lambda conn: _immutable_publications(conn),
+    ),
+    Migration(
+        version=3,
+        name="persistent_onboarding_jobs",
+        signature="""
+        company_onboarding:v1;onboarding_security:v1;
+        onboarding_step_attempt:v1;api_idempotency:v1
+        """.strip(),
+        apply=lambda conn: _persistent_onboarding(conn),
     ),
 )
 
