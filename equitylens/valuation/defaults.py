@@ -39,6 +39,11 @@ def _latest_annual_value(store, company_id: str, metric: str) -> float | None:
     return float(point.value) if point is not None else None
 
 
+def _latest_instant_point(store, company_id: str, metric: str):
+    points = MetricEngine(store).compute(metric, company_id, frequency="instant")
+    return next((point for point in reversed(points) if point.value is not None), None)
+
+
 def _latest_fy(store, company_id: str, metric: str) -> int | None:
     engine = MetricEngine(store)
     pts = engine.compute(metric, company_id, frequency="annual")
@@ -122,16 +127,23 @@ def default_assumption_set(store, company_id: str, ticker: str,
         }
 
     revenue_point = _latest_annual_point(store, company_id, "REVENUE")
+    fy = revenue_point.fiscal_year if revenue_point is not None else None
+    if fy is None:
+        raise ValueError("no annual revenue facts; run `equitylens sync` first")
     revenue_history = [
         point for point in MetricEngine(store).compute("REVENUE", company_id, frequency="annual")
         if point.value is not None and point.value > 0
     ][-6:]
-    op_income_point = _latest_annual_point(store, company_id, "OPERATING_INCOME")
-    pretax_point = _latest_annual_point(store, company_id, "PRETAX_INCOME")
-    tax_point = _latest_annual_point(store, company_id, "INCOME_TAX_EXPENSE")
-    capex_point = _latest_annual_point(store, company_id, "CAPITAL_EXPENDITURES")
-    net_debt_point = _latest_annual_point(store, company_id, "NET_DEBT")
-    shares_point = _latest_annual_point(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES")
+    # Duration inputs form one fiscal-year cohort. Missing members may use an
+    # explicit config fallback where documented, but never an older FY value.
+    op_income_point = _annual_point(store, company_id, "OPERATING_INCOME", fy)
+    pretax_point = _annual_point(store, company_id, "PRETAX_INCOME", fy)
+    tax_point = _annual_point(store, company_id, "INCOME_TAX_EXPENSE", fy)
+    capex_point = _annual_point(store, company_id, "CAPITAL_EXPENDITURES", fy)
+    shares_point = _annual_point(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES", fy)
+    # The enterprise-to-equity bridge is a point-in-time input. Use the latest
+    # available balance sheet and disclose its actual date independently.
+    net_debt_point = _latest_instant_point(store, company_id, "NET_DEBT")
     revenue = float(revenue_point.value) if revenue_point is not None else None
     op_income = float(op_income_point.value) if op_income_point is not None else None
     pretax = float(pretax_point.value) if pretax_point is not None else None
@@ -139,7 +151,6 @@ def default_assumption_set(store, company_id: str, ticker: str,
     capex = float(capex_point.value) if capex_point is not None else None
     net_debt = float(net_debt_point.value) if net_debt_point is not None else None
     shares = float(shares_point.value) if shares_point is not None else None
-    fy = _latest_fy(store, company_id, "REVENUE")
     da, da_source_kind, da_fact_ids = (
         _depreciation_selection(store, company_id, fy) if fy is not None else (None, "missing", [])
     )
@@ -154,7 +165,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
     if not revenue:
         raise ValueError("no revenue facts; run `equitylens sync` first")
     if op_income is None:
-        raise ValueError("no operating income facts; cannot derive operating margin")
+        raise ValueError(f"no FY{fy} operating income facts; cannot derive operating margin")
     op_margin = op_income / revenue
     # Zero is a valid value: a real zero tax rate / CapEx / D&A must stay zero,
     # not be silently replaced by an assumption. Only genuine absence falls back.
@@ -168,7 +179,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
         raise ValueError("no net-debt bridge; cannot derive net cash")
     net_cash = -net_debt
     if shares is None:
-        raise ValueError("no diluted share count; cannot produce a per-share value")
+        raise ValueError(f"no FY{fy} diluted share count; cannot produce a per-share value")
 
     # WACC: E/(D+E)*CoE + D/(D+E)*AfterTaxCoD with documented weights
     # (debt weight assumption 0.10 absent balance-sheet-based weight config)
@@ -202,6 +213,7 @@ def default_assumption_set(store, company_id: str, ticker: str,
         terminal_roic=terminal_roic,
     )
     period = f"FY{fy}" if fy is not None else None
+    net_debt_as_of = net_debt_point.period_end if net_debt_point is not None else None
     revenue_cagr = None
     revenue_history_period = None
     if len(revenue_history) >= 2:
@@ -305,7 +317,8 @@ def default_assumption_set(store, company_id: str, ticker: str,
         "net_cash": metadata(net_cash, source_type="deterministic_formula", source="NET_DEBT sign reversal",
                              rule="net_cash = -NET_DEBT from the latest balance-sheet date.",
                              reason="Bridge enterprise value to equity value using the latest available balance sheet.",
-                             source_ids=fact_ids(net_debt_point), as_of=period, version="net-cash-bridge.v1"),
+                             source_ids=fact_ids(net_debt_point), as_of=net_debt_as_of,
+                             version="net-cash-bridge.v1"),
         "shares": metadata(shares, source_type="canonical_fact", source="SEC canonical diluted weighted-average shares",
                            rule="Use latest FY diluted weighted-average shares as a per-share approximation.",
                            reason="Use the disclosed diluted basis; current point-in-time shares are not yet modeled.",

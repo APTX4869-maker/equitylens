@@ -361,6 +361,11 @@ def test_guardrail_boundary_is_consistent():
         run_dcf(make_inputs(wacc=0.05, terminal_growth=0.04 + 1e-6))  # a hair below
 
 
+def test_guardrail_rejects_negative_wacc_even_when_spread_is_valid():
+    with pytest.raises(ValuationError, match="wacc"):
+        run_dcf(make_inputs(wacc=-0.50, terminal_growth=-0.51))
+
+
 def test_defaults_built_from_real_facts(company_db):
     """Assumption defaults reflect real canonical facts (AAPL)."""
     from equitylens.valuation.defaults import default_assumption_set
@@ -375,6 +380,42 @@ def test_defaults_built_from_real_facts(company_db):
     assert history["value"] == pytest.approx((416_161 / 274_515) ** (1 / 5) - 1)
     assert "不直接用作未来预测" in history["rule"]
     assert inputs.wacc > inputs.terminal_growth + 0.01
+
+
+def test_defaults_do_not_mix_prior_year_operating_income(company_db):
+    """The latest revenue FY defines the flow-input cohort. An older operating
+    income must not be divided by the newer revenue when that cohort is missing."""
+    from equitylens.valuation.defaults import default_assumption_set
+
+    company_db._conn.execute("BEGIN")
+    try:
+        company_db._conn.execute(
+            """DELETE FROM canonical_fact
+               WHERE company_id = '0000320193' AND canonical_metric = 'OPERATING_INCOME'
+                 AND fiscal_year = 2025"""
+        )
+        with pytest.raises(ValueError, match="FY2025 operating income"):
+            default_assumption_set(company_db, "0000320193", "AAPL")
+    finally:
+        company_db._conn.execute("ROLLBACK")
+
+
+def test_defaults_use_fallback_instead_of_prior_year_capex(company_db):
+    from equitylens.valuation.defaults import default_assumption_set
+
+    company_db._conn.execute("BEGIN")
+    try:
+        company_db._conn.execute(
+            """DELETE FROM canonical_fact
+               WHERE company_id = '0000320193' AND canonical_metric = 'CAPITAL_EXPENDITURES'
+                 AND fiscal_year = 2025"""
+        )
+        _, meta = default_assumption_set(company_db, "0000320193", "AAPL")
+        assert meta["capex_pct"]["source_type"] == "config_assumption"
+        assert meta["capex_pct"]["as_of"] is None
+        assert meta["capex_pct"]["source_ids"] == []
+    finally:
+        company_db._conn.execute("ROLLBACK")
 
 
 def test_per_issuer_default_growth_paths_differ(company_db):

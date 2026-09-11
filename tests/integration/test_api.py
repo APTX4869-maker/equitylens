@@ -624,6 +624,29 @@ def test_plan_fields_survive_store_restart(tmp_path):
     assert loaded["review_status"] == "current"
 
 
+def test_copying_review_required_plan_preserves_review_state(client, company_db):
+    run = _save_v2_run(client)
+    original = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={"valuation_run_id": run["valuation_run_id"], "scenario_key": "base",
+              "margin_of_safety": 0.2, "name": "待复核方案"},
+    ).json()
+    company_db._conn.execute(
+        """UPDATE valuation_plan SET review_status = 'needs_review', review_reason = '财务披露已更新'
+           WHERE plan_id = ?""",
+        [original["plan_id"]],
+    )
+
+    copied = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{original['plan_id']}/copy",
+        json={"name": "待复核副本"},
+    )
+
+    assert copied.status_code == 200
+    assert copied.json()["review_status"] == "needs_review"
+    assert copied.json()["review_reason"] == "财务披露已更新"
+
+
 def test_refresh_reports_all_modules_and_partial_failure(client, monkeypatch):
     """P08: all four modules report independently; one failure stays retryable."""
     import equitylens.ingestion.sec.sync as sec_sync
@@ -781,6 +804,25 @@ def test_reverse_dcf_endpoint_returns_implied_growth(client):
     assert "implied_revenue_cagr" in d
     assert d["market"]["status"] == "OK"
     assert d["historical_revenue_cagr"] is not None
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({}, "target_price"),
+        ({"target_price": 0}, "target_price"),
+        ({"target_price": "NaN"}, "target_price"),
+        ({"target_price": 300, "assumptions": {"wacc": -0.5, "terminal_growth": -0.51}}, "wacc"),
+    ],
+)
+def test_reverse_dcf_rejects_invalid_input_with_structured_400(client, payload, field):
+    response = client.post("/api/v1/companies/AAPL/valuation/reverse-dcf", json=payload)
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["field"] == field
+    assert error["code"] in {"INVALID_INPUT", "INVALID_ASSUMPTION"}
+    assert error["message"]
 
 
 def test_moat_endpoint_real_evidence(client):

@@ -147,8 +147,8 @@ def validate(inputs: DcfInputs) -> list[str]:
             "terminal growth requires at least 100% of stable NOPAT to be reinvested",
             "terminal_roic",
         )
-    if inputs.wacc <= -1.0:
-        raise ValuationError("INVALID_ASSUMPTION", f"wacc must be > -1 (got {inputs.wacc})", "wacc")
+    if inputs.wacc <= 0.0:
+        raise ValuationError("INVALID_ASSUMPTION", f"wacc must be positive (got {inputs.wacc})", "wacc")
     if inputs.wacc - inputs.terminal_growth < MIN_WACC_G_MARGIN - 1e-9:
         raise ValuationError(
             "INVALID_ASSUMPTION",
@@ -376,6 +376,8 @@ def run_dcf_explicit(
         raise ValuationError("INVALID_ASSUMPTION", "tax_rate must be within [0, 1]", "tax_rate")
     if shares <= 0:
         raise ValuationError("INVALID_ASSUMPTION", "share count must be positive", "shares")
+    if wacc <= 0:
+        raise ValuationError("INVALID_ASSUMPTION", "WACC must be positive", "wacc")
     if wacc <= terminal_growth:
         raise ValuationError("INVALID_ASSUMPTION", "WACC must exceed terminal growth", "wacc")
 

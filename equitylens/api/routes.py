@@ -672,12 +672,28 @@ def valuation_run(ticker: str, payload: dict):
 
 @router.post("/companies/{ticker}/valuation/reverse-dcf")
 def valuation_reverse(ticker: str, payload: dict):
+    from equitylens.valuation.dcf import ValuationError
     from equitylens.valuation.service import reverse_dcf
 
     company = _resolve_company(ticker)
     if "target_price" not in payload:
-        raise HTTPException(400, "target_price is required (market quote or user input)")
-    return reverse_dcf(_store(), company.cik, company.ticker, payload)
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": "INVALID_INPUT", "field": "target_price",
+                               "message": "target_price is required (market quote or user input)"}},
+        )
+    try:
+        return reverse_dcf(_store(), company.cik, company.ticker, payload)
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
+        )
+    except (TypeError, ValueError) as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": "INVALID_INPUT", "field": None, "message": str(exc)}},
+        )
 
 
 @router.get("/companies/{ticker}/valuation/runs")

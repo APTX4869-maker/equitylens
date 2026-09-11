@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 
 from equitylens.storage.duckdb_store import DuckDBStore
 from equitylens.valuation import dcf as dcf_mod
-from equitylens.valuation.dcf import DcfInputs, run_dcf, implied_growth
+from equitylens.valuation.dcf import DcfInputs, ValuationError, implied_growth, run_dcf, validate
 from equitylens.valuation.defaults import default_assumption_set, load_valuation_config
 from equitylens.valuation.rates import risk_free_rate
 
@@ -357,27 +358,53 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
     rf = risk_free_rate()
     base, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
     a = payload.get("assumptions") or {}
+
+    def number(name: str, default: float) -> float:
+        try:
+            value = float(a.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ValuationError("INVALID_INPUT", f"{name} must be a number", name) from exc
+        if not math.isfinite(value):
+            raise ValuationError("INVALID_INPUT", f"{name} must be finite", name)
+        return value
+
     if a:
+        try:
+            growth = [float(x) for x in a.get("revenue_growth", base.revenue_growth)]
+        except (TypeError, ValueError) as exc:
+            raise ValuationError(
+                "INVALID_INPUT", "revenue_growth must contain numbers", "revenue_growth"
+            ) from exc
         base = DcfInputs(
-            revenue_base=float(a.get("revenue_base", base.revenue_base)),
-            revenue_growth=[float(x) for x in a.get("revenue_growth", base.revenue_growth)],
-            op_margin_start=float(a.get("op_margin_start", base.op_margin_start)),
-            op_margin_end=float(a.get("op_margin_end", base.op_margin_end)),
-            tax_rate=float(a.get("tax_rate", base.tax_rate)),
-            da_pct=float(a.get("da_pct", base.da_pct)),
-            capex_pct=float(a.get("capex_pct", base.capex_pct)),
-            nwc_pct=float(a.get("nwc_pct", base.nwc_pct)),
-            wacc=float(a.get("wacc", base.wacc)),
-            terminal_growth=float(a.get("terminal_growth", base.terminal_growth)),
-            net_cash=float(a.get("net_cash", base.net_cash)),
-            shares=float(a.get("shares", base.shares)),
+            revenue_base=number("revenue_base", base.revenue_base),
+            revenue_growth=growth,
+            op_margin_start=number("op_margin_start", base.op_margin_start),
+            op_margin_end=number("op_margin_end", base.op_margin_end),
+            tax_rate=number("tax_rate", base.tax_rate),
+            da_pct=number("da_pct", base.da_pct),
+            capex_pct=number("capex_pct", base.capex_pct),
+            nwc_pct=number("nwc_pct", base.nwc_pct),
+            wacc=number("wacc", base.wacc),
+            terminal_growth=number("terminal_growth", base.terminal_growth),
+            net_cash=number("net_cash", base.net_cash),
+            shares=number("shares", base.shares),
             share_basis_label=str(a.get(
                 "share_basis_label",
                 "user-supplied share count" if "shares" in a else base.share_basis_label,
             )),
-            terminal_roic=float(a.get("terminal_roic", base.terminal_roic)),
+            terminal_roic=number("terminal_roic", base.terminal_roic),
         )
-    target = float(payload.get("target_price"))
+    try:
+        target = float(payload.get("target_price"))
+    except (TypeError, ValueError) as exc:
+        raise ValuationError(
+            "INVALID_INPUT", "target_price must be a number", "target_price"
+        ) from exc
+    if not math.isfinite(target) or target <= 0:
+        raise ValuationError(
+            "INVALID_INPUT", "target_price must be finite and positive", "target_price"
+        )
+    validate(base)
     implied = implied_growth(base, target)
     from equitylens.market.service import valuation_market_block
     from equitylens.metrics.engine import MetricEngine
@@ -440,7 +467,15 @@ def _persist_run(store, run: dict) -> None:
 # --- P06: personal reference-price plans -------------------------------------
 # 参考价 = 选定每股估值 × (1 − 安全边际). Research reference only; no orders.
 
-def create_plan(store, company_id: str, ticker: str, payload: dict) -> dict:
+def create_plan(
+    store,
+    company_id: str,
+    ticker: str,
+    payload: dict,
+    *,
+    review_status: str = "current",
+    review_reason: str | None = None,
+) -> dict:
     """Create (and immediately persist) a personal reference-price plan.
 
     The reference price is the SELECTED per-share value (a model/scenario
@@ -519,8 +554,8 @@ def create_plan(store, company_id: str, ticker: str, payload: dict) -> dict:
         "conditions_json": json.dumps(payload.get("conditions_to_verify") or [], ensure_ascii=False),
         "parent_plan_id": payload.get("_parent_plan_id"),
         "version": int(payload.get("_version") or 1),
-        "review_status": "current",
-        "review_reason": None,
+        "review_status": review_status,
+        "review_reason": review_reason,
         "source_filing_as_of": filing_as_of,
         "source_quote_observed_at": quote_observed_at,
         "created_at": _now(),
@@ -584,7 +619,8 @@ def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) 
         "conditions_to_verify": payload.get("conditions_to_verify", original.get("conditions_to_verify") or []),
         "_parent_plan_id": plan_id,
         "_version": int(original.get("version") or 1) + 1,
-    })
+    }, review_status=original.get("review_status") or "needs_review",
+       review_reason=original.get("review_reason"))
 
 
 def compare_plans(store, company_id: str, plan_ids: list[str]) -> dict:

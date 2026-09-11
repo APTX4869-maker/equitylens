@@ -17,10 +17,10 @@
 
 ### 第二组：估值后端
 
-- [ ] DCF 流量输入按同一基准财年选择，时点输入采用明确日期策略。
-- [ ] WACC 执行正数边界。
-- [ ] 复制 `needs_review` 方案不能恢复为 `current`。
-- [ ] Reverse DCF 对目标价格和假设执行结构化 400 错误契约。
+- [x] DCF 流量输入按同一基准财年选择，时点输入采用明确日期策略。
+- [x] WACC 执行正数边界。
+- [x] 复制 `needs_review` 方案不能恢复为 `current`。
+- [x] Reverse DCF 对目标价格和假设执行结构化 400 错误契约。
 
 ### 第三组：前端状态
 
@@ -47,3 +47,11 @@
 - Company Facts、10-K/10-Q、DEF 14A 和 Form 4 离线重放均使用该记录，不再把历史来源更新时间改为重放时间。
 - 财务刷新身份改为最新 `COMPANYFACTS_SNAPSHOT`；预检被纳入锁释放 `finally`。
 - 聚焦验证：`tests/unit/test_raw_store.py` + `tests/unit/test_replay_paths.py` 22 passed；刷新组合筛选 8 passed。
+
+## 第二组交付记录
+
+- 最新年度收入确定 DCF 流量输入基准 FY；营业利润和稀释股数缺少同年事实时明确阻止估值，税率、CapEx 与 D&A 只在同年事实完整时计算，否则使用有标签的配置回退。
+- 净债务采用最新可用资产负债表时点，并在元数据中记录该实际日期，不再伪装为收入财年。
+- WACC 必须为正；Reverse DCF 在求根前验证完整假设，目标价格必须为有限正数，错误统一返回 `error.code/field/message` 的 400。
+- 复制待复核方案继承 `needs_review` 和原因，不能通过复用旧 run 洗回 current。
+- 新增失败反例 8 passed；完整估值 golden 与 API 回归 95 passed。
