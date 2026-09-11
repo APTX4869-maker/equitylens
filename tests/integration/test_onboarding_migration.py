@@ -79,12 +79,12 @@ def test_identity_migration_is_idempotent_and_preserves_legacy_rows(tmp_path):
         table: _table_digest(conn, table)
         for table in ("market_quote", "valuation_run")
     }
-    first = apply_migrations(conn)
+    first = apply_migrations(conn, target_version=1)
     after_first = {
         table: _table_digest(conn, table)
         for table in ("market_quote", "valuation_run")
     }
-    second = apply_migrations(conn)
+    second = apply_migrations(conn, target_version=1)
 
     assert first == [1]
     assert second == []
@@ -107,9 +107,9 @@ def test_applied_migration_checksum_is_immutable(tmp_path):
     path = tmp_path / "legacy.duckdb"
     _legacy_database(path)
     conn = duckdb.connect(str(path))
-    apply_migrations(conn)
+    apply_migrations(conn, target_version=1)
     conn.execute("UPDATE schema_migration SET checksum = 'tampered' WHERE version = 1")
 
     with pytest.raises(MigrationChecksumError):
-        apply_migrations(conn)
+        apply_migrations(conn, target_version=1)
     conn.close()

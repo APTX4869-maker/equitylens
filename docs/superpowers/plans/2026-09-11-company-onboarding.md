@@ -342,7 +342,7 @@ def test_share_classes_keep_separate_identity(registry_with_two_classes):
 
 接口：实现 PublicationRepository.context/facts/publish 与 DatasetBuilder.build；后续请求只使用 PublicationContext。
 
-- [ ] 写候选隔离反例：
+- [x] 写候选隔离反例：
 
 ```python
 def test_candidate_does_not_change_visible_facts(publication_case):
@@ -351,10 +351,10 @@ def test_candidate_does_not_change_visible_facts(publication_case):
     assert publication_case.visible_facts() == before
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_publication.py -q` 确认反例先失败。
-- [ ] 实现 dataset_row 类型校验、临时库封存、来源引用保护、发布指纹和原子指针切换；补充旧 legacy 快照。
-- [ ] 注入文件写后/事务提交前失败，验证旧事实与来源仍可读；对不同发行人 publication 请求拒绝。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: publish immutable company datasets`。
+- [x] 运行 `uv run pytest tests/integration/test_publication.py -q` 确认反例先失败。
+- [x] 实现 dataset_row 类型校验、临时库封存、来源引用保护、发布指纹和原子指针切换；补充旧 legacy 快照。
+- [x] 注入文件写后/事务提交前失败，验证旧事实与来源仍可读；对不同发行人 publication 请求拒绝。
+- [x] 同一测试命令通过，更新进度并提交 `feat: publish immutable company datasets`。
 
 ### T03：统一写入与持久化任务
 

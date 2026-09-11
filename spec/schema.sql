@@ -39,6 +39,100 @@ CREATE TABLE IF NOT EXISTS security_ticker_alias (
 CREATE INDEX IF NOT EXISTS security_company_idx ON security(company_id);
 CREATE INDEX IF NOT EXISTS security_alias_lookup_idx ON security_ticker_alias(ticker, exchange);
 
+CREATE TABLE IF NOT EXISTS schema_migration (
+  version INTEGER PRIMARY KEY,
+  applied_at TIMESTAMP NOT NULL,
+  checksum VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS issuer_profile_version (
+  profile_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL REFERENCES company(company_id),
+  version INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  content_json JSON NOT NULL,
+  content_sha256 VARCHAR NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  UNIQUE(company_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS dataset_version (
+  dataset_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL REFERENCES company(company_id),
+  profile_id VARCHAR NOT NULL REFERENCES issuer_profile_version(profile_id),
+  source_manifest_json JSON NOT NULL,
+  parser_version VARCHAR NOT NULL,
+  rule_version VARCHAR NOT NULL,
+  dataset_hash VARCHAR NOT NULL,
+  state VARCHAR NOT NULL,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dataset_row (
+  dataset_id VARCHAR NOT NULL REFERENCES dataset_version(dataset_id),
+  entity_type VARCHAR NOT NULL,
+  row_id VARCHAR NOT NULL,
+  payload_json JSON NOT NULL,
+  payload_sha256 VARCHAR NOT NULL,
+  PRIMARY KEY(dataset_id, entity_type, row_id)
+);
+
+CREATE TABLE IF NOT EXISTS quality_report (
+  report_id VARCHAR PRIMARY KEY,
+  dataset_id VARCHAR NOT NULL REFERENCES dataset_version(dataset_id),
+  rule_version VARCHAR NOT NULL,
+  result VARCHAR NOT NULL,
+  fingerprint VARCHAR NOT NULL,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_quality_check (
+  report_id VARCHAR NOT NULL REFERENCES quality_report(report_id),
+  check_id VARCHAR NOT NULL,
+  scope_key VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  severity VARCHAR NOT NULL,
+  actual_json JSON,
+  expected_json JSON,
+  tolerance_json JSON,
+  evidence_json JSON,
+  reason VARCHAR,
+  PRIMARY KEY(report_id, check_id, scope_key)
+);
+
+CREATE TABLE IF NOT EXISTS adaptation_review (
+  review_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL REFERENCES company(company_id),
+  fingerprint VARCHAR NOT NULL,
+  reviewer VARCHAR NOT NULL,
+  decision VARCHAR NOT NULL,
+  note VARCHAR,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS publication (
+  publication_id VARCHAR PRIMARY KEY,
+  company_id VARCHAR NOT NULL REFERENCES company(company_id),
+  dataset_id VARCHAR NOT NULL REFERENCES dataset_version(dataset_id),
+  profile_id VARCHAR NOT NULL REFERENCES issuer_profile_version(profile_id),
+  quality_report_id VARCHAR,
+  review_id VARCHAR,
+  fingerprint VARCHAR NOT NULL,
+  published_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_capability (
+  publication_id VARCHAR NOT NULL REFERENCES publication(publication_id),
+  module VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  reason VARCHAR,
+  coverage_json JSON,
+  PRIMARY KEY(publication_id, module)
+);
+
+CREATE INDEX IF NOT EXISTS dataset_company_idx ON dataset_version(company_id);
+CREATE INDEX IF NOT EXISTS publication_company_idx ON publication(company_id, published_at);
+
 CREATE TABLE IF NOT EXISTS source_document (
   source_document_id VARCHAR PRIMARY KEY,
   company_id VARCHAR,
