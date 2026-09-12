@@ -272,6 +272,47 @@ class PublicationRepository:
                     computed_fingerprint,
                 ],
             )
+            entity_counts = {
+                entity_type: count
+                for entity_type, count in self.store._conn.execute(
+                    """
+                    SELECT entity_type, count(*) FROM dataset_row
+                    WHERE dataset_id=? GROUP BY entity_type
+                    """,
+                    [dataset_id],
+                ).fetchall()
+            }
+            financial_count = entity_counts.get("canonical_fact", 0)
+            capabilities = [
+                (
+                    "financials",
+                    "READY" if financial_count else "DATA_BLOCKED",
+                    None if financial_count else "published dataset has no canonical facts",
+                    {"canonical_fact_rows": financial_count},
+                ),
+                (
+                    "segments",
+                    "READY" if entity_counts.get("segment_fact", 0) else "NOT_DISCLOSED",
+                    None if entity_counts.get("segment_fact", 0) else "no published segment facts",
+                    {"segment_fact_rows": entity_counts.get("segment_fact", 0)},
+                ),
+                ("market", "READY", None, {}),
+            ]
+            for module, capability_status, reason, coverage in capabilities:
+                self.store._conn.execute(
+                    """
+                    INSERT INTO company_capability
+                      (publication_id, module, status, reason, coverage_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    [
+                        publication_id,
+                        module,
+                        capability_status,
+                        reason,
+                        canonical_json(coverage),
+                    ],
+                )
             if before_pointer_switch:
                 before_pointer_switch()
             self.store._conn.execute(

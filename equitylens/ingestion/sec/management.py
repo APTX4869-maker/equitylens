@@ -62,12 +62,12 @@ def sync_management(
     forms4_limit: int = 12,
     raw_dir=RAW_DIR,
 ) -> ManagementSyncReport:
-    company = get_company(ticker)
-    cik = company.cik
-    cik_int = str(int(cik))
     store = store or DuckDBStore()
     store.connect()
     store.init_schema()
+    company = get_company(ticker, store=store)
+    cik = company.cik
+    cik_int = str(int(cik))
     report = ManagementSyncReport(company=ticker)
     own_client = client or SECClient()
     docs_to_persist: list[SourceDocument] = []

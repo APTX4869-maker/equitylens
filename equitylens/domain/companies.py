@@ -33,10 +33,45 @@ SUPPORTED: dict[str, Company] = {
 }
 
 
-def get_company(ticker: str) -> Company:
+def get_company(ticker: str, *, store=None, security_id: str | None = None) -> Company:
     ticker = ticker.strip().upper()
+    owned = False
+    if store is None:
+        try:
+            from equitylens.storage.duckdb_store import DuckDBStore
+
+            store = DuckDBStore().connect()
+            owned = True
+        except Exception:
+            store = None
+    if store is not None:
+        try:
+            from equitylens.companies.registry import CompanyRegistry, CompanyRegistryError
+
+            security = CompanyRegistry(store).resolve(ticker, security_id)
+            row = store.query_one(
+                "SELECT legal_name, fiscal_year_end FROM company WHERE company_id=?",
+                [security.company_id],
+            )
+            return Company(
+                ticker=security.ticker,
+                cik=security.company_id,
+                name=row["legal_name"],
+                exchange=security.exchange,
+                fiscal_year_end=row.get("fiscal_year_end"),
+                security_id=security.security_id,
+            )
+        except CompanyRegistryError:
+            if security_id is not None or ticker not in SUPPORTED:
+                raise
+        except Exception:
+            if security_id is not None or ticker not in SUPPORTED:
+                raise KeyError(f"Company {ticker!r} is not registered")
+        finally:
+            if owned:
+                store.close()
     if ticker not in SUPPORTED:
-        raise KeyError(f"Company {ticker!r} is not in the supported set (V0.x: AAPL, MSFT)")
+        raise KeyError(f"Company {ticker!r} is not registered")
     return SUPPORTED[ticker]
 
 

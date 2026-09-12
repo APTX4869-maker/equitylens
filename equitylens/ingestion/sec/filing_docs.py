@@ -39,10 +39,11 @@ def submission_rows(value: dict | list) -> list[dict]:
 
 
 def list_filing_docs(ticker: str, forms: tuple[str, ...] = FORMS_SUPPORTED,
-                     limit_per_form: int = 3, *, raw_dir=RAW_DIR) -> list[dict]:
+                     limit_per_form: int = 3, *, raw_dir=RAW_DIR,
+                     store: DuckDBStore | None = None) -> list[dict]:
     """Pick recent filing metadata (no download), from the LATEST cached
     submissions snapshot (via the raw-store manifest, never a fixed filename)."""
-    company = get_company(ticker)
+    company = get_company(ticker, store=store)
     directory = raw_dir / "sec" / company.cik
     cached = load_snapshot(directory, "submissions.json")
     if cached is None:
@@ -71,17 +72,19 @@ def fetch_filing_documents(
     client: SECClient | None = None,
     raw_dir=RAW_DIR,
 ) -> list[SourceDocument]:
-    company = get_company(ticker)
-    cik = company.cik
     store = store or DuckDBStore()
     store.connect()
     store.init_schema()
+    company = get_company(ticker, store=store)
+    cik = company.cik
 
     cik_int = str(int(cik))
     docs: list[SourceDocument] = []
     own_client = client or SECClient()
     try:
-        for row in list_filing_docs(ticker, forms, limit_per_form, raw_dir=raw_dir):
+        for row in list_filing_docs(
+            ticker, forms, limit_per_form, raw_dir=raw_dir, store=store
+        ):
             accn = row["accessionNumber"]
             accn_nodash = accn.replace("-", "")
             doc_name = "primary.html"

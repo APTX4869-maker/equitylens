@@ -138,7 +138,7 @@ def refresh_company(store, ticker: str, modules: list[str] | None = None,
     invalid = [module for module in selected if module not in MODULES]
     if invalid:
         raise ValueError(f"unknown refresh modules: {', '.join(invalid)}")
-    company = get_company(ticker)
+    company = get_company(ticker, store=store)
     company_lock = _company_lock(company.ticker)
     if not company_lock.acquire(blocking=False):
         raise RefreshBusy(f"{ticker} 正在刷新中，请稍后")

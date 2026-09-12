@@ -108,7 +108,7 @@ def sync_quotes(tickers: list[str], fetch: bool = True, store: DuckDBStore | Non
     store.init_schema()  # idempotent: dev DBs created before M8 need market_quote etc.
     reports: list[SyncReport] = []
     for ticker in tickers:
-        company = get_company(ticker)
+        company = get_company(ticker, store=store)
         report = SyncReport(company=f"{ticker} {company.name}")
         if fetch:
             try:

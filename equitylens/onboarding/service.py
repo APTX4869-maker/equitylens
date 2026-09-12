@@ -70,16 +70,31 @@ class OnboardingService:
             candidate.company_id, candidate.ticker, candidate.exchange
         )
         with writer_for(self.store).transaction(self.store):
-            self.registry.register_company(
-                CompanyIdentity(
-                    company_id=candidate.company_id,
-                    cik=candidate.company_id,
-                    legal_name=candidate.legal_name,
-                    reporting_template=stored.eligibility.template,
-                    quality_status="PENDING",
-                ),
-                legacy_ticker=candidate.ticker,
-            )
+            prior = self.store._conn.execute(
+                "SELECT request_hash, response_json FROM api_idempotency WHERE key=?",
+                [idempotency_key],
+            ).fetchone()
+            if prior:
+                if prior[0] != request_hash:
+                    raise OnboardingConflict(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was used for another request",
+                    )
+                return self.tasks.get(json.loads(prior[1])["onboarding_id"])
+            company_exists = self.store._conn.execute(
+                "SELECT 1 FROM company WHERE company_id=?", [candidate.company_id]
+            ).fetchone()
+            if company_exists is None:
+                self.registry.register_company(
+                    CompanyIdentity(
+                        company_id=candidate.company_id,
+                        cik=candidate.company_id,
+                        legal_name=candidate.legal_name,
+                        reporting_template=stored.eligibility.template,
+                        quality_status="PENDING",
+                    ),
+                    legacy_ticker=candidate.ticker,
+                )
             if self.store._conn.execute(
                 "SELECT 1 FROM security WHERE security_id=?", [security_id]
             ).fetchone() is None:

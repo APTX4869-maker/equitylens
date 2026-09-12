@@ -50,7 +50,7 @@ def _cmd_promises(args) -> int:
     store.connect()
     store.init_schema()
     for ticker in args.tickers:
-        company = get_company(ticker)
+        company = get_company(ticker, store=store)
         cards = load_cards(ticker)
         if not cards:
             print(f"{ticker}: data/evidence/promises/{ticker.upper()}/ 没有证据卡（*.json，忽略 _ 前缀）")

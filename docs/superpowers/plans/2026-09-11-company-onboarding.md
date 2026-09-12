@@ -450,7 +450,7 @@ def test_old_approval_cannot_publish_new_candidate(review_case):
 
 接口：第 9 节所有路径；api_idempotency 持久化；正式响应携带 publication_id/security_id。
 
-- [ ] 写幂等和版本一致性反例：
+- [x] 写幂等和版本一致性反例：
 
 ```python
 def test_repeated_request_returns_same_task(api_case):
@@ -459,10 +459,10 @@ def test_repeated_request_returns_same_task(api_case):
     assert a.json()['onboarding_id'] == b.json()['onboarding_id']
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_api.py -q` 确认失败。
-- [ ] 实现接口与错误契约；正式读取通过 PublicationContext，旧 ticker 无歧义兼容；行情按 security_id，禁用不适用分析能力。
-- [ ] 测同幂等键不同输入、分页、超期发现、跨公司 publication、候选隔离、读取期间后台发布、取消终态。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: expose company onboarding and versioned reads`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_api.py -q` 确认失败。
+- [x] 实现接口与错误契约；正式读取通过 PublicationContext，旧 ticker 无歧义兼容；行情按 security_id，禁用不适用分析能力。
+- [x] 测同幂等键不同输入、分页、超期发现、跨公司 publication、候选隔离、读取期间后台发布、取消终态。
+- [x] 同一测试命令通过，更新进度并提交 `feat: expose company onboarding and versioned reads`。
 
 ### T08：估值门禁和证券指纹
 

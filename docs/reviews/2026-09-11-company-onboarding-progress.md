@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T06 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T07 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -12,7 +12,7 @@
 | T04 发现采集与候选 | 已完成 | 12 passed；T01—T04 回归 29 passed | 已自检 | SEC 身份快照、历史分页、严格 profile 与候选反例 |
 | T05 质量门槛 | 已完成 | 9 passed；T01—T05 回归 38 passed | 已自检 | 舍入区间、期间口径、规则调度及持久化报告反例 |
 | T06 维护者复核闭环 | 已完成 | 6 passed；T01—T06 回归 47 passed | 已自检 | 固定审查包、旧批准失效、质量阻断、CLI API-only 与原子发布反例 |
-| T07 API 与版本读取 | 未开始 | 未运行 | 未开始 | — |
+| T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 未开始 | 未运行 | 未开始 | — |
 | T09 页面流程 | 未开始 | 未运行 | 未开始 | — |
 | T10 真实接入及完整验收 | 未开始 | 未运行 | 未开始 | — |
@@ -125,3 +125,21 @@
 证据文件/报告：`tests/integration/test_issuer_review.py`。
 
 遗留问题与下一步：CLI 已固定使用第 9 节 API 契约，实际 HTTP 路由将在 T07 接入；T07 同时补齐持久化幂等并把所有正式读取绑定 publication/security 标识。
+
+## T07 API 和固定版本读取
+
+阶段与提交号：T07；提交在本阶段记录更新后创建。
+
+实际改动：新增公司列表、发现、申请、任务列表/详情、重试、取消、审查包、profile 导入、复核和已发布质量报告 API；`Idempotency-Key` 持久化请求哈希，相同键不同输入返回冲突。正式公司读取解析注册表 security，接受固定 publication，响应携带 company/security/publication 标识；事实读取直接来自封存 dataset，跨公司 publication 被拒绝，请求期间 active pointer 切换不改变已捕获上下文。发布写入核心能力状态，缺事实或分部披露时分析入口被后端阻断。旧采集、分部、管理层、行情、刷新与 CLI 的公司解析均改为使用注入数据库注册表，歧义 ticker 必须传 security_id。
+
+测试命令及结果：
+
+- RED：`uv run pytest tests/integration/test_onboarding_api.py -q`，因 `equitylens.api.company_routes` 尚不存在而 collection 失败。
+- GREEN：同一命令，`7 passed in 1.02s`；覆盖持久化幂等、同键异参、过期 discovery、分页、取消终态、歧义 ticker、profile/复核/质量 API、能力门禁、候选隔离、跨公司 publication 和读取期间发布切换。
+- T01—T07 回归组合及 replay 路径：`54 passed in 3.45s`。
+- 现有完整 API：`53 passed, 3 failed`；失败仍是开发前已记录的 2026-09-03 行情 fixture 随当前日期变为 `STALE`，无新增失败。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 均通过。
+
+证据文件/报告：`tests/integration/test_onboarding_api.py`。
+
+遗留问题与下一步：迁移前创建、随后才注入 legacy facts 的测试/开发库保留显式 `legacy` 兼容读取；正式已迁移 dataset 不走该分支。T08 将修复时间相关行情 fixture，并把估值确认绑定 security/publication/模型与假设指纹。
