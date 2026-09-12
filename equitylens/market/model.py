@@ -29,13 +29,23 @@ class ProviderQuote:
     source_url: str = ""
     raw_payload: dict | None = None
 
-    def to_row(self, company_id: str, snapshot_sha: str | None, fetched_at: str) -> dict:
+    def to_row(
+        self,
+        company_id: str,
+        snapshot_sha: str | None,
+        fetched_at: str,
+        security_id: str | None = None,
+    ) -> dict:
         from equitylens.storage.raw_store import sha256_bytes
 
-        key = f"{company_id}|{self.provider}|{self.observed_at}|{self.price}"
+        key = (
+            f"{company_id}|{security_id or 'legacy'}|{self.provider}|"
+            f"{self.observed_at}|{self.price}"
+        )
         return {
             "quote_id": f"mq_{sha256_bytes(key.encode())[:12]}",
             "company_id": company_id,
+            "security_id": security_id,
             "ticker": self.ticker,
             "provider": self.provider,
             "observed_at": self.observed_at,

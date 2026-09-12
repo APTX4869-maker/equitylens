@@ -112,3 +112,22 @@ class IxbrlDocument:
     def facts_for(self, concept: str, axis: str) -> list[IxbrlFact]:
         """Facts of `concept` that carry an explicit member on `axis`."""
         return [f for f in self.facts(concept) if axis in f.axis_members]
+
+    def fact_catalog(self) -> list[dict]:
+        """Evidence locators available for issuer-profile candidate generation."""
+        out = []
+        for el in self.root.findall(".//ix:nonFraction", NS):
+            name = el.get("name")
+            context_ref = el.get("contextRef")
+            if not name or not context_ref:
+                continue
+            out.append(
+                {
+                    "concept": name,
+                    "context_ref": context_ref,
+                    "unit_ref": el.get("unitRef"),
+                    "decimals": el.get("decimals"),
+                    "locator": self.root.getroottree().getpath(el),
+                }
+            )
+        return out

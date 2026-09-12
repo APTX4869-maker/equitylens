@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { CompanyInfo, MarketQuote } from "@/lib/types";
+import type { CompanyInfo, CompanyListItem, MarketQuote } from "@/lib/types";
 
 export type TabKey =
   | "overview"
@@ -24,18 +24,22 @@ export const TABS: { key: TabKey; icon: string; label: string }[] = [
   { key: "ai", icon: "✦", label: "AI研究助手" },
 ];
 
-export const COMPANIES = ["AAPL", "MSFT"] as const;
-
 export function Sidebar({
+  companies,
   company,
   tab,
   onCompany,
   onTab,
+  onAddCompany,
+  onOnboardingCenter,
 }: {
+  companies: CompanyListItem[];
   company: string;
   tab: TabKey;
   onCompany: (c: string) => void;
   onTab: (t: TabKey) => void;
+  onAddCompany: () => void;
+  onOnboardingCenter: () => void;
 }) {
   return (
     <aside className="sidebar">
@@ -44,19 +48,25 @@ export function Sidebar({
         <span>EquityLens</span>
       </div>
       <div className="side-label">研究公司</div>
-      {COMPANIES.map((c) => (
+      <div data-testid="company-list">
+      {companies.map((item) => (
         <button
-          key={c}
-          className={`company-btn ${company === c ? "active" : ""}`}
-          onClick={() => onCompany(c)}
+          key={item.security_id}
+          className={`company-btn ${company === item.ticker ? "active" : ""}`}
+          onClick={() => onCompany(item.ticker)}
         >
-          <div className="ticker-box">{c}</div>
+          <div className="ticker-box">{item.ticker}</div>
           <div className="company-meta">
-            <strong>{c === "AAPL" ? "Apple" : "Microsoft"}</strong>
-            <span>{c === "AAPL" ? "消费电子 · 科技" : "软件 · 云计算"}</span>
+            <strong>{item.name}</strong>
+            <span>{item.exchange ?? "交易所未标注"} · {item.quality_status}</span>
           </div>
         </button>
       ))}
+      </div>
+      <div className="company-ops">
+        <button onClick={onAddCompany}><span>＋</span>添加公司</button>
+        <button onClick={onOnboardingCenter}><span>◫</span>建档中心</button>
+      </div>
       <div className="side-label">研究空间</div>
       {TABS.map((t) => (
         <button
@@ -76,27 +86,33 @@ export function Sidebar({
 }
 
 export function Topbar({
+  companies,
   mode,
   onMode,
   realData,
   onCompany,
+  onAddCompany,
+  onOnboardingCenter,
 }: {
+  companies: CompanyListItem[];
   mode: "beginner" | "pro";
   onMode: (m: "beginner" | "pro") => void;
   realData: boolean;
   onCompany: (c: string) => void;
+  onAddCompany: () => void;
+  onOnboardingCenter: () => void;
 }) {
   const [q, setQ] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const search = () => {
     const t = q.trim().toUpperCase();
     if (!t) return;
-    if ((COMPANIES as readonly string[]).includes(t)) {
+    if (companies.some((item) => item.ticker === t)) {
       onCompany(t);
       setQ("");
       setMsg(null);
     } else {
-      setMsg(`暂不支持 ${t}（当前支持 ${COMPANIES.join(" / ")}）`);
+      setMsg(`研究列表中没有 ${t}，可使用“添加公司”启动建档。`);
     }
   };
   return (
@@ -104,7 +120,7 @@ export function Topbar({
       <div className="searchbox">
         ⌕ <input
           aria-label="search"
-          placeholder="搜索公司、Ticker（当前支持 AAPL / MSFT）"
+          placeholder="搜索已发布公司或 Ticker"
           value={q}
           onChange={(e) => { setQ(e.target.value); setMsg(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") search(); }}
@@ -112,6 +128,7 @@ export function Topbar({
         {msg ? <span className="tool-value" style={{ marginLeft: 8 }}>{msg}</span> : null}
       </div>
       <div className="top-actions">
+        <div className="mobile-company-actions"><button onClick={onAddCompany}>＋ 添加公司</button><button onClick={onOnboardingCenter}>建档中心</button></div>
         <div className="mode-switch">
           <button className={mode === "beginner" ? "active" : ""} onClick={() => onMode("beginner")}>
             初学者模式

@@ -6,16 +6,16 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("EQUITYLENS_DATA_DIR", ROOT / "data"))
 RAW_DIR = DATA_DIR / "raw"
-DB_PATH = DATA_DIR / "equitylens.duckdb"
+DB_PATH = Path(os.environ.get("EQUITYLENS_DB_PATH", DATA_DIR / "equitylens.duckdb"))
 CONFIG_DIR = ROOT / "config"
 SPEC_DIR = ROOT / "spec"
 FIXTURES_DIR = ROOT / "tests" / "fixtures"
 
 # Versioned pipeline components (provenance metadata)
 PARSER_VERSION = "sec-companyfacts.v1"
-MAPPING_VERSION = "canonical-mappings.v2"
+MAPPING_VERSION = "canonical-mappings.v3"
 METRIC_ENGINE_VERSION = "metric-engine.v2"
 MARKET_SOURCES_VERSION = "market-sources.v1"
 

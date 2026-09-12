@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from equitylens.api.company_routes import router as company_router
 from equitylens.api.routes import router
 
 
@@ -27,8 +28,29 @@ def _warm_risk_free() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from equitylens.api import routes as routes_module
+    from equitylens.onboarding.repository import OnboardingRepository
+    from equitylens.onboarding.pipeline import OnboardingPipeline
+    from equitylens.onboarding.runner import OnboardingExecutor, OnboardingRunner
+    from equitylens.storage.writer import writer_for
+
+    store = routes_module._store()
+    writer = writer_for(store)
+    writer.start()
+    repository = OnboardingRepository(store)
+    pipeline = OnboardingPipeline(store, repository)
+    executor = OnboardingExecutor(
+        OnboardingRunner(store, repository, handlers=pipeline.handlers())
+    )
+    executor.start()
+    app.state.onboarding_executor = executor
     threading.Thread(target=_warm_risk_free, daemon=True).start()
-    yield
+    try:
+        yield
+    finally:
+        executor.close()
+        pipeline.close()
+        writer.close()
 
 
 app = FastAPI(
@@ -46,6 +68,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(company_router)
 app.include_router(router)
 
 

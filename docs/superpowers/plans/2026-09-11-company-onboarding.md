@@ -320,8 +320,8 @@ recover_interrupted() -> int
 
 接口：产生 CompanyRegistry.resolve 和 SecurityIdentity；证券不是 company 的别名。
 
-- [ ] 从真实库只读盘点 CIK、ticker、行情、来源与估值关联，保存迁移前报告。
-- [ ] 写身份隔离和迁移幂等反例：
+- [x] 从真实库只读盘点 CIK、ticker、行情、来源与估值关联，保存迁移前报告。
+- [x] 写身份隔离和迁移幂等反例：
 
 ```python
 def test_share_classes_keep_separate_identity(registry_with_two_classes):
@@ -331,10 +331,10 @@ def test_share_classes_keep_separate_identity(registry_with_two_classes):
     assert a.security_id != b.security_id
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_company_registry.py tests/integration/test_onboarding_migration.py -q`，确认失败来自尚未实现的契约。
-- [ ] 实现第 4 节身份表、migration checksum、有效期重叠校验和 AAPL/MSFT 种子；对重名 ticker 必须抛 AMBIGUOUS_SECURITY，不取第一行。
-- [ ] 在备份副本执行两次迁移，验证旧记录摘要完全一致及二次无变化；同一测试命令通过。
-- [ ] 更新进度、提交 `feat: add issuer and security registry`。真实库此时不切换新行为。
+- [x] 运行 `uv run pytest tests/integration/test_company_registry.py tests/integration/test_onboarding_migration.py -q`，确认失败来自尚未实现的契约。
+- [x] 实现第 4 节身份表、migration checksum、有效期重叠校验和 AAPL/MSFT 种子；对重名 ticker 必须抛 AMBIGUOUS_SECURITY，不取第一行。
+- [x] 在备份副本执行两次迁移，验证旧记录摘要完全一致及二次无变化；同一测试命令通过。
+- [x] 更新进度、提交 `feat: add issuer and security registry`。真实库此时不切换新行为。
 
 ### T02：固定数据版本和发布隔离
 
@@ -342,7 +342,7 @@ def test_share_classes_keep_separate_identity(registry_with_two_classes):
 
 接口：实现 PublicationRepository.context/facts/publish 与 DatasetBuilder.build；后续请求只使用 PublicationContext。
 
-- [ ] 写候选隔离反例：
+- [x] 写候选隔离反例：
 
 ```python
 def test_candidate_does_not_change_visible_facts(publication_case):
@@ -351,10 +351,10 @@ def test_candidate_does_not_change_visible_facts(publication_case):
     assert publication_case.visible_facts() == before
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_publication.py -q` 确认反例先失败。
-- [ ] 实现 dataset_row 类型校验、临时库封存、来源引用保护、发布指纹和原子指针切换；补充旧 legacy 快照。
-- [ ] 注入文件写后/事务提交前失败，验证旧事实与来源仍可读；对不同发行人 publication 请求拒绝。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: publish immutable company datasets`。
+- [x] 运行 `uv run pytest tests/integration/test_publication.py -q` 确认反例先失败。
+- [x] 实现 dataset_row 类型校验、临时库封存、来源引用保护、发布指纹和原子指针切换；补充旧 legacy 快照。
+- [x] 注入文件写后/事务提交前失败，验证旧事实与来源仍可读；对不同发行人 publication 请求拒绝。
+- [x] 同一测试命令通过，更新进度并提交 `feat: publish immutable company datasets`。
 
 ### T03：统一写入与持久化任务
 
@@ -362,7 +362,7 @@ def test_candidate_does_not_change_visible_facts(publication_case):
 
 接口：OnboardingRunner.run_once/recover_interrupted；所有正式库写入调用统一 writer，不允许 CLI 旁路。
 
-- [ ] 写中断恢复反例：
+- [x] 写中断恢复反例：
 
 ```python
 def test_restart_does_not_duplicate_completed_step(runner_case):
@@ -373,10 +373,10 @@ def test_restart_does_not_duplicate_completed_step(runner_case):
     assert runner_case.fetch_call_count == 1
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_runner.py -q` 确认失败。
-- [ ] 实现持久化状态转换、expected_revision、attempt 哈希、进程锁、串行 writer、取消检查和有上限重试；lifespan 启停和测试隔离。
-- [ ] 测第二进程写锁拒绝、发布时取消、同发行人重复任务、旧 refresh 与估值保存串行互斥；不要只测试线程锁本身。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: persist and recover onboarding jobs`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_runner.py -q` 确认失败。
+- [x] 实现持久化状态转换、expected_revision、attempt 哈希、进程锁、串行 writer、取消检查和有上限重试；lifespan 启停和测试隔离。
+- [x] 测第二进程写锁拒绝、发布时取消、同发行人重复任务、旧 refresh 与估值保存串行互斥；不要只测试线程锁本身。
+- [x] 同一测试命令通过，更新进度并提交 `feat: persist and recover onboarding jobs`。
 
 ### T04：真实发现、采集和专属候选
 
@@ -384,7 +384,7 @@ def test_restart_does_not_duplicate_completed_step(runner_case):
 
 接口：CompanyDiscovery.discover、IssuerProfileService.import_profile（先提供验证部分）；采集输出固定 source manifest。
 
-- [ ] 写身份改变反例：
+- [x] 写身份改变反例：
 
 ```python
 def test_changed_identity_cannot_create_task(discovery_case):
@@ -395,11 +395,11 @@ def test_changed_identity_cannot_create_task(discovery_case):
     assert response.json()['error']['code'] == 'IDENTITY_CHANGED'
 ```
 
-- [ ] 运行 `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_company_discovery.py -q` 确认失败。
-- [ ] 实现身份缓存/过期核对、资格证据、SEC 历史申报分页采集；下载范围覆盖所需财年和季度，不只依赖最近 submissions 列表。
-- [ ] 实现严格配置 schema、展开通用映射、原始报表定位、候选未知字段待适配；不把自动候选标为复核通过。
-- [ ] 补充 ETF 拒绝、未知资格停留、多股类不重复抓财务、坏 YAML/可执行字段拒绝测试；同一测试命令通过。
-- [ ] 更新进度并提交 `feat: discover issuers and build evidence-backed profiles`。
+- [x] 运行 `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_company_discovery.py -q` 确认失败。
+- [x] 实现身份缓存/过期核对、资格证据、SEC 历史申报分页采集；下载范围覆盖所需财年和季度，不只依赖最近 submissions 列表。
+- [x] 实现严格配置 schema、展开通用映射、原始报表定位、候选未知字段待适配；不把自动候选标为复核通过。
+- [x] 补充 ETF 拒绝、未知资格停留、多股类不重复抓财务、坏 YAML/可执行字段拒绝测试；同一测试命令通过。
+- [x] 更新进度并提交 `feat: discover issuers and build evidence-backed profiles`。
 
 ### T05：质量规则和可解释报告
 
@@ -407,7 +407,7 @@ def test_changed_identity_cannot_create_task(discovery_case):
 
 接口：QualityEngine.validate 返回报告及固定指纹；规则必须有 check_id 和 scope_key。
 
-- [ ] 写受限现金及累计季度反例：
+- [x] 写受限现金及累计季度反例：
 
 ```python
 def test_cash_bridge_uses_same_cash_definition(quality_case):
@@ -418,10 +418,10 @@ def test_cash_bridge_uses_same_cash_definition(quality_case):
         investing=-5, financing=-10, fx=2, closing=117).result == 'FAIL'
 ```
 
-- [ ] 运行 `uv run pytest tests/unit/test_onboarding_quality.py -q` 确认失败。
-- [ ] 实现第 7 节规则族、舍入区间和来源校验；复用现有期间解析但增加重述兼容条件。
-- [ ] 加入 EPS 非恒等式、分部抵销、无季度披露、来源损坏、NOT_APPLICABLE 无证据的失败样例；未支持行业明确阻塞。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: enforce issuer quality gates`。
+- [x] 运行 `uv run pytest tests/unit/test_onboarding_quality.py -q` 确认失败。
+- [x] 实现第 7 节规则族、舍入区间和来源校验；复用现有期间解析但增加重述兼容条件。
+- [x] 加入 EPS 非恒等式、分部抵销、无季度披露、来源损坏、NOT_APPLICABLE 无证据的失败样例；未支持行业明确阻塞。
+- [x] 同一测试命令通过，更新进度并提交 `feat: enforce issuer quality gates`。
 
 ### T06：复核、维护者命令和发布闭环
 
@@ -429,7 +429,7 @@ def test_cash_bridge_uses_same_cash_definition(quality_case):
 
 接口：ReviewService.review 和完整 IssuerProfileService.import_profile；绑定 profile/dataset/report/security 指纹。
 
-- [ ] 写复核失效反例：
+- [x] 写复核失效反例：
 
 ```python
 def test_old_approval_cannot_publish_new_candidate(review_case):
@@ -439,10 +439,10 @@ def test_old_approval_cannot_publish_new_candidate(review_case):
     assert result.error.code == 'REVIEW_STALE'
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_issuer_review.py -q` 确认失败。
-- [ ] 实现审查包与证据定位、批准/拒绝记录、输入改变失效、规则失败拒绝批准和发布。
-- [ ] 增加 CLI：`equitylens onboarding show ID`、`export ID --output FILE`、`profile-import ID --file FILE --revision N`、`review ID --fingerprint HASH --revision N --reviewer NAME --note TEXT`。CLI 默认调用本地 API；连接失败不擅自直接写库。实际命令解析加入 `onboarding` 子命令组。
-- [ ] 同一测试命令通过，维护者通过命令完成一次合成申请闭环，更新进度并提交 `feat: add auditable issuer review workflow`。
+- [x] 运行 `uv run pytest tests/integration/test_issuer_review.py -q` 确认失败。
+- [x] 实现审查包与证据定位、批准/拒绝记录、输入改变失效、规则失败拒绝批准和发布。
+- [x] 增加 CLI：`equitylens onboarding show ID`、`export ID --output FILE`、`profile-import ID --file FILE --revision N`、`review ID --fingerprint HASH --revision N --reviewer NAME --note TEXT`。CLI 默认调用本地 API；连接失败不擅自直接写库。实际命令解析加入 `onboarding` 子命令组。
+- [x] 同一测试命令通过，维护者通过命令完成一次合成申请闭环，更新进度并提交 `feat: add auditable issuer review workflow`。
 
 ### T07：API 与所有正式读取链路
 
@@ -450,7 +450,7 @@ def test_old_approval_cannot_publish_new_candidate(review_case):
 
 接口：第 9 节所有路径；api_idempotency 持久化；正式响应携带 publication_id/security_id。
 
-- [ ] 写幂等和版本一致性反例：
+- [x] 写幂等和版本一致性反例：
 
 ```python
 def test_repeated_request_returns_same_task(api_case):
@@ -459,10 +459,10 @@ def test_repeated_request_returns_same_task(api_case):
     assert a.json()['onboarding_id'] == b.json()['onboarding_id']
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_api.py -q` 确认失败。
-- [ ] 实现接口与错误契约；正式读取通过 PublicationContext，旧 ticker 无歧义兼容；行情按 security_id，禁用不适用分析能力。
-- [ ] 测同幂等键不同输入、分页、超期发现、跨公司 publication、候选隔离、读取期间后台发布、取消终态。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: expose company onboarding and versioned reads`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_api.py -q` 确认失败。
+- [x] 实现接口与错误契约；正式读取通过 PublicationContext，旧 ticker 无歧义兼容；行情按 security_id，禁用不适用分析能力。
+- [x] 测同幂等键不同输入、分页、超期发现、跨公司 publication、候选隔离、读取期间后台发布、取消终态。
+- [x] 同一测试命令通过，更新进度并提交 `feat: expose company onboarding and versioned reads`。
 
 ### T08：估值门禁和证券指纹
 
@@ -470,7 +470,7 @@ def test_repeated_request_returns_same_task(api_case):
 
 接口：PUT valuation-profile 复用既有表；确认指纹包括 publication/security/model/assumptions。
 
-- [ ] 写未确认估值反例：
+- [x] 写未确认估值反例：
 
 ```python
 def test_new_security_requires_confirmed_assumptions(valuation_case):
@@ -479,10 +479,10 @@ def test_new_security_requires_confirmed_assumptions(valuation_case):
     assert response.json()['error']['code'] == 'VALUATION_NEEDS_CONFIGURATION'
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_valuation.py -q` 确认失败；将该错误码加入 API schema。
-- [ ] 实现确认表字段、模型/币种/股类能力校验、旧计划保真和新版本失效；草稿参数可验证，但正式计算/保存必须通过确认门禁。
-- [ ] 测复制待复核计划、异币种、未知 ADR 比例、发行人总股数不能配单一股类价格、旧运行不被更新覆盖。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: gate valuations on verified issuer data`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_valuation.py -q` 确认失败；将该错误码加入 API schema。
+- [x] 实现确认表字段、模型/币种/股类能力校验、旧计划保真和新版本失效；草稿参数可验证，但正式计算/保存必须通过确认门禁。
+- [x] 测复制待复核计划、异币种、未知 ADR 比例、发行人总股数不能配单一股类价格、旧运行不被更新覆盖。
+- [x] 同一测试命令通过，更新进度并提交 `feat: gate valuations on verified issuer data`。
 
 ### T09：页面申请与质量报告
 
@@ -490,8 +490,8 @@ def test_new_security_requires_confirmed_assumptions(valuation_case):
 
 接口：前端仅消费第 9 节 API；固定 publication 贯穿页面，任务 revision 控制操作。
 
-- [ ] 阅读本地 Next.js 指南，沿用现有样式与请求模式。
-- [ ] 写浏览器用户路径：
+- [x] 阅读本地 Next.js 指南，沿用现有样式与请求模式。
+- [x] 写浏览器用户路径：
 
 ```typescript
 test('company appears only after publication', async ({ page }) => {
@@ -506,9 +506,9 @@ test('company appears only after publication', async ({ page }) => {
 });
 ```
 
-- [ ] 运行 `pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts` 确认行为失败。
-- [ ] 实现对话框、列表、详情、轮询、取消重试、审查包下载和质量报告；为上述测试定义 API fixture，另补发布后列表出现、重载、迟到响应和键盘焦点测试。
-- [ ] 运行 TypeScript、ESLint 和上述浏览器测试通过，更新进度并提交 `feat: add company onboarding pages`。
+- [x] 运行 `pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts` 确认行为失败。
+- [x] 实现对话框、列表、详情、轮询、取消重试、审查包下载和质量报告；为上述测试定义 API fixture，另补发布后列表出现、重载、迟到响应和键盘焦点测试。
+- [x] 运行 TypeScript、ESLint 和上述浏览器测试通过，更新进度并提交 `feat: add company onboarding pages`。
 
 ### T10：真实发行人接入、迁移验收与使用文档
 
@@ -516,12 +516,14 @@ test('company appears only after publication', async ({ page }) => {
 
 接口：使用已完成的页面/CLI/API，不为 KO/COST 增加主业务硬编码特例。确有新解析行为时放入命名解析器并复核所有发行人。
 
-- [ ] 核实 KO/COST 当前身份和来源，固定官方快照、覆盖期间及独立手工预期值。
-- [ ] 建立 golden 测试，逐个核心指标比较值、期间、单位和原始证据引用；先让未适配案例失败。
+- [x] 核实 KO/COST 当前身份和来源，固定官方快照、覆盖期间及独立手工预期值。
+- [x] 建立 golden 测试，逐个核心指标比较值、期间、单位和原始证据引用；先让未适配案例失败。
 - [ ] 顺序完成 KO、COST 配置、复核与页面发布，再完成 AAPL/MSFT 新标准复核；任一证据不足保留阻塞。
-- [ ] 执行 `uv run pytest tests/golden/test_onboarding_issuers.py -q`，新旧公司关键数值独立核对通过。
-- [ ] 在副本完整迁移、故障回滚与恢复演练；真实迁移仅使用已验证流程，保留备份地址和摘要；先确认服务已停止写入，不能覆盖用户新增数据。
-- [ ] 完成第 15 节全量验证、审查和两份教程；记录截图/报告位置及提交号，提交 `test: verify issuer onboarding end to end`。
+- [x] 执行 `uv run pytest tests/golden/test_onboarding_issuers.py -q`，新旧公司关键数值独立核对通过。
+- [x] 在副本完整迁移、故障回滚与恢复演练；真实迁移仅使用已验证流程，保留备份地址和摘要；先确认服务已停止写入，不能覆盖用户新增数据。
+- [x] 完成第 15 节全量验证、审查和两份教程；记录截图/报告位置及提交号，提交 `test: verify issuer onboarding end to end`。
+
+T10 阻塞记录（2026-09-12）：KO/COST 配置、候选、golden 与复核路径已完成，但当前环境访问官方 SEC Archives iXBRL 返回 403。Company Facts 不包含真实报表行级 context/locator 或分部维度，质量正确保留 `LINEAGE.filing_context` 与 `SEGMENTS.reconciliation` BLOCKER；两家公司未批准、未发布。AAPL/MSFT 完成 profile v2 与新标准 golden，但正式库仍保持 `LEGACY_UNREVIEWED`。因此第三项按“任一证据不足保留阻塞”保持未勾选。
 
 ## 15. 验证命令、审查和交付
 

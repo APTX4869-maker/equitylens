@@ -14,6 +14,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.publication.models import canonical_json, sha256_json
+from equitylens.publication.repository import PublicationConflict, PublicationRepository
 from equitylens.valuation import dcf as dcf_mod
 from equitylens.valuation.dcf import DcfInputs, ValuationError, implied_growth, run_dcf, validate
 from equitylens.valuation.defaults import default_assumption_set, load_valuation_config
@@ -44,6 +46,287 @@ def valuation_input_fingerprint(inputs: DcfInputs | dict) -> str:
         data, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def valuation_confirmation_fingerprint(
+    *, security_id: str, publication_id: str, model_version: str, assumptions: dict
+) -> str:
+    return sha256_json(
+        {
+            "security_id": security_id,
+            "publication_id": publication_id,
+            "model_version": model_version,
+            "assumptions": assumptions,
+        }
+    )
+
+
+def _valuation_error(code: str, message: str, field: str | None = None):
+    raise ValuationError(code, message, field)
+
+
+def confirm_valuation_profile(
+    store,
+    *,
+    company_id: str,
+    security_id: str,
+    publication_id: str,
+    model_version: str,
+    assumptions: dict,
+    confirmed: bool,
+) -> dict:
+    """Validate and optionally persist an identity-bound valuation confirmation."""
+    security = store.query_one(
+        "SELECT * FROM security WHERE security_id=? AND company_id=? AND status='ACTIVE'",
+        [security_id, company_id],
+    )
+    if security is None:
+        _valuation_error("VALUATION_SECURITY_MISMATCH", "security does not belong to company")
+    try:
+        context = PublicationRepository(store).context(company_id, publication_id)
+    except PublicationConflict as exc:
+        _valuation_error("VALUATION_PUBLICATION_MISMATCH", str(exc))
+    if model_version != dcf_mod.MODEL_VERSION:
+        _valuation_error("VALUATION_MODEL_UNSUPPORTED", "valuation model version is unsupported")
+    company = store.query_one(
+        "SELECT reporting_template FROM company WHERE company_id=?", [company_id]
+    )
+    if company is None or company["reporting_template"] != "us_gaap_operating_v1":
+        _valuation_error(
+            "VALUATION_MODEL_UNSUPPORTED",
+            "no validated valuation model exists for this reporting template",
+        )
+    capability = store.query_one(
+        "SELECT status, reason FROM company_capability WHERE publication_id=? AND module='financials'",
+        [publication_id],
+    )
+    if capability and capability["status"] != "READY":
+        _valuation_error(
+            "VALUATION_DATA_BLOCKED",
+            capability.get("reason") or "published financial data is unavailable",
+        )
+    facts = PublicationRepository(store).facts(context)
+    currencies = {
+        str(fact.get("unit"))
+        for fact in facts
+        if len(str(fact.get("unit") or "")) == 3
+        and str(fact.get("unit")).isalpha()
+    }
+    if currencies and security["currency"] not in currencies:
+        _valuation_error(
+            "VALUATION_CURRENCY_MISMATCH",
+            "financial statement and security quote currencies are not verified as compatible",
+        )
+    evidence = security.get("identity_evidence_json") or {}
+    if isinstance(evidence, str):
+        evidence = json.loads(evidence)
+    if security["instrument_type"] == "ADR" and not evidence.get("adr_ratio"):
+        _valuation_error(
+            "VALUATION_ADR_RATIO_UNKNOWN", "ADR conversion ratio is not verified"
+        )
+    security_count = store.query_one(
+        "SELECT count(*) AS n FROM security WHERE company_id=? AND status='ACTIVE'",
+        [company_id],
+    )["n"]
+    if security_count > 1 and assumptions.get("share_basis_security_id") != security_id:
+        _valuation_error(
+            "VALUATION_SHARE_BASIS_UNVERIFIED",
+            "issuer-level share count cannot be paired with one security price",
+        )
+    try:
+        inputs = _inputs_from_dict(assumptions)
+        validate(inputs)
+    except TypeError as exc:
+        _valuation_error("INVALID_ASSUMPTION", f"complete DCF assumptions are required: {exc}")
+
+    assumptions_hash = sha256_json(assumptions)
+    fingerprint = valuation_confirmation_fingerprint(
+        security_id=security_id,
+        publication_id=publication_id,
+        model_version=model_version,
+        assumptions=assumptions,
+    )
+    status_value = "CONFIRMED" if confirmed else "DRAFT"
+    existing = store.query_one(
+        """
+        SELECT * FROM valuation_assumption_set
+        WHERE confirmation_fingerprint=? AND status=?
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        [fingerprint, status_value],
+    )
+    if existing is None:
+        assumption_set_id = f"aset_{uuid.uuid4().hex[:12]}"
+        from equitylens.storage.writer import writer_for
+
+        with writer_for(store).transaction(store):
+            locked = store._conn.execute(
+                """
+                SELECT assumption_set_id FROM valuation_assumption_set
+                WHERE confirmation_fingerprint=? AND status=?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                [fingerprint, status_value],
+            ).fetchone()
+            if locked:
+                assumption_set_id = locked[0]
+            else:
+                store._conn.execute(
+                    """
+                    INSERT INTO valuation_assumption_set (
+                      assumption_set_id, company_id, security_id, publication_id,
+                      name, model_name, model_version, assumptions_json,
+                      assumptions_hash, confirmation_fingerprint, status,
+                      confirmed_at, source_metadata_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, 'FCFF_DCF', ?, ?, ?, ?, ?,
+                              CASE WHEN ? THEN now() ELSE NULL END, ?, now())
+                    """,
+                    [
+                        assumption_set_id,
+                        company_id,
+                        security_id,
+                        publication_id,
+                        "Confirmed valuation profile"
+                        if confirmed
+                        else "Valuation draft",
+                        model_version,
+                        canonical_json(assumptions),
+                        assumptions_hash,
+                        fingerprint,
+                        status_value,
+                        confirmed,
+                        canonical_json({"source": "user_confirmation"}),
+                    ],
+                )
+        existing = store.query_one(
+            "SELECT * FROM valuation_assumption_set WHERE assumption_set_id=?",
+            [assumption_set_id],
+        )
+    return {
+        "confirmation_id": existing["assumption_set_id"],
+        "company_id": company_id,
+        "security_id": security_id,
+        "publication_id": publication_id,
+        "model_version": model_version,
+        "assumptions_hash": assumptions_hash,
+        "confirmation_fingerprint": fingerprint,
+        "status": "READY" if confirmed else "NEEDS_CONFIGURATION",
+    }
+
+
+def require_valuation_confirmation(
+    store,
+    *,
+    company_id: str,
+    security_id: str,
+    publication_id: str,
+    model_version: str,
+    assumptions: dict | None = None,
+) -> dict | None:
+    company = store.query_one(
+        "SELECT quality_status FROM company WHERE company_id=?", [company_id]
+    )
+    if company and company["quality_status"] == "LEGACY_UNREVIEWED":
+        return None
+    params: list = [company_id, security_id, publication_id, model_version]
+    sql = """
+        SELECT * FROM valuation_assumption_set
+        WHERE company_id=? AND security_id=? AND publication_id=?
+          AND model_version=? AND status='CONFIRMED'
+    """
+    if assumptions is not None:
+        sql += " AND assumptions_hash=?"
+        params.append(sha256_json(assumptions))
+    sql += " ORDER BY confirmed_at DESC LIMIT 1"
+    row = store.query_one(sql, params)
+    if row is None:
+        _valuation_error(
+            "VALUATION_NEEDS_CONFIGURATION",
+            "confirm model assumptions for this security and publication before valuation",
+        )
+    row = dict(row)
+    row["assumptions"] = json.loads(row["assumptions_json"])
+    return row
+
+
+def confirmed_valuation(
+    store,
+    *,
+    company_id: str,
+    ticker: str,
+    confirmation: dict,
+    persist: bool,
+) -> dict:
+    inputs = _inputs_from_dict(confirmation["assumptions"])
+    output = run_dcf(inputs)
+    scenarios = scenario_valuation(inputs, ticker)
+    sens = sensitivity(inputs)
+    meta = {
+        key: {
+            "value": value,
+            "source_type": "user_confirmation",
+            "source": f"valuation_confirmation:{confirmation['assumption_set_id']}",
+        }
+        for key, value in _inputs_dict(inputs).items()
+    }
+    quality = model_quality_block(meta, output, scenarios)
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
+    from equitylens.market.service import latest_quote_row
+
+    market_row = latest_quote_row(
+        store, company_id, confirmation["security_id"]
+    )
+    if persist:
+        _persist_run(
+            store,
+            {
+                "valuation_run_id": run_id,
+                "company_id": company_id,
+                "security_id": confirmation["security_id"],
+                "publication_id": confirmation["publication_id"],
+                "model_name": "FCFF_DCF",
+                "model_version": confirmation["model_version"],
+                "run_at": _now(),
+                "market_observation_id": market_row["quote_id"] if market_row else None,
+                "assumption_set_id": confirmation["assumption_set_id"],
+                "fact_snapshot_json": canonical_json(
+                    {"inputs": _inputs_dict(inputs), "meta": meta, "source_fact_ids": {}}
+                ),
+                "output_json": canonical_json(_output_dict(output)),
+                "warnings_json": canonical_json(output.warnings),
+                "input_fingerprint": valuation_input_fingerprint(inputs),
+                "scenarios_json": canonical_json(scenarios),
+                "sensitivity_json": canonical_json(sens),
+                "model_quality_json": canonical_json(quality),
+                "confirmation_fingerprint": confirmation["confirmation_fingerprint"],
+            },
+        )
+    from equitylens.market.service import valuation_market_block
+
+    return {
+        "ticker": ticker,
+        "company_id": company_id,
+        "security_id": confirmation["security_id"],
+        "publication_id": confirmation["publication_id"],
+        "confirmation_id": confirmation["assumption_set_id"],
+        "valuation_run_id": run_id if persist else None,
+        "input_fingerprint": valuation_input_fingerprint(inputs),
+        "model_version": confirmation["model_version"],
+        "assumptions": {"inputs": _inputs_dict(inputs), "meta": meta},
+        "result": _output_dict(output),
+        "scenarios": scenarios,
+        "sensitivity": sens,
+        "model_quality": quality,
+        "market": valuation_market_block(
+            store,
+            company_id,
+            ticker,
+            round(output.fair_value_per_share, 2),
+            security_id=confirmation["security_id"],
+        ),
+        "warnings": output.warnings,
+        "reproducible": True,
+    }
 
 
 def _source_fact_ids(meta: dict) -> dict[str, list[str]]:
@@ -354,9 +637,22 @@ def run_custom(store, company_id: str, ticker: str, payload: dict, persist: bool
     }
 
 
-def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
-    rf = risk_free_rate()
-    base, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
+def reverse_dcf(
+    store,
+    company_id: str,
+    ticker: str,
+    payload: dict,
+    *,
+    confirmed_assumptions: dict | None = None,
+    security_id: str | None = None,
+) -> dict:
+    if confirmed_assumptions is None:
+        rf = risk_free_rate()
+        base, _ = default_assumption_set(
+            store, company_id, ticker, risk_free=rf["value"]
+        )
+    else:
+        base = _inputs_from_dict(confirmed_assumptions)
     if "assumptions" in payload and not isinstance(payload["assumptions"], dict):
         raise ValuationError(
             "INVALID_INPUT", "assumptions must be an object", "assumptions"
@@ -423,7 +719,10 @@ def reverse_dcf(store, company_id: str, ticker: str, payload: dict) -> dict:
         "model_version": dcf_mod.MODEL_VERSION,
         "implied_revenue_cagr": implied,
         "target_price": target,
-        "market": valuation_market_block(store, company_id, ticker, fair_value_per_share=None),
+        "market": valuation_market_block(
+            store, company_id, ticker, fair_value_per_share=None,
+            security_id=security_id,
+        ),
         "historical_revenue_cagr": hist_cagr,
         "fixed_assumptions": {"wacc": base.wacc, "terminal_growth": base.terminal_growth,
                               "terminal_roic": base.terminal_roic,
@@ -459,13 +758,16 @@ def _output_dict(output) -> dict:
 
 
 def _persist_run(store, run: dict) -> None:
+    from equitylens.storage.writer import writer_for
+
     store.connect()
     cols = list(run.keys())
     placeholders = ", ".join("?" for _ in cols)
-    store._conn.execute(
-        f"INSERT INTO valuation_run ({', '.join(cols)}) VALUES ({placeholders})",
-        [run[c] for c in cols],
-    )
+    with writer_for(store).transaction(store):
+        store._conn.execute(
+            f"INSERT INTO valuation_run ({', '.join(cols)}) VALUES ({placeholders})",
+            [run[c] for c in cols],
+        )
 
 
 # --- P06: personal reference-price plans -------------------------------------
@@ -544,6 +846,8 @@ def create_plan(
     plan_id = f"plan_{uuid.uuid4().hex[:12]}"
     row = {
         "plan_id": plan_id, "company_id": company_id, "ticker": ticker,
+        "security_id": run.get("security_id"),
+        "publication_id": run.get("publication_id"),
         "name": payload.get("name") or "未命名方案",
         "reference_value": ref,
         "reference_source": f"valuation_run:{run_id}:{scenario_key}",
@@ -564,13 +868,16 @@ def create_plan(
         "source_quote_observed_at": quote_observed_at,
         "created_at": _now(),
     }
+    from equitylens.storage.writer import writer_for
+
     store.connect()
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
-    store._conn.execute(
-        f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
-        [row[c] for c in cols],
-    )
+    with writer_for(store).transaction(store):
+        store._conn.execute(
+            f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
+            [row[c] for c in cols],
+        )
     out = dict(row)
     return _plan_out(row)
 

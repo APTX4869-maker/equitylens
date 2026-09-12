@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubPublishedCompanyDirectory } from "./company-directory-fixture";
+
+test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page); });
 
 // Controlled-order browser tests for valuation draft identity (V03/U02): the
 // newest complete draft must win, an out-of-order response must not overwrite
@@ -92,7 +95,7 @@ function runResponse(fair: number, assumptions: Assumptions) {
 }
 
 async function stubPage(page: Page) {
-  await page.route("**/api/v1/companies/AAPL", (route) =>
+  await page.route("**/api/v1/companies/AAPL?**", (route) =>
     route.fulfill({
       json: {
         ticker: "AAPL",
@@ -104,13 +107,13 @@ async function stubPage(page: Page) {
       },
     })
   );
-  await page.route("**/api/v1/companies/AAPL/overview", (route) =>
+  await page.route("**/api/v1/companies/AAPL/overview?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", latest_period: null, kpis: {}, trend: {}, provenance_available: true } })
   );
-  await page.route("**/api/v1/companies/AAPL/market/quote", (route) =>
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) =>
     route.fulfill({ json: { status: "UNAVAILABLE", configured: true, synced: false, reason: "test" } })
   );
-  await page.route("**/api/v1/companies/AAPL/freshness", (route) =>
+  await page.route("**/api/v1/companies/AAPL/freshness?**", (route) =>
     route.fulfill({ json: { modules: [], stale_modules: [], hint: null } })
   );
   await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>

@@ -71,12 +71,12 @@ def sync_company(
     client: SECClient | None = None,
     raw_dir=RAW_DIR,
 ) -> SyncReport:
-    company = get_company(ticker)
-    cik = company.cik
-    directory = raw_dir / "sec" / cik
     store = store or DuckDBStore()
     store.connect()
     store.init_schema()
+    company = get_company(ticker, store=store)
+    cik = company.cik
+    directory = raw_dir / "sec" / cik
 
     started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     report = SyncReport(company=ticker)
@@ -216,11 +216,11 @@ def sync_segments(
     from equitylens.normalization.ixbrl import IxbrlDocument
     from equitylens.normalization.segments import SegmentConfigRegistry, extract_segments
 
-    company = get_company(ticker)
-    cik = company.cik
     store = store or DuckDBStore()
     store.connect()
     store.init_schema()
+    company = get_company(ticker, store=store)
+    cik = company.cik
 
     docs = fetch_filing_documents(ticker, forms=forms, limit_per_form=limit_per_form,
                                   fetch=fetch, store=store, client=client, raw_dir=raw_dir)

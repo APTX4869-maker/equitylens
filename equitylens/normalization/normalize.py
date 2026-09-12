@@ -157,8 +157,73 @@ def normalize_companyfacts(
                     result.canonical_count += 1
                     result.facts_accepted += 1
 
+    # Some issuers disclose only total liabilities-and-equity plus total equity.
+    # Derive liabilities from those two reported lines while preserving both raw
+    # facts as lineage; never infer it from unrelated balance-sheet components.
+    raw_by_id = {row["raw_fact_id"]: row for row in raw_rows}
+
+    def balance_basis(row: dict) -> tuple | None:
+        refs = json.loads(row["source_raw_fact_ids"])
+        accessions = {
+            raw_by_id[raw_id].get("accession_number")
+            for raw_id in refs
+            if raw_id in raw_by_id
+        }
+        if len(accessions) != 1 or None in accessions:
+            return None
+        return (
+            row.get("instant_date"),
+            row.get("unit"),
+            row.get("as_known_at"),
+            next(iter(accessions)),
+        )
+
+    direct_liability_bases = {
+        basis
+        for row in canonical_rows
+        if row["canonical_metric"] == "TOTAL_LIABILITIES"
+        and (basis := balance_basis(row)) is not None
+    }
+    balance_by_basis: dict[tuple, dict[str, dict]] = {}
+    for row in canonical_rows:
+        if row["canonical_metric"] not in {"BALANCE_TOTAL", "TOTAL_EQUITY"}:
+            continue
+        basis = balance_basis(row)
+        if basis is not None:
+            balance_by_basis.setdefault(basis, {})[row["canonical_metric"]] = row
+    for basis, pair in balance_by_basis.items():
+        if basis in direct_liability_bases or set(pair) != {"BALANCE_TOTAL", "TOTAL_EQUITY"}:
+            continue
+        total, equity = pair["BALANCE_TOTAL"], pair["TOTAL_EQUITY"]
+        instant_date = total["instant_date"]
+        raw_ids = sorted(
+            set(json.loads(total["source_raw_fact_ids"]))
+            | set(json.loads(equity["source_raw_fact_ids"]))
+        )
+        canonical_rows.append(
+            {
+                **total,
+                "canonical_fact_id": _fact_id(
+                    "cf", source_document_id, "TOTAL_LIABILITIES", total["unit"],
+                    instant_date, None, None, float(total["value"]) - float(equity["value"]),
+                    f"derived-balance|{basis[3]}|{basis[2]}",
+                ),
+                "canonical_metric": "TOTAL_LIABILITIES",
+                "value": float(total["value"]) - float(equity["value"]),
+                "status": "CALCULATED",
+                "mapping_rule_id": "total_liabilities.balance_difference.v1",
+                "source_raw_fact_ids": json.dumps(raw_ids, ensure_ascii=False),
+                "warnings_json": json.dumps(["derived: liabilities-and-equity minus total equity"]),
+            }
+        )
+        result.derived_count += 1
+
     # Derive standalone quarters for cash-flow style metrics (YTD chain).
     derived_rows: list[dict] = []
+    raw_lineage_by_fact = {
+        row["canonical_fact_id"]: json.loads(row["source_raw_fact_ids"])
+        for row in canonical_rows
+    }
     derive_metrics = [m for m in mappings.all_metrics()
                       if (mappings.metric(m) and mappings.metric(m).derive_standalone_quarter)]
     for metric in derive_metrics:
@@ -166,6 +231,13 @@ def normalize_companyfacts(
         for year in sorted({c["fiscal_year"] for c in metric_facts if c["fiscal_year"]}):
             year_facts = [c for c in metric_facts if c["fiscal_year"] == year]
             for d in derive_standalone_quarters(year_facts, year, calendar):
+                    source_raw_ids = sorted(
+                        {
+                            raw_id
+                            for fact_id in d.get("input_ids") or []
+                            for raw_id in raw_lineage_by_fact.get(fact_id, [])
+                        }
+                    )
                     d_id = _fact_id("cf", source_document_id, metric, d.get("unit") or "USD",
                                     d.get("period_start"), d.get("period_end"), None,
                                     d.get("value"), "derived")
@@ -184,7 +256,7 @@ def normalize_companyfacts(
                         "status": "CALCULATED",
                         "mapping_rule_id": d.get("formula_id"),
                         "mapping_version": mappings.mapping_version,
-                        "source_raw_fact_ids": json.dumps(d.get("input_ids") or [], ensure_ascii=False),
+                        "source_raw_fact_ids": json.dumps(source_raw_ids, ensure_ascii=False),
                         "source_document_id": source_document_id,
                         "as_known_at": d.get("as_known_at"),
                         "created_at": created_at,

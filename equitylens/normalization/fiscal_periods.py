@@ -282,6 +282,12 @@ def derive_standalone_quarters(facts: list[dict], year: int, calendar: FiscalCal
             return None
         if later.get("unit") != earlier.get("unit"):
             return None
+        # Issuer adapters attach a restatement_set_id once filing contexts have
+        # been reconciled. Never subtract across explicitly different sets.
+        later_basis = later.get("restatement_set_id")
+        earlier_basis = earlier.get("restatement_set_id")
+        if (later_basis or earlier_basis) and later_basis != earlier_basis:
+            return None
         return {
             "canonical_metric": later["canonical_metric"],
             "fiscal_year": year,

@@ -1,0 +1,345 @@
+"""Company registry, onboarding, review, and publication-version routes."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+
+from equitylens.api.company_schemas import (
+    CreateOnboardingRequest,
+    DiscoverRequest,
+    ProfileImportRequest,
+    ReviewRequest,
+    RevisionRequest,
+    ValuationProfileRequest,
+)
+from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError
+from equitylens.companies.registry import CompanyRegistry, CompanyRegistryError
+from equitylens.issuers.profile import IssuerProfileService
+from equitylens.issuers.review import ReviewConflict, ReviewService
+from equitylens.onboarding.repository import OnboardingConflict, OnboardingRepository
+from equitylens.onboarding.service import OnboardingService
+from equitylens.publication.models import sha256_json
+from equitylens.publication.repository import PublicationConflict, PublicationRepository
+from equitylens.valuation.dcf import ValuationError
+from equitylens.valuation.service import confirm_valuation_profile
+
+
+router = APIRouter(prefix="/api/v1")
+
+
+def _store():
+    # Reuse the established test seam and the process-wide writer-backed store.
+    from equitylens.api.routes import _store as routes_store
+
+    return routes_store()
+
+
+def _detail(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def _raise_service_error(exc: Exception) -> None:
+    code = getattr(exc, "code", "REQUEST_FAILED")
+    if isinstance(exc, DiscoveryError):
+        if code == "SEC_UNAVAILABLE":
+            status_code = 503
+        else:
+            status_code = 422 if code in {"INVALID_TICKER", "UNSUPPORTED_INSTRUMENT"} else 409
+    elif isinstance(exc, KeyError):
+        status_code = 404
+    else:
+        status_code = 409
+    raise HTTPException(status_code, _detail(code, str(exc))) from exc
+
+
+def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    if store is not None:
+        row = store.query_one(
+            """
+            SELECT a.ticker, c.legal_name AS company_name
+            FROM company c
+            LEFT JOIN security s ON s.company_id=c.company_id AND s.status='ACTIVE'
+            LEFT JOIN security_ticker_alias a ON a.security_id=s.security_id
+              AND a.valid_from <= CURRENT_DATE
+              AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)
+            WHERE c.company_id=? ORDER BY a.ticker LIMIT 1
+            """,
+            [task.company_id],
+        )
+        if row:
+            identity = {"ticker": row.get("ticker"), "company_name": row.get("company_name")}
+    return {**task.model_dump(mode="json"), **identity, **extra}
+
+
+@router.get("/companies")
+def companies(
+    cursor: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    store = _store()
+    rows = store.query(
+        """
+        SELECT c.company_id, s.security_id, a.ticker, c.legal_name AS name,
+               s.exchange, c.active_publication_id AS publication_id,
+               c.quality_status
+        FROM security s
+        JOIN company c ON c.company_id=s.company_id
+        JOIN security_ticker_alias a ON a.security_id=s.security_id
+        WHERE s.status='ACTIVE' AND a.valid_from <= CURRENT_DATE
+          AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)
+          AND (? IS NULL OR s.security_id > ?)
+        ORDER BY s.security_id, a.ticker
+        LIMIT ?
+        """,
+        [cursor, cursor, limit + 1],
+    )
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    for item in items:
+        capabilities = store.query(
+            "SELECT module, status, reason, coverage_json FROM company_capability WHERE publication_id=? ORDER BY module",
+            [item["publication_id"]],
+        ) if item["publication_id"] else []
+        for capability in capabilities:
+            value = capability.get("coverage_json")
+            capability["coverage"] = json.loads(value) if isinstance(value, str) else value
+            capability.pop("coverage_json", None)
+            if capability["module"] == "valuation":
+                confirmation = store.query_one(
+                    """
+                    SELECT 1 FROM valuation_assumption_set
+                    WHERE security_id=? AND publication_id=? AND status='CONFIRMED'
+                    LIMIT 1
+                    """,
+                    [item["security_id"], item["publication_id"]],
+                )
+                if confirmation:
+                    capability["status"] = "READY"
+                    capability["reason"] = None
+        item["capabilities"] = capabilities
+    return {
+        "items": items,
+        "next_cursor": items[-1]["security_id"] if has_more else None,
+    }
+
+
+@router.post("/companies/discover")
+def discover(body: DiscoverRequest):
+    try:
+        return CompanyDiscovery(_store()).discover(body.ticker).model_dump(mode="json")
+    except DiscoveryError as exc:
+        _raise_service_error(exc)
+
+
+@router.post(
+    "/company-onboardings",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_onboarding(
+    body: CreateOnboardingRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1),
+):
+    store = _store()
+    request_hash = sha256_json(body.model_dump(mode="json"))
+    prior = store.query_one(
+        "SELECT request_hash FROM api_idempotency WHERE key=?", [idempotency_key]
+    )
+    existing = prior is not None and prior["request_hash"] == request_hash
+    try:
+        task = OnboardingService(
+            CompanyDiscovery(store),
+            CompanyRegistry(store),
+            OnboardingRepository(store),
+        ).create(**body.model_dump(), idempotency_key=idempotency_key)
+        return _task_payload(task, store=store, existing=existing)
+    except (DiscoveryError, OnboardingConflict, CompanyRegistryError) as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/company-onboardings")
+def onboarding_list(
+    cursor: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    store = _store()
+    rows = store.query(
+        """
+        SELECT onboarding_id FROM company_onboarding
+        WHERE (? IS NULL OR onboarding_id > ?)
+        ORDER BY onboarding_id LIMIT ?
+        """,
+        [cursor, cursor, limit + 1],
+    )
+    repository = OnboardingRepository(store)
+    items = [repository.get(row["onboarding_id"]) for row in rows[:limit]]
+    return {
+        "items": [_task_payload(item, store=store) for item in items],
+        "next_cursor": items[-1].onboarding_id if len(rows) > limit else None,
+    }
+
+
+@router.get("/company-onboardings/{task_id}")
+def onboarding_detail(task_id: str):
+    store = _store()
+    repository = OnboardingRepository(store)
+    try:
+        task = repository.get(task_id)
+    except KeyError as exc:
+        _raise_service_error(exc)
+    attempts = store.query(
+        "SELECT * FROM onboarding_step_attempt WHERE onboarding_id=? ORDER BY started_at",
+        [task_id],
+    )
+    checks = store.query(
+        "SELECT * FROM company_quality_check WHERE report_id=? ORDER BY check_id, scope_key",
+        [task.quality_report_id],
+    ) if task.quality_report_id else []
+    blocking = [
+        {"check_id": row["check_id"], "reason": row.get("reason")}
+        for row in checks
+        if row["status"] == "FAIL" and row["severity"] == "BLOCKER"
+    ]
+    return _task_payload(task, store=store, steps=attempts, checks=checks, blocking_reasons=blocking)
+
+
+@router.post("/company-onboardings/{task_id}/retry")
+def retry_onboarding(task_id: str, body: RevisionRequest):
+    try:
+        store = _store()
+        task = OnboardingRepository(store).retry(
+            task_id, expected_revision=body.expected_revision
+        )
+        return _task_payload(task, store=store)
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+
+
+@router.post("/company-onboardings/{task_id}/cancel")
+def cancel_onboarding(task_id: str, body: RevisionRequest):
+    try:
+        store = _store()
+        task = OnboardingRepository(store).cancel(
+            task_id, expected_revision=body.expected_revision
+        )
+        return _task_payload(task, store=store)
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/company-onboardings/{task_id}/review-package")
+def review_package(task_id: str):
+    store = _store()
+    try:
+        return ReviewService(
+            store, OnboardingRepository(store), PublicationRepository(store)
+        ).review_package(task_id)
+    except (KeyError, ReviewConflict) as exc:
+        _raise_service_error(exc)
+
+
+@router.post("/company-onboardings/{task_id}/profile")
+def import_profile(task_id: str, body: ProfileImportRequest):
+    store = _store()
+    try:
+        task = IssuerProfileService(
+            PublicationRepository(store), OnboardingRepository(store)
+        ).import_profile(task_id, body.expected_revision, body.profile)
+        return _task_payload(task, store=store)
+    except KeyError as exc:
+        _raise_service_error(exc)
+    except OnboardingConflict as exc:
+        _raise_service_error(exc)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, _detail("INVALID_PROFILE", str(exc))) from exc
+
+
+@router.post("/company-onboardings/{task_id}/review")
+def review(task_id: str, body: ReviewRequest):
+    store = _store()
+    tasks = OnboardingRepository(store)
+    try:
+        record = ReviewService(
+            store,
+            tasks,
+            PublicationRepository(store),
+            publish_immediately=False,
+        ).review(
+            task_id, **body.model_dump()
+        )
+        return _task_payload(tasks.get(task_id), store=store, review=record.__dict__)
+    except (KeyError, ReviewConflict) as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/companies/{ticker}/quality-report")
+def quality_report(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    store = _store()
+    try:
+        security = CompanyRegistry(store).resolve(ticker, security_id)
+        context = PublicationRepository(store).context(
+            security.company_id, publication_id
+        )
+    except CompanyRegistryError as exc:
+        _raise_service_error(exc)
+    except PublicationConflict as exc:
+        raise HTTPException(404, _detail(exc.code, str(exc))) from exc
+    publication = store.query_one(
+        "SELECT quality_report_id, review_id, published_at FROM publication WHERE publication_id=?",
+        [context.publication_id],
+    )
+    report = None
+    checks = []
+    if publication["quality_report_id"]:
+        report = store.query_one(
+            "SELECT * FROM quality_report WHERE report_id=?",
+            [publication["quality_report_id"]],
+        )
+        checks = store.query(
+            "SELECT * FROM company_quality_check WHERE report_id=? ORDER BY check_id, scope_key",
+            [publication["quality_report_id"]],
+        )
+    return {
+        "company_id": security.company_id,
+        "security_id": security.security_id,
+        "publication_id": context.publication_id,
+        "profile_id": context.profile_id,
+        "published_at": publication["published_at"],
+        "review_id": publication["review_id"],
+        "report": report,
+        "checks": checks,
+    }
+
+
+@router.put("/companies/{ticker}/valuation-profile")
+def valuation_profile(ticker: str, body: ValuationProfileRequest):
+    store = _store()
+    try:
+        security = CompanyRegistry(store).resolve(ticker, body.security_id)
+        return confirm_valuation_profile(
+            store,
+            company_id=security.company_id,
+            **body.model_dump(),
+        )
+    except CompanyRegistryError as exc:
+        _raise_service_error(exc)
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "field": exc.field,
+                    "message": exc.message,
+                }
+            },
+        )

@@ -59,6 +59,20 @@ paths:
           schema: {type: string}
       responses:
         '200': {description: OK}
+        '409':
+          description: Valuation requires an identity-bound confirmation
+  /api/v1/companies/{ticker}/valuation-profile:
+    put:
+      summary: Validate or confirm security/publication-bound valuation assumptions
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Draft validated or assumptions confirmed}
+        '409':
+          description: Model, data, currency, ADR, share-basis, or confirmation gate failed
   /api/v1/provenance/{entity_id}:
     get:
       summary: Resolve recursive data lineage

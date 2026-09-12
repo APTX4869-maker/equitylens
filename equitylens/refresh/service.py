@@ -15,9 +15,9 @@ from pathlib import Path
 from equitylens.config import DB_PATH, RAW_DIR
 from equitylens.domain.companies import get_company
 from equitylens.storage.raw_store import MANIFEST_NAME, _write_immutable, _write_manifest
+from equitylens.storage.writer import WriterBusy, writer_for
 
 MODULES = ("financials", "segments", "management", "quotes")
-_WRITE_LOCK = threading.Lock()
 _COMPANY_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -138,11 +138,14 @@ def refresh_company(store, ticker: str, modules: list[str] | None = None,
     invalid = [module for module in selected if module not in MODULES]
     if invalid:
         raise ValueError(f"unknown refresh modules: {', '.join(invalid)}")
-    company = get_company(ticker)
+    company = get_company(ticker, store=store)
     company_lock = _company_lock(company.ticker)
     if not company_lock.acquire(blocking=False):
         raise RefreshBusy(f"{ticker} 正在刷新中，请稍后")
-    if not _WRITE_LOCK.acquire(blocking=False):
+    writer_guard = writer_for(store).serialized(blocking=False)
+    try:
+        writer_guard.__enter__()
+    except WriterBusy:
         company_lock.release()
         raise RefreshBusy("另一个公司正在写入 DuckDB，请稍后")
 
@@ -193,5 +196,5 @@ def refresh_company(store, ticker: str, modules: list[str] | None = None,
             "review_required": review_required,
         }
     finally:
-        _WRITE_LOCK.release()
+        writer_guard.__exit__(None, None, None)
         company_lock.release()

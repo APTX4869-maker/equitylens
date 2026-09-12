@@ -6,6 +6,8 @@ provenance — no mock values anywhere in the financial endpoints.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,10 @@ from equitylens.storage.duckdb_store import DuckDBStore
 def client(company_db, monkeypatch):
     """Point the API at the golden fixture DB (built by the session fixture)."""
     monkeypatch.setattr("equitylens.api.routes.DuckDBStore", lambda: company_db)
+    monkeypatch.setattr(
+        "equitylens.market.age._now_utc",
+        lambda: datetime(2026, 9, 4, tzinfo=timezone.utc),
+    )
     with TestClient(app) as c:
         yield c
 

@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
 CREATE TABLE IF NOT EXISTS market_quote (
   quote_id VARCHAR PRIMARY KEY,
   company_id VARCHAR NOT NULL,
+  security_id VARCHAR,
   ticker VARCHAR NOT NULL,
   provider VARCHAR NOT NULL,
   observed_at VARCHAR,
@@ -173,6 +174,7 @@ class DuckDBStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: duckdb.DuckDBPyConnection | None = None
+        self._transaction_depth = 0
 
     def connect(self) -> "DuckDBStore":
         if self._conn is None:
@@ -188,7 +190,15 @@ class DuckDBStore:
     def transaction(self):
         """Commit one publication unit or roll every database write back."""
         self.connect()
+        if self._transaction_depth:
+            self._transaction_depth += 1
+            try:
+                yield self
+            finally:
+                self._transaction_depth -= 1
+            return
         self._conn.execute("BEGIN TRANSACTION")
+        self._transaction_depth = 1
         try:
             yield self
         except Exception:
@@ -196,16 +206,24 @@ class DuckDBStore:
             raise
         else:
             self._conn.execute("COMMIT")
+        finally:
+            self._transaction_depth = 0
 
     def init_schema(self) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        schema = (SPEC_DIR / "schema.sql").read_text()
-        for statement in self._split_statements(schema):
-            self._conn.execute(statement)
-        for statement in self._split_statements(EXTRA_SCHEMA):
-            self._conn.execute(statement)
-        for statement in _MIGRATIONS:
-            self._conn.execute(statement)
+        with writer_for(self).serialized():
+            schema = (SPEC_DIR / "schema.sql").read_text()
+            for statement in self._split_statements(schema):
+                self._conn.execute(statement)
+            for statement in self._split_statements(EXTRA_SCHEMA):
+                self._conn.execute(statement)
+            for statement in _MIGRATIONS:
+                self._conn.execute(statement)
+            from equitylens.storage.migrations import apply_migrations
+
+            apply_migrations(self._conn)
 
     @staticmethod
     def _split_statements(sql: str) -> list[str]:
@@ -229,14 +247,17 @@ class DuckDBStore:
         if not rows:
             return
         self.connect()
-        for row in rows:
-            cols = list(row.keys())
-            placeholders = ", ".join("?" for _ in cols)
-            sql = (
-                f"INSERT OR REPLACE INTO source_document ({', '.join(cols)}) "
-                f"VALUES ({placeholders})"
-            )
-            self._conn.execute(sql, [row[c] for c in cols])
+        from equitylens.storage.writer import writer_for
+
+        with writer_for(self).transaction(self):
+            for row in rows:
+                cols = list(row.keys())
+                placeholders = ", ".join("?" for _ in cols)
+                sql = (
+                    f"INSERT OR REPLACE INTO source_document ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})"
+                )
+                self._conn.execute(sql, [row[c] for c in cols])
 
     def _insert_many(self, table: str, rows: list[dict], chunk: int = 2000) -> None:
         """Bulk insert: one multi-VALUES statement per chunk.
@@ -260,54 +281,75 @@ class DuckDBStore:
             )
 
     def replace_raw_facts(self, source_document_id: str, rows: list[dict]) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        self._conn.execute("DELETE FROM raw_fact WHERE source_document_id = ?", [source_document_id])
-        self._insert_many("raw_fact", rows)
+        with writer_for(self).transaction(self):
+            self._conn.execute("DELETE FROM raw_fact WHERE source_document_id = ?", [source_document_id])
+            self._insert_many("raw_fact", rows)
 
     def replace_canonical_facts(self, source_document_id: str, rows: list[dict]) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        self._conn.execute(
-            "DELETE FROM canonical_fact WHERE source_document_id = ?", [source_document_id]
-        )
-        self._insert_many("canonical_fact", rows)
+        with writer_for(self).transaction(self):
+            self._conn.execute(
+                "DELETE FROM canonical_fact WHERE source_document_id = ?", [source_document_id]
+            )
+            self._insert_many("canonical_fact", rows)
 
     def replace_segment_facts(self, source_document_id: str, rows: list[dict]) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        self._conn.execute(
-            "DELETE FROM segment_fact WHERE source_document_id = ?", [source_document_id]
-        )
-        self._insert_many("segment_fact", rows)
+        with writer_for(self).transaction(self):
+            self._conn.execute(
+                "DELETE FROM segment_fact WHERE source_document_id = ?", [source_document_id]
+            )
+            self._insert_many("segment_fact", rows)
 
     def replace_proxy(self, company_id: str, source_document_id: str,
                       exec_rows: list[dict], comp_rows: list[dict], board_rows: list[dict]) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        self._conn.execute("DELETE FROM executive WHERE company_id = ?", [company_id])
-        self._conn.execute("DELETE FROM executive_compensation WHERE company_id = ?", [company_id])
-        self._conn.execute("DELETE FROM board_member WHERE company_id = ?", [company_id])
-        self._insert_many("executive", exec_rows)
-        self._insert_many("executive_compensation", comp_rows)
-        self._insert_many("board_member", board_rows)
+        with writer_for(self).transaction(self):
+            self._conn.execute("DELETE FROM executive WHERE company_id = ?", [company_id])
+            self._conn.execute("DELETE FROM executive_compensation WHERE company_id = ?", [company_id])
+            self._conn.execute("DELETE FROM board_member WHERE company_id = ?", [company_id])
+            self._insert_many("executive", exec_rows)
+            self._insert_many("executive_compensation", comp_rows)
+            self._insert_many("board_member", board_rows)
 
     def replace_insider_transactions(self, company_id: str, rows: list[dict]) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
-        self._conn.execute("DELETE FROM insider_transaction WHERE company_id = ?", [company_id])
-        self._insert_many("insider_transaction", rows)
+        with writer_for(self).transaction(self):
+            self._conn.execute("DELETE FROM insider_transaction WHERE company_id = ?", [company_id])
+            self._insert_many("insider_transaction", rows)
 
     def insert_market_quote(self, row: dict) -> None:
         """Append one quote observation; identical observations are ignored."""
         self.connect()
         cols = list(row.keys())
         placeholders = ", ".join("?" for _ in cols)
-        self._conn.execute(
-            f"INSERT OR IGNORE INTO market_quote ({', '.join(cols)}) VALUES ({placeholders})",
-            [row[c] for c in cols],
-        )
+        from equitylens.storage.writer import writer_for
 
-    def latest_market_quote(self, company_id: str) -> dict | None:
+        with writer_for(self).transaction(self):
+            self._conn.execute(
+                f"INSERT OR IGNORE INTO market_quote ({', '.join(cols)}) VALUES ({placeholders})",
+                [row[c] for c in cols],
+            )
+
+    def latest_market_quote(
+        self, company_id: str, security_id: str | None = None
+    ) -> dict | None:
         return self.query_one(
             """SELECT * FROM market_quote WHERE company_id = ?
-               ORDER BY fetched_at DESC, observed_at DESC LIMIT 1""",
-            [company_id],
+               AND (? IS NULL OR security_id = ? OR security_id IS NULL)
+               ORDER BY (security_id IS NULL), fetched_at DESC, observed_at DESC LIMIT 1""",
+            [company_id, security_id, security_id],
         )
 
     def upsert_promise(self, row: dict) -> None:
@@ -315,17 +357,23 @@ class DuckDBStore:
         self.connect()
         cols = list(row.keys())
         placeholders = ", ".join("?" for _ in cols)
-        self._conn.execute(
-            f"INSERT OR REPLACE INTO management_promise ({', '.join(cols)}) VALUES ({placeholders})",
-            [row[c] for c in cols],
-        )
+        from equitylens.storage.writer import writer_for
+
+        with writer_for(self).transaction(self):
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO management_promise ({', '.join(cols)}) VALUES ({placeholders})",
+                [row[c] for c in cols],
+            )
 
     def insert_ingestion_run(self, row: dict) -> None:
+        from equitylens.storage.writer import writer_for
+
         self.connect()
         cols = list(row.keys())
         placeholders = ", ".join("?" for _ in cols)
         sql = f"INSERT INTO ingestion_run ({', '.join(cols)}) VALUES ({placeholders})"
-        self._conn.execute(sql, [row[c] for c in cols])
+        with writer_for(self).transaction(self):
+            self._conn.execute(sql, [row[c] for c in cols])
 
     # ---------------- queries ----------------
 

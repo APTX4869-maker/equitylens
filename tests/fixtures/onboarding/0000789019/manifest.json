@@ -1,0 +1,34 @@
+{
+  "captured_at": "2026-09-12T08:47:17Z",
+  "company_name": "Microsoft Corporation",
+  "ticker": "MSFT",
+  "exchange": "Nasdaq",
+  "profile_path": "config/issuers/0000789019/2.yaml",
+  "submissions_path": "../../sec/0000789019/submissions.json",
+  "companyfacts_path": "../../sec/0000789019/companyfacts.json",
+  "snapshots": [
+    {"path": "../../sec/0000789019/submissions.json", "url": "https://data.sec.gov/submissions/CIK0000789019.json", "sha256": "ef3d1eed787e1d32831fbebbce56e7e151dd13dcc99cf727c427627625df9cfd"},
+    {"path": "../../sec/0000789019/companyfacts.json", "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000789019.json", "sha256": "f5f1dc9f336fc08448c96590a88bdd51fe4e9be6a807a9dc2c465de2ebbeb7c6"}
+  ],
+  "annual_filing": {"accession": "0001193125-26-323660", "filed": "2026-07-29", "period_end": "2026-06-30", "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm"},
+  "manual_source_note": "Values independently retained from the existing FY2026 10-K golden review.",
+  "expected_facts": {
+    "REVENUE": {"value": 331839000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Revenue"},
+    "OPERATING_INCOME": {"value": 155237000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Operating income"},
+    "NET_INCOME": {"value": 133749000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Net income"},
+    "BASIC_EPS": {"value": 18.0, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Earnings per share basic"},
+    "DILUTED_EPS": {"value": 17.95, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Earnings per share diluted"},
+    "BASIC_WEIGHTED_AVG_SHARES": {"value": 7429000000, "unit": "shares", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Weighted average shares basic"},
+    "DILUTED_WEIGHTED_AVG_SHARES": {"value": 7453000000, "unit": "shares", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Income Statements: Weighted average shares diluted"},
+    "TOTAL_ASSETS": {"value": 758376000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Balance Sheets: Total assets"},
+    "STOCKHOLDERS_EQUITY": {"value": 442387000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Balance Sheets: Total stockholders' equity"},
+    "OPERATING_CASH_FLOW": {"value": 182935000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Cash Flows Statements: Net cash from operations"},
+    "CASH_AND_EQUIVALENTS": {"value": 20935000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Balance Sheets: Cash and cash equivalents"},
+    "CAPITAL_EXPENDITURES": {"value": 115948000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2026, "period_end": "2026-06-30", "accession": "0001193125-26-323660", "locator": "Cash Flows Statements: Additions to property and equipment"}
+  },
+  "expected_missing": {
+    "TOTAL_LIABILITIES": {"period_end": "2026-06-30", "reason": "Legacy fixture does not contain a compatible reviewed liability fact."},
+    "INVESTING_CASH_FLOW": {"period_end": "2026-06-30", "reason": "Legacy fixture does not contain the reviewed annual investing cash-flow fact."},
+    "FINANCING_CASH_FLOW": {"period_end": "2026-06-30", "reason": "Legacy fixture does not contain the reviewed annual financing cash-flow fact."}
+  }
+}

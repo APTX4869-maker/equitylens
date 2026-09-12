@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from equitylens.config import RAW_DIR
 from equitylens.domain.companies import get_company
 from equitylens.metrics.engine import MetricEngine
+from equitylens.publication.repository import PublicationConflict, PublicationRepository
 from equitylens.storage.duckdb_store import DuckDBStore
 
 router = APIRouter(prefix="/api/v1")
@@ -21,11 +22,65 @@ def _store() -> DuckDBStore:
     return s
 
 
-def _resolve_company(ticker: str):
+def _resolve_company(ticker: str, store=None, security_id: str | None = None):
     try:
-        return get_company(ticker)
-    except KeyError as exc:
-        raise HTTPException(404, f"Unsupported or unknown ticker {ticker!r} (V0.x supports AAPL, MSFT)") from exc
+        return get_company(ticker, store=store or _store(), security_id=security_id)
+    except Exception as exc:
+        from equitylens.companies.registry import CompanyRegistryError
+
+        if isinstance(exc, CompanyRegistryError):
+            status = 409 if exc.code == "AMBIGUOUS_SECURITY" else 404
+            raise HTTPException(
+                status,
+                {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "candidates": [
+                        item.model_dump(mode="json") for item in exc.candidates
+                    ],
+                },
+            ) from exc
+        if not isinstance(exc, KeyError):
+            raise
+        raise HTTPException(404, f"Unsupported or unknown ticker {ticker!r}") from exc
+
+
+def _versioned_company(
+    ticker: str,
+    *,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+    module: str | None = None,
+):
+    store = _store()
+    company = _resolve_company(ticker, store, security_id)
+    try:
+        context = PublicationRepository(store).context(company.cik, publication_id)
+    except PublicationConflict as exc:
+        raise HTTPException(404, {"code": exc.code, "message": str(exc)}) from exc
+    if module:
+        capability = store.query_one(
+            "SELECT status, reason FROM company_capability WHERE publication_id=? AND module=?",
+            [context.publication_id, module],
+        )
+        if capability and capability["status"] not in {"READY", "ENABLED"}:
+            raise HTTPException(
+                409,
+                {
+                    "code": "CAPABILITY_UNAVAILABLE",
+                    "message": capability.get("reason") or f"{module} is unavailable",
+                    "status": capability["status"],
+                },
+            )
+    return store, company, context
+
+
+def _version_fields(company, context) -> dict:
+    return {
+        "company_id": company.cik,
+        "security_id": company.security_id,
+        "publication_id": context.publication_id,
+    }
 
 
 def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
@@ -102,7 +157,8 @@ def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
 
 
 def _provenance_ref_for_fact(store, f: dict) -> dict:
-    raw_ids = json.loads(f.get("source_raw_fact_ids") or "[]")
+    raw_value = f.get("source_raw_fact_ids") or []
+    raw_ids = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
     prov = {
         "source_document_id": f.get("source_document_id"),
         "provider": "SEC",
@@ -157,9 +213,9 @@ def health():
 
 
 @router.get("/companies/{ticker}")
-def company(ticker: str):
-    company = _resolve_company(ticker)
+def company(ticker: str, security_id: str | None = None):
     store = _store()
+    company = _resolve_company(ticker, store, security_id)
     cik = company.cik
     docs = store.query(
         "SELECT document_type, fetched_at, content_sha256, local_path, source_document_id "
@@ -189,6 +245,10 @@ def company(ticker: str):
         "name": company.name,
         "exchange": company.exchange,
         "fiscal_year_end": company.fiscal_year_end,
+        "security_id": company.security_id,
+        "publication_id": store.query_one(
+            "SELECT active_publication_id FROM company WHERE company_id=?", [cik]
+        )["active_publication_id"],
         "sic_description": sic_description,
         "website": website,
         "source_freshness": freshness,
@@ -202,14 +262,62 @@ def facts(
     frequency: str = Query("quarterly", pattern="^(annual|quarterly|ttm)$"),
     limit: int | None = Query(None, ge=1, le=100),
     view: str = Query("latest_restated", pattern="^(latest_restated|point_in_time)$"),
+    security_id: str | None = None,
+    publication_id: str | None = None,
 ):
-    company = _resolve_company(ticker)
     metric_list = [m.strip().upper() for m in metrics.split(",") if m.strip()]
-    store = _store()
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="financials",
+    )
     if view == "point_in_time":
         raise HTTPException(501, "point_in_time view is not implemented yet in V0.1")
-    data = _facts_endpoint(store, company.cik, metric_list, frequency, limit, view)
-    return {"ticker": ticker, "frequency": frequency, "view": view, "facts": data}
+    published = PublicationRepository(store).facts(context)
+    selected = [fact for fact in published if fact["canonical_metric"] in metric_list]
+    if frequency == "annual":
+        selected = [fact for fact in selected if fact.get("period_type") == "FY"]
+    elif frequency == "quarterly":
+        selected = [
+            fact
+            for fact in selected
+            if fact.get("period_type") in {"Q_STANDALONE", "FY"}
+        ]
+    if selected:
+        data = []
+        for fact in selected:
+            item = dict(fact)
+            item["metric"] = item.pop("canonical_metric")
+            item["period"] = (
+                f"FY{item.get('fiscal_year')}Q{item.get('fiscal_quarter')}"
+                if item.get("fiscal_quarter")
+                else f"FY{item.get('fiscal_year')}"
+            )
+            item["provenance"] = _provenance_ref_for_fact(store, item)
+            item["input_fact_ids"] = item.get("source_raw_fact_ids", [])
+            data.append(item)
+        data.sort(key=lambda item: (item.get("fiscal_year") or 0, item.get("fiscal_quarter") or 0))
+        if limit:
+            data = data[-limit:]
+    else:
+        # Legacy test/dev databases can add facts after their migration snapshot.
+        # Only those explicitly legacy-unreviewed publications use this compatibility path.
+        dataset = store.query_one(
+            "SELECT parser_version FROM dataset_version WHERE dataset_id=?",
+            [context.dataset_id],
+        )
+        if dataset["parser_version"] != "legacy":
+            data = []
+        else:
+            data = _facts_endpoint(store, company.cik, metric_list, frequency, limit, view)
+    return {
+        "ticker": ticker,
+        "company_id": company.cik,
+        "security_id": company.security_id,
+        "publication_id": context.publication_id,
+        "frequency": frequency,
+        "view": view,
+        "facts": data,
+    }
 
 
 @router.get("/companies/{ticker}/metrics")
@@ -219,9 +327,14 @@ def metrics(
                         description="comma-separated derived metrics"),
     frequency: str = Query("quarterly", pattern="^(annual|quarterly|ttm)$"),
     limit: int | None = Query(None, ge=1, le=200),
+    security_id: str | None = None,
+    publication_id: str | None = None,
 ):
-    company = _resolve_company(ticker)
-    engine = MetricEngine(_store())
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="financials",
+    )
+    engine = MetricEngine(store)
     out = []
     for m in metrics.split(","):
         m = m.strip().upper()
@@ -249,7 +362,12 @@ def metrics(
                 "period_end": p.period_end,
                 "missing_reason": p.missing_reason,
             })
-    return {"ticker": ticker, "frequency": frequency, "metrics": out}
+    return {
+        "ticker": ticker,
+        **_version_fields(company, context),
+        "frequency": frequency,
+        "metrics": out,
+    }
 
 
 @router.get("/companies/{ticker}/segments")
@@ -258,20 +376,35 @@ def segments(
     kind: str = Query("segment", pattern="^(segment|product)$"),
     frequency: str = Query("annual", pattern="^(annual|quarterly)$"),
     limit: int | None = Query(None, ge=1, le=50),
+    security_id: str | None = None,
+    publication_id: str | None = None,
 ):
     from equitylens.api.segments_service import get_segments
 
-    company = _resolve_company(ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="segments",
+    )
     try:
-        return get_segments(_store(), company.ticker, kind=kind, frequency=frequency, limit=limit)
+        result = get_segments(
+            store, company.ticker, kind=kind, frequency=frequency, limit=limit
+        )
+        return {**result, **_version_fields(company, context)}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/companies/{ticker}/overview")
-def overview(ticker: str, mode: str = Query("latest_restated")):
-    company = _resolve_company(ticker)
-    store = _store()
+def overview(
+    ticker: str,
+    mode: str = Query("latest_restated"),
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="financials",
+    )
     engine = MetricEngine(store)
     cik = company.cik
 
@@ -337,6 +470,7 @@ def overview(ticker: str, mode: str = Query("latest_restated")):
     )
     return {
         "ticker": ticker,
+        **_version_fields(company, context),
         "latest_period": latest,
         "kpis": kpis,
         "trend": trend,
@@ -535,11 +669,17 @@ def source(source_document_id: str):
 
 
 @router.get("/companies/{ticker}/management")
-def management(ticker: str):
+def management(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     from equitylens.domain.management_score import capital_allocation, management_scorecard
 
-    company = _resolve_company(ticker)
-    store = _store()
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="management",
+    )
     cik = company.cik
 
     execs = store.query(
@@ -605,6 +745,7 @@ def management(ticker: str):
         }
     return {
         "ticker": ticker,
+        **_version_fields(company, context),
         "leaders": leaders,
         "compensation_table": comp,
         "board": [dict(b, **{"source": "DEF 14A"}) for b in board],
@@ -642,25 +783,92 @@ def _management_watch_items(ticker: str, alloc: dict, scorecard: dict) -> list[d
 
 
 @router.get("/companies/{ticker}/valuation/default")
-def valuation_default(ticker: str):
-    from equitylens.valuation.service import default_valuation
+def valuation_default(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+    from equitylens.valuation.service import (
+        confirmed_valuation,
+        default_valuation,
+        require_valuation_confirmation,
+    )
 
-    company = _resolve_company(ticker)
-    return default_valuation(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
+    try:
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+        )
+        if confirmation:
+            return confirmed_valuation(
+                store,
+                company_id=company.cik,
+                ticker=company.ticker,
+                confirmation=confirmation,
+                persist=False,
+            )
+        return {
+            **default_valuation(store, company.cik, company.ticker),
+            **_version_fields(company, context),
+        }
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
+        )
 
 
 @router.post("/companies/{ticker}/valuation/run")
-def valuation_run(ticker: str, payload: dict):
+def valuation_run(
+    ticker: str,
+    payload: dict,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     from equitylens.valuation.dcf import ValuationError
-    from equitylens.valuation.service import run_custom
+    from equitylens.valuation.dcf import MODEL_VERSION
+    from equitylens.valuation.service import (
+        confirmed_valuation,
+        require_valuation_confirmation,
+        run_custom,
+    )
 
-    company = _resolve_company(ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
     try:
         persist = bool(payload.get("persist", True))
-        return run_custom(_store(), company.cik, company.ticker, payload, persist=persist)
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+        )
+        if confirmation:
+            return confirmed_valuation(
+                store,
+                company_id=company.cik,
+                ticker=company.ticker,
+                confirmation=confirmation,
+                persist=persist,
+            )
+        return {
+            **run_custom(store, company.cik, company.ticker, payload, persist=persist),
+            **_version_fields(company, context),
+        }
     except ValuationError as exc:
+        status_code = 409 if exc.code.startswith("VALUATION_") else 400
         return JSONResponse(
-            status_code=400,
+            status_code=status_code,
             content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
         )
     except ValueError as exc:
@@ -671,11 +879,21 @@ def valuation_run(ticker: str, payload: dict):
 
 
 @router.post("/companies/{ticker}/valuation/reverse-dcf")
-def valuation_reverse(ticker: str, payload: dict):
-    from equitylens.valuation.dcf import ValuationError
-    from equitylens.valuation.service import reverse_dcf
+def valuation_reverse(
+    ticker: str,
+    payload: dict,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+    from equitylens.valuation.service import (
+        require_valuation_confirmation,
+        reverse_dcf,
+    )
 
-    company = _resolve_company(ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
     if "target_price" not in payload:
         return JSONResponse(
             status_code=400,
@@ -683,10 +901,29 @@ def valuation_reverse(ticker: str, payload: dict):
                                "message": "target_price is required (market quote or user input)"}},
         )
     try:
-        return reverse_dcf(_store(), company.cik, company.ticker, payload)
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+        )
+        return {
+            **reverse_dcf(
+                store,
+                company.cik,
+                company.ticker,
+                payload,
+                confirmed_assumptions=confirmation["assumptions"] if confirmation else None,
+                security_id=company.security_id,
+            ),
+            **_version_fields(company, context),
+        }
     except ValuationError as exc:
+        status_code = 409 if exc.code.startswith("VALUATION_") else 400
         return JSONResponse(
-            status_code=400,
+            status_code=status_code,
             content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
         )
     except (TypeError, ValueError) as exc:
@@ -798,7 +1035,11 @@ def valuation_plan_copy(ticker: str, plan_id: str, payload: dict):
 
 
 @router.get("/companies/{ticker}/market/quote")
-def market_quote(ticker: str):
+def market_quote(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     """Latest synced quote + deterministic derived market facts (M8).
 
     Reads only the local store; a missing sync is an explicit UNAVAILABLE
@@ -806,25 +1047,53 @@ def market_quote(ticker: str):
     """
     from equitylens.market.service import quote_block
 
-    company = _resolve_company(ticker)
-    return quote_block(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="market",
+    )
+    return {
+        **quote_block(
+            store, company.cik, company.ticker, security_id=company.security_id
+        ),
+        **_version_fields(company, context),
+    }
 
 
 @router.get("/companies/{ticker}/risks")
-def company_risks(ticker: str):
+def company_risks(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     from equitylens.domain.risks import risk_signals
 
-    company = _resolve_company(ticker)
-    return risk_signals(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="risks",
+    )
+    return {
+        **risk_signals(store, company.cik, company.ticker),
+        **_version_fields(company, context),
+    }
 
 
 @router.get("/companies/{ticker}/moat")
-def company_moat(ticker: str):
+def company_moat(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     """Moat evidence from SEC numbers only; qualitative gaps are explicit (M8.5)."""
     from equitylens.domain.moat import moat_signals
 
-    company = _resolve_company(ticker)
-    return moat_signals(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="moat",
+    )
+    return {
+        **moat_signals(store, company.cik, company.ticker),
+        **_version_fields(company, context),
+    }
 
 
 @router.post("/research/ask")
@@ -836,26 +1105,53 @@ def research_ask(payload: dict):
     question = payload.get("question") or ""
     if not question.strip():
         raise HTTPException(400, "question is required")
-    company = _resolve_company(ticker)
-    return ask(_store(), company.cik, company.ticker, question)
+    store, company, context = _versioned_company(
+        ticker,
+        security_id=payload.get("security_id"),
+        publication_id=payload.get("publication_id"),
+        module="research",
+    )
+    return {
+        **ask(store, company.cik, company.ticker, question),
+        **_version_fields(company, context),
+    }
 
 
 @router.get("/companies/{ticker}/promises")
-def company_promises(ticker: str):
+def company_promises(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     """Promise Tracker: evidence cards with deterministic verification (M8.6)."""
     from equitylens.domain.promises import list_promises
 
-    company = _resolve_company(ticker)
-    return list_promises(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id,
+        module="promises",
+    )
+    return {
+        **list_promises(store, company.cik, company.ticker),
+        **_version_fields(company, context),
+    }
 
 
 @router.get("/companies/{ticker}/freshness")
-def company_freshness(ticker: str):
+def company_freshness(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     """Per-module data freshness (as-of dates), never silently stale."""
     from equitylens.domain.freshness import freshness
 
-    company = _resolve_company(ticker)
-    return freshness(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
+    return {
+        **freshness(store, company.cik, company.ticker),
+        **_version_fields(company, context),
+    }
 
 
 @router.post("/companies/{ticker}/refresh")

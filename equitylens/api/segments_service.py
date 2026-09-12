@@ -33,7 +33,7 @@ def get_segments(store, ticker: str, kind: str = "segment", frequency: str = "an
     company_cik = None
     from equitylens.domain.companies import get_company
 
-    company_cik = get_company(ticker).cik
+    company_cik = get_company(ticker, store=store).cik
     config = SegmentConfigRegistry().get(ticker)
     if config is None:
         raise ValueError(f"No segment mapping configured for {ticker}")

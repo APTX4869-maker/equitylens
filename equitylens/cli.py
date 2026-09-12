@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+from pathlib import Path
+
+import httpx
+
+from equitylens.issuers.profile import load_profile_yaml
 
 from equitylens.ingestion.sec.management import sync_management
 from equitylens.ingestion.sec.sync import sync_company, sync_segments
@@ -43,7 +50,7 @@ def _cmd_promises(args) -> int:
     store.connect()
     store.init_schema()
     for ticker in args.tickers:
-        company = get_company(ticker)
+        company = get_company(ticker, store=store)
         cards = load_cards(ticker)
         if not cards:
             print(f"{ticker}: data/evidence/promises/{ticker.upper()}/ 没有证据卡（*.json，忽略 _ 前缀）")
@@ -59,6 +66,60 @@ def cmd_sync(args) -> int:
         print(report.line())
         if report.rejected_reasons:
             print("  rejected:", report.rejected_reasons)
+    return 0
+
+
+def _onboarding_request(method: str, path: str, *, json_body: dict | None = None):
+    base = os.environ.get("EQUITYLENS_API_URL", "http://127.0.0.1:8000/api/v1")
+    try:
+        response = httpx.request(
+            method,
+            f"{base.rstrip('/')}{path}",
+            json=json_body,
+            timeout=30,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            "local EquityLens API request failed; start the API and retry"
+        ) from exc
+    return response.json()
+
+
+def _cmd_onboarding(args) -> int:
+    path = f"/company-onboardings/{args.onboarding_id}"
+    if args.onboarding_command == "show":
+        print(json.dumps(_onboarding_request("GET", path), ensure_ascii=False, indent=2))
+    elif args.onboarding_command == "export":
+        package = _onboarding_request("GET", f"{path}/review-package")
+        Path(args.output).write_text(
+            json.dumps(package, ensure_ascii=False, indent=2) + "\n"
+        )
+        print(args.output)
+    elif args.onboarding_command == "profile-import":
+        profile = load_profile_yaml(args.file)
+        result = _onboarding_request(
+            "POST",
+            f"{path}/profile",
+            json_body={
+                "expected_revision": args.revision,
+                "profile": profile.model_dump(mode="json", exclude={"content_sha256"}),
+            },
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.onboarding_command == "review":
+        result = _onboarding_request(
+            "POST",
+            f"{path}/review",
+            json_body={
+                "expected_revision": args.revision,
+                "fingerprint": args.fingerprint,
+                "decision": args.decision,
+                "reviewer": args.reviewer,
+                "note": args.note,
+            },
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -94,6 +155,38 @@ def main(argv: list[str] | None = None) -> int:
     prom = sub.add_parser("ingest-promises", help="Upsert promise evidence cards (data/evidence/promises/{TICKER}/*.json)")
     prom.add_argument("tickers", nargs="+", help="Tickers, e.g. AAPL MSFT")
     prom.set_defaults(func=lambda a: _cmd_promises(a))
+
+    onboarding = sub.add_parser(
+        "onboarding", help="Inspect and review company onboarding through the local API"
+    )
+    onboarding_sub = onboarding.add_subparsers(
+        dest="onboarding_command", required=True
+    )
+    show = onboarding_sub.add_parser("show", help="Show one onboarding task")
+    show.add_argument("onboarding_id")
+    show.set_defaults(func=_cmd_onboarding)
+
+    export = onboarding_sub.add_parser("export", help="Export a fixed review package")
+    export.add_argument("onboarding_id")
+    export.add_argument("--output", required=True)
+    export.set_defaults(func=_cmd_onboarding)
+
+    profile_import = onboarding_sub.add_parser(
+        "profile-import", help="Validate and import an immutable issuer profile"
+    )
+    profile_import.add_argument("onboarding_id")
+    profile_import.add_argument("--file", required=True)
+    profile_import.add_argument("--revision", required=True, type=int)
+    profile_import.set_defaults(func=_cmd_onboarding)
+
+    review = onboarding_sub.add_parser("review", help="Approve or reject an exact candidate")
+    review.add_argument("onboarding_id")
+    review.add_argument("--fingerprint", required=True)
+    review.add_argument("--revision", required=True, type=int)
+    review.add_argument("--reviewer", required=True)
+    review.add_argument("--note", default="")
+    review.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True)
+    review.set_defaults(func=_cmd_onboarding)
 
     args = parser.parse_args(argv)
     return args.func(args)
