@@ -66,6 +66,12 @@ class TaskView(BaseModel):
     revision: int
     cancel_requested: bool
     input_fingerprint: str
+    discovery_id: str | None = None
+    profile_id: str | None = None
+    dataset_id: str | None = None
+    quality_report_id: str | None = None
+    review_id: str | None = None
+    publication_id: str | None = None
     error: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime

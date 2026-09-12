@@ -115,18 +115,15 @@ class PublicationRepository:
             facts.append(validate_dataset_payload("canonical_fact", payload))
         return facts
 
-    def publish_dataset(
+    def publication_fingerprint(
         self,
         *,
         company_id: str,
         dataset_id: str,
         profile_id: str,
         quality_report_id: str | None,
-        review_id: str | None,
-        expected_active_publication_id: str | None = None,
-        fingerprint: str | None = None,
-        before_pointer_switch: Callable[[], None] | None = None,
-    ) -> Publication:
+    ) -> str:
+        """Hash every immutable input covered by an adaptation approval."""
         dataset = self.store.query_one(
             """
             SELECT company_id, profile_id, dataset_hash, parser_version, rule_version, state
@@ -177,7 +174,7 @@ class PublicationRepository:
                 [company_id],
             )
         ]
-        computed_fingerprint = sha256_json(
+        return sha256_json(
             {
                 "dataset_hash": dataset["dataset_hash"],
                 "profile_hash": profile["content_sha256"],
@@ -187,11 +184,63 @@ class PublicationRepository:
                 "security_identity_hashes": security_hashes,
             }
         )
+
+    def publish_dataset(
+        self,
+        *,
+        company_id: str,
+        dataset_id: str,
+        profile_id: str,
+        quality_report_id: str | None,
+        review_id: str | None,
+        expected_active_publication_id: str | None = None,
+        fingerprint: str | None = None,
+        before_pointer_switch: Callable[[], None] | None = None,
+        onboarding_id: str | None = None,
+        expected_task_revision: int | None = None,
+    ) -> Publication:
+        computed_fingerprint = self.publication_fingerprint(
+            company_id=company_id,
+            dataset_id=dataset_id,
+            profile_id=profile_id,
+            quality_report_id=quality_report_id,
+        )
         if fingerprint is not None and fingerprint != computed_fingerprint:
             raise PublicationConflict("REVIEW_STALE", "publication fingerprint changed")
 
         publication_id = str(uuid.uuid4())
         with writer_for(self.store).transaction(self.store):
+            if onboarding_id is not None:
+                task = self.store._conn.execute(
+                    """
+                    SELECT company_id, state, revision, cancel_requested, profile_id,
+                           dataset_id, quality_report_id, review_id
+                    FROM company_onboarding WHERE onboarding_id=?
+                    """,
+                    [onboarding_id],
+                ).fetchone()
+                expected = (
+                    company_id,
+                    "PUBLISHING",
+                    expected_task_revision,
+                    False,
+                    profile_id,
+                    dataset_id,
+                    quality_report_id,
+                    review_id,
+                )
+                if task is None or tuple(task) != expected:
+                    raise PublicationConflict(
+                        "TASK_CONFLICT", "onboarding candidate, revision, or state changed"
+                    )
+                current_fingerprint = self.publication_fingerprint(
+                    company_id=company_id,
+                    dataset_id=dataset_id,
+                    profile_id=profile_id,
+                    quality_report_id=quality_report_id,
+                )
+                if current_fingerprint != computed_fingerprint:
+                    raise PublicationConflict("REVIEW_STALE", "publication fingerprint changed")
             company = self.store._conn.execute(
                 "SELECT active_publication_id FROM company WHERE company_id = ?",
                 [company_id],
@@ -229,7 +278,56 @@ class PublicationRepository:
                 "UPDATE company SET active_publication_id = ?, updated_at = now() WHERE company_id = ?",
                 [publication_id, company_id],
             )
+            if onboarding_id is not None:
+                self.store._conn.execute(
+                    """
+                    UPDATE company_onboarding SET state='PUBLISHED', current_step=NULL,
+                      publication_id=?, revision=revision+1, updated_at=now()
+                    WHERE onboarding_id=?
+                    """,
+                    [publication_id, onboarding_id],
+                )
         row = self.store.query_one(
             "SELECT * FROM publication WHERE publication_id = ?", [publication_id]
         )
         return Publication.model_validate(row)
+
+    def publish(
+        self, task_id: str, expected_revision: int, fingerprint: str
+    ) -> Publication:
+        """Publish the currently approved task candidate with an atomic task transition."""
+        task = self.store.query_one(
+            "SELECT * FROM company_onboarding WHERE onboarding_id=?", [task_id]
+        )
+        if task is None:
+            raise PublicationConflict("TASK_NOT_FOUND", "onboarding task does not exist")
+        required = ("profile_id", "dataset_id", "quality_report_id", "review_id")
+        if any(not task.get(field) for field in required):
+            raise PublicationConflict("CANDIDATE_INCOMPLETE", "approved candidate is incomplete")
+        quality = self.store.query_one(
+            "SELECT result FROM quality_report WHERE report_id=? AND dataset_id=?",
+            [task["quality_report_id"], task["dataset_id"]],
+        )
+        if quality is None or quality["result"] != "PASS":
+            raise PublicationConflict("QUALITY_BLOCKED", "quality gate did not pass")
+        review = self.store.query_one(
+            "SELECT fingerprint, decision, company_id FROM adaptation_review WHERE review_id=?",
+            [task["review_id"]],
+        )
+        if (
+            review is None
+            or review["decision"] != "APPROVE"
+            or review["company_id"] != task["company_id"]
+            or review["fingerprint"] != fingerprint
+        ):
+            raise PublicationConflict("REVIEW_STALE", "approval does not cover candidate")
+        return self.publish_dataset(
+            company_id=task["company_id"],
+            dataset_id=task["dataset_id"],
+            profile_id=task["profile_id"],
+            quality_report_id=task["quality_report_id"],
+            review_id=task["review_id"],
+            fingerprint=fingerprint,
+            onboarding_id=task_id,
+            expected_task_revision=expected_revision,
+        )

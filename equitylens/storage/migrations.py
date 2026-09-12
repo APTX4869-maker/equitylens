@@ -482,6 +482,18 @@ def _discovery_cache(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def _onboarding_artifacts(conn: duckdb.DuckDBPyConnection) -> None:
+    for column in (
+        "discovery_id VARCHAR",
+        "profile_id VARCHAR",
+        "dataset_id VARCHAR",
+        "quality_report_id VARCHAR",
+        "review_id VARCHAR",
+        "publication_id VARCHAR",
+    ):
+        conn.execute(f"ALTER TABLE company_onboarding ADD COLUMN IF NOT EXISTS {column}")
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -516,6 +528,12 @@ MIGRATIONS = (
         name="company_discovery_cache",
         signature="company_discovery:v1:15-minute-identity-cache",
         apply=lambda conn: _discovery_cache(conn),
+    ),
+    Migration(
+        version=5,
+        name="onboarding_artifact_pointers",
+        signature="company_onboarding:+discovery,+profile,+dataset,+quality_report,+review,+publication",
+        apply=lambda conn: _onboarding_artifacts(conn),
     ),
 )
 

@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from equitylens.publication.models import sha256_json
 
+if False:  # pragma: no cover - imports only for type checkers
+    from equitylens.onboarding.repository import OnboardingRepository
+    from equitylens.publication.repository import PublicationRepository
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -97,5 +101,43 @@ def load_profile_yaml(path: Path | str) -> IssuerProfile:
 
 
 class IssuerProfileService:
+    def __init__(
+        self,
+        publications: "PublicationRepository | None" = None,
+        tasks: "OnboardingRepository | None" = None,
+    ) -> None:
+        self.publications = publications
+        self.tasks = tasks
+
     def validate(self, profile: dict) -> IssuerProfile:
         return IssuerProfile.model_validate(profile)
+
+    def import_profile(
+        self, task_id: str, expected_revision: int, profile: dict
+    ):
+        """Persist a validated immutable profile and invalidate old candidates."""
+        if self.publications is None or self.tasks is None:
+            raise RuntimeError("profile import requires publication and task repositories")
+        parsed = self.validate(profile)
+        task = self.tasks.get(task_id)
+        if task.revision != expected_revision or task.cancel_requested:
+            from equitylens.onboarding.repository import OnboardingConflict
+
+            raise OnboardingConflict("TASK_CONFLICT", "task revision changed or was cancelled")
+        if parsed.company_id != task.company_id:
+            raise ValueError("profile company_id does not match onboarding company")
+        profile_id = self.publications.create_profile(
+            task.company_id,
+            version=parsed.version,
+            schema_version=parsed.schema_version,
+            content=parsed.model_dump(mode="json", exclude={"content_sha256"}),
+        )
+        from equitylens.onboarding.models import OnboardingStep, TaskState
+
+        return self.tasks.set_candidate(
+            task_id,
+            expected_revision=expected_revision,
+            profile_id=profile_id,
+            state=TaskState.BUILDING,
+            current_step=OnboardingStep.BUILD,
+        )

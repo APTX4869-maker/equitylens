@@ -429,7 +429,7 @@ def test_cash_bridge_uses_same_cash_definition(quality_case):
 
 接口：ReviewService.review 和完整 IssuerProfileService.import_profile；绑定 profile/dataset/report/security 指纹。
 
-- [ ] 写复核失效反例：
+- [x] 写复核失效反例：
 
 ```python
 def test_old_approval_cannot_publish_new_candidate(review_case):
@@ -439,10 +439,10 @@ def test_old_approval_cannot_publish_new_candidate(review_case):
     assert result.error.code == 'REVIEW_STALE'
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_issuer_review.py -q` 确认失败。
-- [ ] 实现审查包与证据定位、批准/拒绝记录、输入改变失效、规则失败拒绝批准和发布。
-- [ ] 增加 CLI：`equitylens onboarding show ID`、`export ID --output FILE`、`profile-import ID --file FILE --revision N`、`review ID --fingerprint HASH --revision N --reviewer NAME --note TEXT`。CLI 默认调用本地 API；连接失败不擅自直接写库。实际命令解析加入 `onboarding` 子命令组。
-- [ ] 同一测试命令通过，维护者通过命令完成一次合成申请闭环，更新进度并提交 `feat: add auditable issuer review workflow`。
+- [x] 运行 `uv run pytest tests/integration/test_issuer_review.py -q` 确认失败。
+- [x] 实现审查包与证据定位、批准/拒绝记录、输入改变失效、规则失败拒绝批准和发布。
+- [x] 增加 CLI：`equitylens onboarding show ID`、`export ID --output FILE`、`profile-import ID --file FILE --revision N`、`review ID --fingerprint HASH --revision N --reviewer NAME --note TEXT`。CLI 默认调用本地 API；连接失败不擅自直接写库。实际命令解析加入 `onboarding` 子命令组。
+- [x] 同一测试命令通过，维护者通过命令完成一次合成申请闭环，更新进度并提交 `feat: add auditable issuer review workflow`。
 
 ### T07：API 与所有正式读取链路
 

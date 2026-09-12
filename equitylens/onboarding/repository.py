@@ -99,11 +99,56 @@ class OnboardingRepository:
             revision=row["revision"],
             cancel_requested=row["cancel_requested"],
             input_fingerprint=row["input_fingerprint"],
+            discovery_id=row.get("discovery_id"),
+            profile_id=row.get("profile_id"),
+            dataset_id=row.get("dataset_id"),
+            quality_report_id=row.get("quality_report_id"),
+            review_id=row.get("review_id"),
+            publication_id=row.get("publication_id"),
             error=error,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             actions=actions,
         )
+
+    def set_candidate(
+        self,
+        task_id: str,
+        *,
+        expected_revision: int,
+        profile_id: str | None = None,
+        dataset_id: str | None = None,
+        quality_report_id: str | None = None,
+        state: TaskState,
+        current_step: OnboardingStep,
+    ) -> TaskView:
+        """Replace candidate pointers and invalidate any prior approval."""
+        with self.writer.transaction(self.store):
+            row = self.store._conn.execute(
+                "SELECT revision, cancel_requested FROM company_onboarding WHERE onboarding_id=?",
+                [task_id],
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if row[0] != expected_revision or row[1]:
+                raise OnboardingConflict("TASK_CONFLICT", "task revision changed or was cancelled")
+            self.store._conn.execute(
+                """
+                UPDATE company_onboarding SET profile_id=?, dataset_id=?, quality_report_id=?,
+                  review_id=NULL, publication_id=NULL, state=?, current_step=?,
+                  revision=revision+1, updated_at=now()
+                WHERE onboarding_id=?
+                """,
+                [
+                    profile_id,
+                    dataset_id,
+                    quality_report_id,
+                    state.value,
+                    current_step.value,
+                    task_id,
+                ],
+            )
+        return self.get(task_id)
 
     def runnable(self) -> TaskView | None:
         row = self.store.query_one(

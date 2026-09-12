@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T05 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T06 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -11,7 +11,7 @@
 | T03 持久化任务与写入 | 已完成 | 7 passed；T01—T03 回归 20 passed | 已自检 | writer 跨进程、恢复、取消、重试和真实刷新/估值互斥测试 |
 | T04 发现采集与候选 | 已完成 | 12 passed；T01—T04 回归 29 passed | 已自检 | SEC 身份快照、历史分页、严格 profile 与候选反例 |
 | T05 质量门槛 | 已完成 | 9 passed；T01—T05 回归 38 passed | 已自检 | 舍入区间、期间口径、规则调度及持久化报告反例 |
-| T06 维护者复核闭环 | 未开始 | 未运行 | 未开始 | — |
+| T06 维护者复核闭环 | 已完成 | 6 passed；T01—T06 回归 47 passed | 已自检 | 固定审查包、旧批准失效、质量阻断、CLI API-only 与原子发布反例 |
 | T07 API 与版本读取 | 未开始 | 未运行 | 未开始 | — |
 | T08 估值门禁 | 未开始 | 未运行 | 未开始 | — |
 | T09 页面流程 | 未开始 | 未运行 | 未开始 | — |
@@ -108,3 +108,20 @@
 证据文件/报告：`tests/unit/test_onboarding_quality.py`、`config/quality/us_gaap_operating_v1.yaml`。
 
 遗留问题与下一步：缺必需输入、未知精度、未证明 EPS 方法和不支持模板均保持 BLOCKER，不做运行时降级；真实发行人可能因此在 T10 保留阻塞。T06 实现审查包、复核指纹与发布闭环。
+
+## T06 维护者复核和发布闭环
+
+阶段与提交号：T06；提交在本阶段记录更新后创建。
+
+实际改动：新增 onboarding 候选产物指针 migration、完整 profile 导入与旧候选失效、固定审查包及安全 raw locator、批准/拒绝留痕和精确候选指纹；质量未通过时批准和发布均被阻断，任务 revision/取消/候选在 publication 指针切换事务内重验并原子转为 PUBLISHED。新增 OnboardingService 及 `onboarding` CLI 子命令组，维护者读写只调用本地 API，连接失败不旁路写 DuckDB。
+
+测试命令及结果：
+
+- RED：`uv run pytest tests/integration/test_issuer_review.py -q`，因 `equitylens.issuers.review` 尚不存在而 collection 失败。
+- GREEN：同一命令，`6 passed in 0.53s`；覆盖旧批准失效、质量失败阻断、任意路径不导出、精确候选自动发布、profile 导入失效旧候选和 CLI 审查请求。
+- T01—T06 回归组合及 replay 路径：`47 passed in 2.44s`。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 均通过。
+
+证据文件/报告：`tests/integration/test_issuer_review.py`。
+
+遗留问题与下一步：CLI 已固定使用第 9 节 API 契约，实际 HTTP 路由将在 T07 接入；T07 同时补齐持久化幂等并把所有正式读取绑定 publication/security 标识。
