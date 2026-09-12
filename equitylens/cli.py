@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument("--revision", required=True, type=int)
     review.add_argument("--reviewer", required=True)
     review.add_argument("--note", default="")
-    review.add_argument("--decision", choices=["APPROVE", "REJECT"], default="APPROVE")
+    review.add_argument("--decision", choices=["APPROVE", "REJECT"], required=True)
     review.set_defaults(func=_cmd_onboarding)
 
     args = parser.parse_args(argv)

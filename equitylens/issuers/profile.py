@@ -71,6 +71,7 @@ class IssuerProfile(StrictModel):
     eps_method: Literal["reported_diluted", "two_class", "preferred_adjusted"] | None = None
     securities: list[SecurityConfig] = Field(min_length=1)
     applicability: dict[str, Literal["required", "not_disclosed", "not_applicable"]]
+    applicability_evidence: dict[str, list[str]] = Field(default_factory=dict)
     evidence: list[EvidenceConfig] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -78,6 +79,10 @@ class IssuerProfile(StrictModel):
         evidence_ids = {item.evidence_id for item in self.evidence}
         referenced = {item for security in self.securities for item in security.evidence}
         missing = referenced - evidence_ids
+        applicability_referenced = {
+            item for items in self.applicability_evidence.values() for item in items
+        }
+        missing |= applicability_referenced - evidence_ids
         if missing:
             raise ValueError(f"security evidence references are missing: {sorted(missing)}")
         return self

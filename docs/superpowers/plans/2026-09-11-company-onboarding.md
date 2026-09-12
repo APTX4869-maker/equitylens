@@ -516,12 +516,14 @@ test('company appears only after publication', async ({ page }) => {
 
 接口：使用已完成的页面/CLI/API，不为 KO/COST 增加主业务硬编码特例。确有新解析行为时放入命名解析器并复核所有发行人。
 
-- [ ] 核实 KO/COST 当前身份和来源，固定官方快照、覆盖期间及独立手工预期值。
-- [ ] 建立 golden 测试，逐个核心指标比较值、期间、单位和原始证据引用；先让未适配案例失败。
+- [x] 核实 KO/COST 当前身份和来源，固定官方快照、覆盖期间及独立手工预期值。
+- [x] 建立 golden 测试，逐个核心指标比较值、期间、单位和原始证据引用；先让未适配案例失败。
 - [ ] 顺序完成 KO、COST 配置、复核与页面发布，再完成 AAPL/MSFT 新标准复核；任一证据不足保留阻塞。
-- [ ] 执行 `uv run pytest tests/golden/test_onboarding_issuers.py -q`，新旧公司关键数值独立核对通过。
-- [ ] 在副本完整迁移、故障回滚与恢复演练；真实迁移仅使用已验证流程，保留备份地址和摘要；先确认服务已停止写入，不能覆盖用户新增数据。
-- [ ] 完成第 15 节全量验证、审查和两份教程；记录截图/报告位置及提交号，提交 `test: verify issuer onboarding end to end`。
+- [x] 执行 `uv run pytest tests/golden/test_onboarding_issuers.py -q`，新旧公司关键数值独立核对通过。
+- [x] 在副本完整迁移、故障回滚与恢复演练；真实迁移仅使用已验证流程，保留备份地址和摘要；先确认服务已停止写入，不能覆盖用户新增数据。
+- [x] 完成第 15 节全量验证、审查和两份教程；记录截图/报告位置及提交号，提交 `test: verify issuer onboarding end to end`。
+
+T10 阻塞记录（2026-09-12）：KO/COST 配置、候选、golden 与复核路径已完成，但当前环境访问官方 SEC Archives iXBRL 返回 403。Company Facts 不包含真实报表行级 context/locator 或分部维度，质量正确保留 `LINEAGE.filing_context` 与 `SEGMENTS.reconciliation` BLOCKER；两家公司未批准、未发布。AAPL/MSFT 完成 profile v2 与新标准 golden，但正式库仍保持 `LEGACY_UNREVIEWED`。因此第三项按“任一证据不足保留阻塞”保持未勾选。
 
 ## 15. 验证命令、审查和交付
 

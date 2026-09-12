@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,19 @@ class OnboardingConflict(RuntimeError):
 
 def _json(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False, sort_keys=True) if value is not None else None
+
+
+def _step_input_hash(task: TaskView) -> str:
+    """Identify the immutable inputs consumed by the task's current step."""
+    payload = {
+        "request": task.input_fingerprint,
+        "step": task.current_step.value if task.current_step else None,
+        "profile_id": task.profile_id,
+        "dataset_id": task.dataset_id,
+        "quality_report_id": task.quality_report_id,
+        "review_id": task.review_id,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 class OnboardingRepository:
@@ -82,13 +96,13 @@ class OnboardingRepository:
         state = TaskState(row["state"])
         actions = []
         if state == TaskState.FAILED:
-            actions.append("retry")
+            actions.append("RETRY")
         if state not in (TaskState.PUBLISHED, TaskState.CANCELLED):
-            actions.append("cancel")
+            actions.append("CANCEL")
         if state == TaskState.NEEDS_REVIEW:
-            actions.extend(["review", "export_review_package"])
+            actions.extend(["REVIEW", "EXPORT_REVIEW_PACKAGE"])
         if state == TaskState.NEEDS_ADAPTATION:
-            actions.extend(["profile_import", "export_review_package"])
+            actions.append("PROFILE_IMPORT")
         return TaskView(
             onboarding_id=row["onboarding_id"],
             company_id=row["company_id"],
@@ -132,6 +146,15 @@ class OnboardingRepository:
                 raise KeyError(task_id)
             if row[0] != expected_revision or row[1]:
                 raise OnboardingConflict("TASK_CONFLICT", "task revision changed or was cancelled")
+            if dataset_id is None and current_step == OnboardingStep.BUILD:
+                self.store._conn.execute(
+                    """
+                    UPDATE onboarding_step_attempt SET state='STALE'
+                    WHERE onboarding_id=? AND step IN ('BUILD','VALIDATE','PUBLISH')
+                      AND state <> 'RUNNING'
+                    """,
+                    [task_id],
+                )
             self.store._conn.execute(
                 """
                 UPDATE company_onboarding SET profile_id=?, dataset_id=?, quality_report_id=?,
@@ -239,7 +262,7 @@ class OnboardingRepository:
             WHERE onboarding_id=? AND step=? AND input_hash=? AND state='COMPLETED'
             ORDER BY attempt_no DESC LIMIT 1
             """,
-            [task.onboarding_id, task.current_step.value, task.input_fingerprint],
+            [task.onboarding_id, task.current_step.value, _step_input_hash(task)],
         )
 
     def begin_attempt(self, task: TaskView) -> str:
@@ -264,7 +287,7 @@ class OnboardingRepository:
                     task.onboarding_id,
                     task.current_step.value,
                     attempt_no,
-                    task.input_fingerprint,
+                    _step_input_hash(task),
                 ],
             )
             self.store._conn.execute(
@@ -283,6 +306,39 @@ class OnboardingRepository:
                 [output_hash, attempt_id],
             )
             self._advance_locked(task.onboarding_id, task.current_step)
+        return self.get(task.onboarding_id)
+
+    def pause_attempt(
+        self,
+        task: TaskView,
+        attempt_id: str,
+        *,
+        state: TaskState,
+        current_step: OnboardingStep,
+        message: str,
+    ) -> TaskView:
+        with self.writer.transaction(self.store):
+            self.store._conn.execute(
+                """
+                UPDATE onboarding_step_attempt SET state='PAUSED',
+                  output_hash='PAUSED', finished_at=now(), heartbeat_at=now()
+                WHERE attempt_id=?
+                """,
+                [attempt_id],
+            )
+            self.store._conn.execute(
+                """
+                UPDATE company_onboarding SET state=?, current_step=?, revision=revision+1,
+                  error_json=?, next_attempt_at=NULL, updated_at=now()
+                WHERE onboarding_id=?
+                """,
+                [
+                    state.value,
+                    current_step.value,
+                    _json({"code": "ADAPTATION_REQUIRED", "message": message, "retryable": False}),
+                    task.onboarding_id,
+                ],
+            )
         return self.get(task.onboarding_id)
 
     def advance_completed(self, task: TaskView) -> TaskView:
@@ -317,9 +373,16 @@ class OnboardingRepository:
                 """,
                 [_json(error), attempt_id],
             )
+            input_hash = self.store._conn.execute(
+                "SELECT input_hash FROM onboarding_step_attempt WHERE attempt_id=?",
+                [attempt_id],
+            ).fetchone()[0]
             count = self.store._conn.execute(
-                "SELECT count(*) FROM onboarding_step_attempt WHERE onboarding_id=? AND step=?",
-                [task.onboarding_id, task.current_step.value],
+                """
+                SELECT count(*) FROM onboarding_step_attempt
+                WHERE onboarding_id=? AND step=? AND input_hash=? AND state='FAILED'
+                """,
+                [task.onboarding_id, task.current_step.value, input_hash],
             ).fetchone()[0]
             can_retry = retryable and count < 3
             wait_seconds = 2 ** count

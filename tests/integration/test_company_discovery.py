@@ -3,9 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
-from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError
+from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError, SECDiscoverySource
 
 
 class FakeDiscoverySource:
@@ -137,3 +138,21 @@ def test_missing_supported_filing_regime_requires_adaptation(discovery_case):
 
     assert result.eligibility.status == "NEEDS_ADAPTATION"
     assert result.eligibility.reason_code == "TEMPLATE_UNSUPPORTED"
+
+
+def test_sec_access_denial_becomes_retryable_discovery_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("EQUITYLENS_USER_AGENT", "EquityLens test test@example.org")
+    request = httpx.Request("GET", "https://www.sec.gov/files/company_tickers.json")
+    response = httpx.Response(403, request=request)
+
+    class DeniedClient:
+        def get(self, url):
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    source = SECDiscoverySource(raw_dir=tmp_path, client=DeniedClient())
+
+    with pytest.raises(DiscoveryError) as exc:
+        source.registry()
+
+    assert exc.value.code == "SEC_UNAVAILABLE"
+    assert exc.value.retryable is True

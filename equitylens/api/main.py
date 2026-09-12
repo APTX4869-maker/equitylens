@@ -30,6 +30,7 @@ def _warm_risk_free() -> None:
 async def lifespan(app: FastAPI):
     from equitylens.api import routes as routes_module
     from equitylens.onboarding.repository import OnboardingRepository
+    from equitylens.onboarding.pipeline import OnboardingPipeline
     from equitylens.onboarding.runner import OnboardingExecutor, OnboardingRunner
     from equitylens.storage.writer import writer_for
 
@@ -37,7 +38,10 @@ async def lifespan(app: FastAPI):
     writer = writer_for(store)
     writer.start()
     repository = OnboardingRepository(store)
-    executor = OnboardingExecutor(OnboardingRunner(store, repository))
+    pipeline = OnboardingPipeline(store, repository)
+    executor = OnboardingExecutor(
+        OnboardingRunner(store, repository, handlers=pipeline.handlers())
+    )
     executor.start()
     app.state.onboarding_executor = executor
     threading.Thread(target=_warm_risk_free, daemon=True).start()
@@ -45,6 +49,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         executor.close()
+        pipeline.close()
         writer.close()
 
 

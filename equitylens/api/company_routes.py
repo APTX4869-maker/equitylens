@@ -46,7 +46,10 @@ def _detail(code: str, message: str) -> dict[str, str]:
 def _raise_service_error(exc: Exception) -> None:
     code = getattr(exc, "code", "REQUEST_FAILED")
     if isinstance(exc, DiscoveryError):
-        status_code = 422 if code in {"INVALID_TICKER", "UNSUPPORTED_INSTRUMENT"} else 409
+        if code == "SEC_UNAVAILABLE":
+            status_code = 503
+        else:
+            status_code = 422 if code in {"INVALID_TICKER", "UNSUPPORTED_INSTRUMENT"} else 409
     elif isinstance(exc, KeyError):
         status_code = 404
     else:
@@ -261,7 +264,12 @@ def review(task_id: str, body: ReviewRequest):
     store = _store()
     tasks = OnboardingRepository(store)
     try:
-        record = ReviewService(store, tasks, PublicationRepository(store)).review(
+        record = ReviewService(
+            store,
+            tasks,
+            PublicationRepository(store),
+            publish_immediately=False,
+        ).review(
             task_id, **body.model_dump()
         )
         return _task_payload(tasks.get(task_id), store=store, review=record.__dict__)

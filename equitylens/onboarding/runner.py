@@ -12,6 +12,15 @@ from equitylens.onboarding.models import OnboardingStep
 from equitylens.onboarding.repository import OnboardingRepository
 
 
+class OnboardingPause(RuntimeError):
+    """A successful step that intentionally waits for maintainer input."""
+
+    def __init__(self, state, current_step, message: str) -> None:
+        super().__init__(message)
+        self.state = state
+        self.current_step = current_step
+
+
 class OnboardingRunner:
     def __init__(self, store, repository: OnboardingRepository, handlers=None) -> None:
         self.store = store
@@ -45,12 +54,25 @@ class OnboardingRunner:
                 self.repository.finalize_cancel(current.onboarding_id)
                 return True
             self.repository.complete_attempt(task, attempt_id, output_hash)
+        except OnboardingPause as pause:
+            self.repository.pause_attempt(
+                task,
+                attempt_id,
+                state=pause.state,
+                current_step=pause.current_step,
+                message=str(pause),
+            )
         except Exception as exc:
+            retryable = bool(getattr(exc, "retryable", False))
             self.repository.fail_attempt(
                 task,
                 attempt_id,
-                {"code": "STEP_FAILED", "message": str(exc), "retryable": True},
-                retryable=True,
+                {
+                    "code": getattr(exc, "code", "STEP_FAILED"),
+                    "message": str(exc),
+                    "retryable": retryable,
+                },
+                retryable=retryable,
             )
         return True
 

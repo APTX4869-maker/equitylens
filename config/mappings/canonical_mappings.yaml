@@ -6,7 +6,7 @@
 #     SHORT_TERM_DEBT's LongTermDebtCurrent); add separate Depreciation and
 #     AmortizationOfIntangibleAssets concepts for issuers that do not report a
 #     single combined D&A line (MSFT).
-version: 2
+version: 3
 canonical_facts:
   REVENUE:
     type: duration
@@ -71,6 +71,11 @@ canonical_facts:
     unit_family: currency
     concepts:
       - us-gaap:CashAndCashEquivalentsAtCarryingValue
+  CASH_AND_RESTRICTED_CASH:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
   SHORT_TERM_INVESTMENTS:
     type: instant
     unit_family: currency
@@ -83,6 +88,21 @@ canonical_facts:
     unit_family: currency
     concepts:
       - us-gaap:Assets
+  BALANCE_TOTAL:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LiabilitiesAndStockholdersEquity
+  TOTAL_LIABILITIES:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:Liabilities
+  TOTAL_EQUITY:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
   CURRENT_ASSETS:
     type: instant
     unit_family: currency
@@ -133,6 +153,22 @@ canonical_facts:
     unit_family: currency
     concepts:
       - us-gaap:NetCashProvidedByUsedInOperatingActivities
+  INVESTING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInInvestingActivities
+  FINANCING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInFinancingActivities
+  FX_EFFECT_ON_CASH:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:EffectOfExchangeRateOnCashAndCashEquivalents
+      - us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
   CAPITAL_EXPENDITURES:
     type: duration
     unit_family: currency

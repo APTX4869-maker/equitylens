@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from equitylens.companies.models import (
     DiscoveryCandidate,
     DiscoveryResult,
@@ -79,7 +81,14 @@ class SECDiscoverySource:
                 }
         client, owned = self._client()
         try:
-            _, content, metadata = client.get(url)
+            try:
+                _, content, metadata = client.get(url)
+            except (httpx.HTTPError, RuntimeError) as exc:
+                raise DiscoveryError(
+                    "SEC_UNAVAILABLE",
+                    "SEC EDGAR is temporarily unavailable; retry later",
+                    retryable=True,
+                ) from exc
         finally:
             if owned:
                 client.close()

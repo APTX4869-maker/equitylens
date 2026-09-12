@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import pytest
 from datetime import date
 
+import pytest
+
+from equitylens.companies.models import CompanyIdentity, SecurityIdentity
+from equitylens.companies.registry import CompanyRegistry
 from equitylens.quality.models import CheckStatus
 from equitylens.quality.rules import (
     balance_equation,
@@ -17,6 +20,9 @@ from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 from equitylens.quality.engine import QualityEngine
 from equitylens.normalization.fiscal_periods import FiscalCalendar, derive_standalone_quarters
+from equitylens.normalization.normalize import normalize_companyfacts
+from equitylens.normalization.taxonomy.mappings import MappingRegistry
+from equitylens.storage.raw_store import sha256_bytes
 
 
 @pytest.fixture()
@@ -180,8 +186,15 @@ def test_engine_blocks_unsupported_template_and_corrupt_source(db, tmp_path):
             "company_id": "0000320193",
             "template": "bank_v1",
             "securities": [{"ticker": "AAPL"}],
-            "applicability": {},
-            "evidence": [],
+            "applicability": {"SEGMENTS": "not_disclosed"},
+            "evidence": [
+                {
+                    "evidence_id": "unrelated-security",
+                    "source_document_id": "other-doc",
+                    "content_sha256": "1" * 64,
+                    "locator": "security identity",
+                }
+            ],
         },
     )
     rows = [
@@ -241,6 +254,189 @@ def test_engine_blocks_unsupported_template_and_corrupt_source(db, tmp_path):
         for item in report.checks
     )
     assert any(item.reason == "SOURCE_CORRUPTED" for item in report.checks)
+    segment = next(item for item in report.checks if item.check_id == "SEGMENTS.reconciliation")
+    assert segment.status == CheckStatus.FAIL
+    assert segment.reason == "EVIDENCE_MISSING"
     assert db.query_one(
         "SELECT result FROM quality_report WHERE report_id=?", [report.report_id]
     ) == {"result": "FAIL"}
+
+
+def test_annual_balance_does_not_borrow_a_later_quarter_asset(db):
+    company_id = "0000320193"
+    profile_id = PublicationRepository(db).create_profile(
+        company_id,
+        version=199,
+        schema_version=1,
+        content={
+            "company_id": company_id,
+            "template": "us_gaap_operating_v1",
+            "securities": [{"ticker": "AAPL"}],
+            "applicability": {},
+            "evidence": [],
+        },
+    )
+
+    def fact(metric, value, fiscal_year, end, raw_id):
+        return {
+            "canonical_fact_id": f"fact-{raw_id}",
+            "company_id": company_id,
+            "canonical_metric": metric,
+            "period_type": "FY" if metric == "REVENUE" else "INSTANT",
+            "fiscal_year": fiscal_year,
+            "period_end": end if metric == "REVENUE" else None,
+            "instant_date": None if metric == "REVENUE" else end,
+            "value": value,
+            "unit": "USD",
+            "status": "NORMALIZED",
+            "mapping_rule_id": "fixture",
+            "mapping_version": "fixture",
+            "source_raw_fact_ids": [raw_id],
+            "as_known_at": "2026-02-01" if fiscal_year == 2025 else "2026-05-01",
+        }
+
+    rows = []
+    for metric, value, year, end, raw_id in (
+        ("REVENUE", 100, 2025, "2025-12-31", "raw-revenue"),
+        ("TOTAL_LIABILITIES", 60, 2025, "2025-12-31", "raw-liabilities"),
+        ("TOTAL_EQUITY", 40, 2025, "2025-12-31", "raw-equity"),
+        ("TOTAL_ASSETS", 100, 2026, "2026-03-31", "raw-assets-q1"),
+    ):
+        rows.append(("raw_fact", raw_id, {"raw_fact_id": raw_id, "source_document_id": "doc", "concept": metric}))
+        rows.append(("canonical_fact", f"fact-{raw_id}", fact(metric, value, year, end, raw_id)))
+    dataset_id = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": []},
+        rows=rows,
+    )
+
+    report = QualityEngine(db).validate(dataset_id)
+    balance = next(item for item in report.checks if item.check_id == "BALANCE.equation")
+
+    assert balance.status == CheckStatus.FAIL
+    assert balance.reason == "BALANCE_INPUT_MISSING"
+
+
+def test_liabilities_are_not_derived_across_filing_versions():
+    companyfacts = {
+        "facts": {
+            "us-gaap": {
+                "LiabilitiesAndStockholdersEquity": {
+                    "units": {"USD": [{"end": "2025-12-31", "val": 100, "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "accn": "filing-a"}]}
+                },
+                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": {
+                    "units": {"USD": [{"end": "2025-12-31", "val": 40, "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "accn": "filing-b"}]}
+                },
+            }
+        }
+    }
+    _, canonical, _ = normalize_companyfacts(
+        companyfacts,
+        MappingRegistry(),
+        FiscalCalendar({2025: date(2025, 12, 31)}, {2025: []}),
+        "companyfacts",
+        "0000000001",
+    )
+
+    assert not any(
+        fact["canonical_metric"] == "TOTAL_LIABILITIES" and fact["status"] == "CALCULATED"
+        for fact in canonical
+    )
+
+
+def test_security_identity_blocks_an_unreviewed_active_share_class(db, tmp_path):
+    company_id = "0000000001"
+    registry = CompanyRegistry(db)
+    registry.register_company(
+        CompanyIdentity(
+            company_id=company_id,
+            cik=company_id,
+            legal_name="Multiple Share Classes Inc.",
+            reporting_template="us_gaap_operating_v1",
+        ),
+        legacy_ticker="MSC",
+    )
+    for security_id, ticker, class_label in (
+        ("security-class-a", "MSC", "Class A"),
+        ("security-class-b", "MSC.B", "Class B"),
+    ):
+        registry.register_security(
+            SecurityIdentity(
+                security_id=security_id,
+                company_id=company_id,
+                ticker=ticker,
+                class_label=class_label,
+                exchange="NYSE",
+                currency="USD",
+                instrument_type="COMMON_STOCK",
+                identity_evidence={"source": "fixture"},
+            )
+        )
+
+    source = tmp_path / "submissions.json"
+    source.write_text("official identity bytes")
+    digest = sha256_bytes(source.read_bytes())
+    repository = PublicationRepository(db)
+    profile_id = repository.create_profile(
+        company_id,
+        version=1,
+        schema_version=1,
+        content={
+            "company_id": company_id,
+            "template": "us_gaap_operating_v1",
+            "securities": [
+                {
+                    "ticker": "MSC",
+                    "class_label": "Class A",
+                    "exchange": "NYSE",
+                    "currency": "USD",
+                    "instrument_type": "COMMON_STOCK",
+                    "evidence": ["identity-a"],
+                }
+            ],
+            "evidence": [
+                {
+                    "evidence_id": "identity-a",
+                    "source_document_id": "identity-document",
+                    "content_sha256": digest,
+                    "locator": "fixture identity",
+                }
+            ],
+        },
+    )
+    dataset_id = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": ["identity-document"]},
+        rows=[
+            (
+                "source_document",
+                "identity-document",
+                {
+                    "source_document_id": "identity-document",
+                    "company_id": company_id,
+                    "provider": "SEC",
+                    "document_type": "SUBMISSIONS_SNAPSHOT",
+                    "source_url": "https://data.sec.gov/submissions/CIK0000000001.json",
+                    "fetched_at": "2026-01-01T00:00:00",
+                    "content_sha256": digest,
+                    "local_path": str(source),
+                },
+            )
+        ],
+    )
+
+    report = QualityEngine(db).validate(dataset_id)
+    security = next(item for item in report.checks if item.check_id == "SECURITY.identity")
+
+    assert security.status == CheckStatus.FAIL
+    assert security.actual["unreviewed_registry"] == [
+        {
+            "ticker": "MSC.B",
+            "class_label": "Class B",
+            "exchange": "NYSE",
+            "currency": "USD",
+            "instrument_type": "COMMON_STOCK",
+        }
+    ]

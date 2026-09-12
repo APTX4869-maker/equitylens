@@ -7,9 +7,12 @@ from fastapi.testclient import TestClient
 
 from equitylens.api import company_routes
 from equitylens.api.main import app
-from equitylens.companies.discovery import CompanyDiscovery
+from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError
 from equitylens.companies.models import CompanyIdentity, SecurityIdentity
 from equitylens.companies.registry import CompanyRegistry
+from equitylens.onboarding.pipeline import OnboardingPipeline
+from equitylens.onboarding.repository import OnboardingRepository
+from equitylens.onboarding.runner import OnboardingRunner
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 
@@ -112,6 +115,29 @@ def test_same_idempotency_key_with_other_input_conflicts(db, monkeypatch):
     )
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_discovery_upstream_failure_returns_service_unavailable(db, monkeypatch):
+    monkeypatch.setattr("equitylens.api.routes.DuckDBStore", lambda: db)
+
+    class UnavailableDiscovery:
+        def __init__(self, store):
+            pass
+
+        def discover(self, ticker):
+            raise DiscoveryError("SEC_UNAVAILABLE", "SEC access denied", retryable=True)
+
+    monkeypatch.setattr(company_routes, "CompanyDiscovery", UnavailableDiscovery)
+
+    response = TestClient(app).post(
+        "/api/v1/companies/discover", json={"ticker": "KO"}
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "SEC_UNAVAILABLE",
+        "message": "SEC access denied",
+    }
 
 
 def test_expired_discovery_cannot_create_task(db, monkeypatch):
@@ -330,11 +356,18 @@ def test_profile_review_and_quality_report_endpoints_complete_the_workflow(db, m
         },
     )
     assert reviewed.status_code == 200
-    assert reviewed.json()["state"] == "PUBLISHED"
+    assert reviewed.json()["state"] == "PUBLISHING"
+
+    pipeline = OnboardingPipeline(db, OnboardingRepository(db), fetcher=lambda url: None)
+    assert OnboardingRunner(
+        db, OnboardingRepository(db), handlers=pipeline.handlers()
+    ).run_once()
+    published = client.get(f"/api/v1/company-onboardings/{task['onboarding_id']}")
+    assert published.json()["state"] == "PUBLISHED"
 
     report = client.get("/api/v1/companies/EXAMPLE/quality-report")
     assert report.status_code == 200
-    assert report.json()["publication_id"] == reviewed.json()["publication_id"]
+    assert report.json()["publication_id"] == published.json()["publication_id"]
     assert report.json()["report"]["result"] == "PASS"
     blocked = client.get(
         "/api/v1/companies/EXAMPLE/facts", params={"metrics": "REVENUE"}

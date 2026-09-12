@@ -5,6 +5,8 @@ import json
 import pytest
 
 from equitylens.onboarding.repository import OnboardingRepository
+from equitylens.onboarding.pipeline import OnboardingPipeline
+from equitylens.onboarding.runner import OnboardingRunner
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 from equitylens.issuers.review import ReviewConflict, ReviewService
@@ -228,6 +230,22 @@ def test_approved_review_publishes_exact_candidate(review_case):
     assert approval.fingerprint == fingerprint
 
 
+def test_durable_runner_retries_approved_publication(review_case):
+    case, _, tasks, publications, task_id, _ = review_case
+    approval = case.approve_current()
+    task = tasks.get(task_id)
+    assert task.state.value == "PUBLISHING"
+
+    pipeline = OnboardingPipeline(tasks.store, tasks)
+    runner = OnboardingRunner(tasks.store, tasks, handlers=pipeline.handlers())
+
+    assert runner.run_once() is True
+    published = tasks.get(task_id)
+    assert published.state.value == "PUBLISHED"
+    assert published.review_id == approval.review_id
+    assert publications.context(task.company_id).dataset_id == task.dataset_id
+
+
 def test_profile_import_is_immutable_and_invalidates_candidate(review_case):
     _, _, tasks, publications, task_id, _ = review_case
     task = tasks.get(task_id)
@@ -266,6 +284,8 @@ def test_maintainer_review_command_calls_api_without_database_fallback(monkeypat
             "7",
             "--reviewer",
             "maintainer",
+            "--decision",
+            "APPROVE",
             "--note",
             "verified",
         ]
@@ -285,3 +305,30 @@ def test_maintainer_review_command_calls_api_without_database_fallback(monkeypat
             },
         )
     ]
+
+
+def test_maintainer_review_command_requires_explicit_decision(monkeypatch):
+    from equitylens import cli
+
+    monkeypatch.setattr(
+        cli,
+        "_onboarding_request",
+        lambda *args, **kwargs: pytest.fail("review request must not be sent"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "onboarding",
+                "review",
+                "task-1",
+                "--fingerprint",
+                "abc",
+                "--revision",
+                "7",
+                "--reviewer",
+                "maintainer",
+            ]
+        )
+
+    assert exc.value.code == 2

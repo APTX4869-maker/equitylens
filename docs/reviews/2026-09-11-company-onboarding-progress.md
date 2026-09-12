@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T09 已实现并验证；正在按顺序执行最终验收。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T10 已按顺序执行；T10 可独立完成的实现、迁移演练、教程、审查与全量验证已完成，真实发布因官方 iXBRL 证据不可取得而保持阻塞。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -15,7 +15,7 @@
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
-| T10 真实接入及完整验收 | 未开始 | 未运行 | 未开始 | — |
+| T10 真实接入及完整验收 | 可独立部分已完成 | 75 个聚焦测试、348 个全量后端测试、18 个浏览器测试通过；前端类型/lint/build 通过 | 三轮审查收口，无 Critical/Important 遗留 | KO/COST 缺官方 filing/iXBRL 行级 context 与分部证据，未批准、未发布；迁移演练和失败恢复通过 |
 
 ## 每阶段记录格式
 
@@ -180,3 +180,24 @@
 证据文件/报告：`apps/web/e2e/company-onboarding.spec.ts`、`/tmp/equitylens-onboarding-desktop.png`、`/tmp/equitylens-onboarding-mobile.png`。
 
 遗留问题与下一步：浏览器路径使用确定性 API fixture，不能替代 T10 真实后端隔离库在线验收；T10 将固定官方来源快照、逐发行人 golden、迁移恢复演练并完成教程。
+
+## T10 真实发行人接入、迁移验收与教程
+
+阶段与提交号：T10；提交在本阶段记录更新后创建，目标提交信息 `test: verify issuer onboarding end to end`。
+
+实际改动：固定 KO/COST 官方 submissions 与 Company Facts 快照及人工转录预期，新增 KO/COST profile v1、AAPL/MSFT profile v2、四发行人 golden 和真实 FETCH→BUILD→VALIDATE→PUBLISH 持久化流水线；profile concept 白名单、来源哈希绑定、同申报版本派生、同期间质量检查、适用性专属证据、证券双向一致性和分代重试预算均在生产路径强制执行。审查批准只原子转入 `PUBLISHING`，持久化执行器是唯一 publisher。新增用户/维护者教程和真实接入记录。
+
+测试命令及结果：
+
+- RED：KO/COST 初始 golden 暴露映射与派生 lineage 缺口；生产流水线、失败边界、版本化重试预算和额外活跃股类均先由失败测试复现。
+- 聚焦回归：`uv run pytest tests/integration/test_onboarding_runner.py tests/integration/test_onboarding_pipeline.py tests/integration/test_issuer_review.py tests/integration/test_onboarding_api.py tests/unit/test_issuer_profile.py tests/unit/test_onboarding_quality.py tests/golden/test_onboarding_issuers.py -q`，`75 passed, 1 warning in 65.49s`。
+- 冻结依赖与后端全量：`uv sync --frozen` 通过；`uv run pytest -q`，`348 passed, 1 warning in 121.75s`。唯一 warning 为 Starlette TestClient 对 httpx 的上游弃用提示。
+- 前端：`pnpm --dir apps/web install --frozen-lockfile`、`pnpm --dir apps/web exec tsc --noEmit`、`pnpm --dir apps/web lint`、`pnpm --dir apps/web build` 均通过。
+- 浏览器：`PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm --dir apps/web e2e`，`18 passed in 18.1s`。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`tests/fixtures/onboarding/`、`tests/golden/test_onboarding_issuers.py`、`docs/reviews/2026-09-12-company-onboarding-live-validation.md`；隔离在线验收截图 `/tmp/equitylens-onboarding-live.png`；迁移报告 `/Users/vincent/.local/share/equitylens-migration-rehearsal/20260912T090430Z/report.json` 与 `failure-recovery.json`。正式数据库和 raw 未写入。
+
+复核：三轮代码审查逐项修复 profile/来源绑定、候选竞态、年度期间、派生 accession、durable publish、共享 SEC 限流、适用性证据、核心 filing context、版本化重试与多股类双向一致性；最终复核无 Critical/Important 遗留。
+
+遗留问题与下一步：KO/COST 的 Company Facts 足以独立验证核心数值，但没有真实 filing/iXBRL 行级 context/locator 或分部维度；当前环境获取 SEC Archives 文档为 403。因此质量明确保留 `LINEAGE.filing_context` 和 `SEGMENTS.reconciliation` BLOCKER，两家公司未批准、未发布。AAPL/MSFT 保留 `LEGACY_UNREVIEWED`。取得并固定官方 iXBRL 后必须生成新候选、重跑质量并重新审查，不能沿用旧指纹或手工置为 PASS。

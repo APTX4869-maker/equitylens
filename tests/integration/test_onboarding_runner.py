@@ -46,15 +46,14 @@ def runner_case(db):
                 "WHERE onboarding_id=?",
                 [task.onboarding_id],
             )
+            attempt_id = repository.begin_attempt(repository.get(task.onboarding_id))
             db._conn.execute(
                 """
-                INSERT INTO onboarding_step_attempt (
-                  attempt_id, onboarding_id, step, attempt_no, input_hash,
-                  output_hash, state, started_at, finished_at, heartbeat_at, error_json
-                ) VALUES ('attempt-fetch', ?, 'FETCH', 1, 'fixture-input',
-                          'fetched-once', 'COMPLETED', now(), now(), now(), NULL)
+                UPDATE onboarding_step_attempt SET output_hash='fetched-once',
+                  state='COMPLETED', finished_at=now(), heartbeat_at=now()
+                WHERE attempt_id=?
                 """,
-                [task.onboarding_id],
+                [attempt_id],
             )
 
         def restart(self):
@@ -147,7 +146,9 @@ def test_retryable_step_stops_after_three_total_attempts(db):
     )
 
     def unavailable(_task):
-        raise RuntimeError("source unavailable")
+        error = RuntimeError("source unavailable")
+        error.retryable = True
+        raise error
 
     runner = OnboardingRunner(db, repository, {OnboardingStep.FETCH: unavailable})
     for _ in range(3):
@@ -163,6 +164,75 @@ def test_retryable_step_stops_after_three_total_attempts(db):
         "SELECT count(*) AS n FROM onboarding_step_attempt WHERE onboarding_id=?",
         [task.onboarding_id],
     )["n"] == 3
+
+
+def test_untyped_deterministic_failure_is_not_retried(db):
+    repository = OnboardingRepository(db)
+    security_id = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    task = repository.create_task(
+        company_id="0000320193",
+        security_id=security_id,
+        input_fingerprint="deterministic-failure",
+    )
+
+    def invalid_profile(_task):
+        raise ValueError("invalid profile")
+
+    runner = OnboardingRunner(
+        db, repository, {OnboardingStep.FETCH: invalid_profile}
+    )
+    assert runner.run_once()
+
+    failed = repository.get(task.onboarding_id)
+    assert failed.state == TaskState.FAILED
+    assert failed.error["retryable"] is False
+
+
+def test_revised_profile_gets_a_fresh_retry_budget(db):
+    from equitylens.issuers.profile import IssuerProfileService, load_profile_yaml
+    from equitylens.publication.repository import PublicationRepository
+
+    repository = OnboardingRepository(db)
+    security_id = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    task = repository.create_task(
+        company_id="0000320193",
+        security_id=security_id,
+        input_fingerprint="profile-retry-generation",
+    )
+    db._conn.execute(
+        "UPDATE company_onboarding SET state='NEEDS_ADAPTATION', current_step='BUILD' WHERE onboarding_id=?",
+        [task.onboarding_id],
+    )
+    for number in range(1, 4):
+        db._conn.execute(
+            """
+            INSERT INTO onboarding_step_attempt
+              (attempt_id, onboarding_id, step, attempt_no, input_hash, state, started_at, finished_at)
+            VALUES (?, ?, 'BUILD', ?, 'old-profile-input', 'FAILED', now(), now())
+            """,
+            [f"old-{number}", task.onboarding_id, number],
+        )
+    current = repository.get(task.onboarding_id)
+    revised = load_profile_yaml("config/issuers/0000320193/2.yaml").model_dump(
+        mode="json", exclude={"content_sha256"}
+    )
+    revised["version"] = 88
+    imported = IssuerProfileService(PublicationRepository(db), repository).import_profile(
+        task.onboarding_id, current.revision, revised
+    )
+
+    def transient(_task):
+        error = RuntimeError("temporary")
+        error.retryable = True
+        raise error
+
+    OnboardingRunner(db, repository, {OnboardingStep.BUILD: transient}).run_once()
+
+    assert repository.get(task.onboarding_id).state == TaskState.BUILDING
 
 
 def test_second_process_writer_is_rejected(tmp_path):
