@@ -283,6 +283,10 @@ class PublicationRepository:
                 ).fetchall()
             }
             financial_count = entity_counts.get("canonical_fact", 0)
+            company_template = self.store._conn.execute(
+                "SELECT reporting_template FROM company WHERE company_id=?",
+                [company_id],
+            ).fetchone()[0]
             capabilities = [
                 (
                     "financials",
@@ -297,6 +301,16 @@ class PublicationRepository:
                     {"segment_fact_rows": entity_counts.get("segment_fact", 0)},
                 ),
                 ("market", "READY", None, {}),
+                (
+                    "valuation",
+                    "NEEDS_CONFIGURATION"
+                    if company_template == "us_gaap_operating_v1"
+                    else "UNSUPPORTED_MODEL",
+                    "confirm security-specific assumptions"
+                    if company_template == "us_gaap_operating_v1"
+                    else "no validated valuation model for this reporting template",
+                    {},
+                ),
             ]
             for module, capability_status, reason, coverage in capabilities:
                 self.store._conn.execute(
@@ -315,6 +329,15 @@ class PublicationRepository:
                 )
             if before_pointer_switch:
                 before_pointer_switch()
+            self.store._conn.execute(
+                """
+                UPDATE valuation_plan SET review_status='needs_review',
+                  review_reason='财务发布版本已更新'
+                WHERE company_id=? AND review_status='current'
+                  AND (publication_id IS NULL OR publication_id <> ?)
+                """,
+                [company_id, publication_id],
+            )
             self.store._conn.execute(
                 "UPDATE company SET active_publication_id = ?, updated_at = now() WHERE company_id = ?",
                 [publication_id, company_id],

@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from equitylens.api.company_schemas import (
@@ -14,6 +15,7 @@ from equitylens.api.company_schemas import (
     ProfileImportRequest,
     ReviewRequest,
     RevisionRequest,
+    ValuationProfileRequest,
 )
 from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError
 from equitylens.companies.registry import CompanyRegistry, CompanyRegistryError
@@ -23,6 +25,8 @@ from equitylens.onboarding.repository import OnboardingConflict, OnboardingRepos
 from equitylens.onboarding.service import OnboardingService
 from equitylens.publication.models import sha256_json
 from equitylens.publication.repository import PublicationConflict, PublicationRepository
+from equitylens.valuation.dcf import ValuationError
+from equitylens.valuation.service import confirm_valuation_profile
 
 
 router = APIRouter(prefix="/api/v1")
@@ -87,6 +91,18 @@ def companies(
             value = capability.get("coverage_json")
             capability["coverage"] = json.loads(value) if isinstance(value, str) else value
             capability.pop("coverage_json", None)
+            if capability["module"] == "valuation":
+                confirmation = store.query_one(
+                    """
+                    SELECT 1 FROM valuation_assumption_set
+                    WHERE security_id=? AND publication_id=? AND status='CONFIRMED'
+                    LIMIT 1
+                    """,
+                    [item["security_id"], item["publication_id"]],
+                )
+                if confirmation:
+                    capability["status"] = "READY"
+                    capability["reason"] = None
         item["capabilities"] = capabilities
     return {
         "items": items,
@@ -276,3 +292,28 @@ def quality_report(
         "report": report,
         "checks": checks,
     }
+
+
+@router.put("/companies/{ticker}/valuation-profile")
+def valuation_profile(ticker: str, body: ValuationProfileRequest):
+    store = _store()
+    try:
+        security = CompanyRegistry(store).resolve(ticker, body.security_id)
+        return confirm_valuation_profile(
+            store,
+            company_id=security.company_id,
+            **body.model_dump(),
+        )
+    except CompanyRegistryError as exc:
+        _raise_service_error(exc)
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "field": exc.field,
+                    "message": exc.message,
+                }
+            },
+        )

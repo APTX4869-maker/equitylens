@@ -470,7 +470,7 @@ def test_repeated_request_returns_same_task(api_case):
 
 接口：PUT valuation-profile 复用既有表；确认指纹包括 publication/security/model/assumptions。
 
-- [ ] 写未确认估值反例：
+- [x] 写未确认估值反例：
 
 ```python
 def test_new_security_requires_confirmed_assumptions(valuation_case):
@@ -479,10 +479,10 @@ def test_new_security_requires_confirmed_assumptions(valuation_case):
     assert response.json()['error']['code'] == 'VALUATION_NEEDS_CONFIGURATION'
 ```
 
-- [ ] 运行 `uv run pytest tests/integration/test_onboarding_valuation.py -q` 确认失败；将该错误码加入 API schema。
-- [ ] 实现确认表字段、模型/币种/股类能力校验、旧计划保真和新版本失效；草稿参数可验证，但正式计算/保存必须通过确认门禁。
-- [ ] 测复制待复核计划、异币种、未知 ADR 比例、发行人总股数不能配单一股类价格、旧运行不被更新覆盖。
-- [ ] 同一测试命令通过，更新进度并提交 `feat: gate valuations on verified issuer data`。
+- [x] 运行 `uv run pytest tests/integration/test_onboarding_valuation.py -q` 确认失败；将该错误码加入 API schema。
+- [x] 实现确认表字段、模型/币种/股类能力校验、旧计划保真和新版本失效；草稿参数可验证，但正式计算/保存必须通过确认门禁。
+- [x] 测复制待复核计划、异币种、未知 ADR 比例、发行人总股数不能配单一股类价格、旧运行不被更新覆盖。
+- [x] 同一测试命令通过，更新进度并提交 `feat: gate valuations on verified issuer data`。
 
 ### T09：页面申请与质量报告
 

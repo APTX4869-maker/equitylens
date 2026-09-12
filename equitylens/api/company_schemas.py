@@ -34,3 +34,11 @@ class ReviewRequest(RevisionRequest):
     decision: Literal["APPROVE", "REJECT"]
     reviewer: str = Field(min_length=1)
     note: str = ""
+
+
+class ValuationProfileRequest(StrictRequest):
+    security_id: str
+    publication_id: str
+    model_version: str
+    assumptions: dict[str, Any]
+    confirmed: bool

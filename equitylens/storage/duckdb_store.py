@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
 CREATE TABLE IF NOT EXISTS market_quote (
   quote_id VARCHAR PRIMARY KEY,
   company_id VARCHAR NOT NULL,
+  security_id VARCHAR,
   ticker VARCHAR NOT NULL,
   provider VARCHAR NOT NULL,
   observed_at VARCHAR,
@@ -341,11 +342,14 @@ class DuckDBStore:
                 [row[c] for c in cols],
             )
 
-    def latest_market_quote(self, company_id: str) -> dict | None:
+    def latest_market_quote(
+        self, company_id: str, security_id: str | None = None
+    ) -> dict | None:
         return self.query_one(
             """SELECT * FROM market_quote WHERE company_id = ?
-               ORDER BY fetched_at DESC, observed_at DESC LIMIT 1""",
-            [company_id],
+               AND (? IS NULL OR security_id = ? OR security_id IS NULL)
+               ORDER BY (security_id IS NULL), fetched_at DESC, observed_at DESC LIMIT 1""",
+            [company_id, security_id, security_id],
         )
 
     def upsert_promise(self, row: dict) -> None:

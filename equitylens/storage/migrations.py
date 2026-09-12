@@ -494,6 +494,33 @@ def _onboarding_artifacts(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(f"ALTER TABLE company_onboarding ADD COLUMN IF NOT EXISTS {column}")
 
 
+def _valuation_identity(conn: duckdb.DuckDBPyConnection) -> None:
+    additions = {
+        "market_quote": ("security_id VARCHAR",),
+        "valuation_assumption_set": (
+            "security_id VARCHAR",
+            "publication_id VARCHAR",
+            "model_version VARCHAR",
+            "assumptions_hash VARCHAR",
+            "confirmation_fingerprint VARCHAR",
+            "status VARCHAR",
+            "confirmed_at TIMESTAMP",
+        ),
+        "valuation_run": (
+            "security_id VARCHAR",
+            "publication_id VARCHAR",
+            "confirmation_fingerprint VARCHAR",
+        ),
+        "valuation_plan": (
+            "security_id VARCHAR",
+            "publication_id VARCHAR",
+        ),
+    }
+    for table, columns in additions.items():
+        for column in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -534,6 +561,12 @@ MIGRATIONS = (
         name="onboarding_artifact_pointers",
         signature="company_onboarding:+discovery,+profile,+dataset,+quality_report,+review,+publication",
         apply=lambda conn: _onboarding_artifacts(conn),
+    ),
+    Migration(
+        version=6,
+        name="valuation_security_publication_identity",
+        signature="market_quote:+security;valuation_confirmation:v1;valuation_run:+identity;valuation_plan:+identity",
+        apply=lambda conn: _valuation_identity(conn),
     ),
 )
 

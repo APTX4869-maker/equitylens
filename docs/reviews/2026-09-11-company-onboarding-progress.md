@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T07 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T08 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -13,7 +13,7 @@
 | T05 质量门槛 | 已完成 | 9 passed；T01—T05 回归 38 passed | 已自检 | 舍入区间、期间口径、规则调度及持久化报告反例 |
 | T06 维护者复核闭环 | 已完成 | 6 passed；T01—T06 回归 47 passed | 已自检 | 固定审查包、旧批准失效、质量阻断、CLI API-only 与原子发布反例 |
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
-| T08 估值门禁 | 未开始 | 未运行 | 未开始 | — |
+| T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 未开始 | 未运行 | 未开始 | — |
 | T10 真实接入及完整验收 | 未开始 | 未运行 | 未开始 | — |
 
@@ -143,3 +143,21 @@
 证据文件/报告：`tests/integration/test_onboarding_api.py`。
 
 遗留问题与下一步：迁移前创建、随后才注入 legacy facts 的测试/开发库保留显式 `legacy` 兼容读取；正式已迁移 dataset 不走该分支。T08 将修复时间相关行情 fixture，并把估值确认绑定 security/publication/模型与假设指纹。
+
+## T08 估值门禁和证券指纹
+
+阶段与提交号：T08；提交在本阶段记录更新后创建。
+
+实际改动：新增 valuation identity migration，将假设确认、估值运行、参考价计划和行情分别绑定 security/publication/model/assumptions 指纹；新增 valuation-profile API，草稿只校验，正式预览、反向 DCF 和保存运行均要求同一固定版本的已确认假设。后端阻断不适用模型、财务数据缺失、财报/报价币种不一致、未知 ADR 比例，以及未证明证券级股数口径的多股类估值。行情记录和读取按 security_id 隔离；新 publication 只把旧计划标为待复核，不改写历史运行，复制计划继承该状态。
+
+测试命令及结果：
+
+- RED：`uv run pytest tests/integration/test_onboarding_valuation.py -q`，`4 failed`，分别暴露未确认请求 500、valuation-profile 不存在和行情表缺 security_id。
+- GREEN：同一命令，`6 passed in 1.05s`；覆盖未确认门禁、完整确认、publication 失效、反向 DCF、币种、ADR、多股类股数口径、证券行情隔离、计划待复核传播及历史运行字节级不变。
+- T01—T08 专项回归：`66 passed in 4.35s`。
+- 现有完整 API：通过可注入 UTC 时钟固定行情夹具语义后，`56 passed in 44.78s`；生产仍按真实观察时间判断过期。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 均通过。
+
+证据文件/报告：`tests/integration/test_onboarding_valuation.py`、`spec/openapi_stub.yaml`。
+
+遗留问题与下一步：legacy AAPL/MSFT 在完成 T10 新标准复核前保留原估值兼容入口；一旦质量状态升级，和新增证券一样要求显式确认。T09 将在页面展示这些门禁状态和确认入口。

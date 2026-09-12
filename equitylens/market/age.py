@@ -15,6 +15,10 @@ from zoneinfo import ZoneInfo
 QUOTE_STALE_AFTER_DAYS = 7
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def parse_observed_at(s: str) -> datetime | None:
     """Parse a provider-reported observation time to an aware UTC datetime.
 
@@ -63,7 +67,7 @@ def quote_observation_status(observed_at: str) -> dict:
             "detail": "观察时间无法解析（降级处理）",
             "as_of": str(observed_at or "")[:10] or None,
         }
-    now = datetime.now(timezone.utc)
+    now = _now_utc()
     if obs > now:
         return {
             "status": "stale", "days_ago": None,

@@ -783,25 +783,92 @@ def _management_watch_items(ticker: str, alloc: dict, scorecard: dict) -> list[d
 
 
 @router.get("/companies/{ticker}/valuation/default")
-def valuation_default(ticker: str):
-    from equitylens.valuation.service import default_valuation
+def valuation_default(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+    from equitylens.valuation.service import (
+        confirmed_valuation,
+        default_valuation,
+        require_valuation_confirmation,
+    )
 
-    company = _resolve_company(ticker)
-    return default_valuation(_store(), company.cik, company.ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
+    try:
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+        )
+        if confirmation:
+            return confirmed_valuation(
+                store,
+                company_id=company.cik,
+                ticker=company.ticker,
+                confirmation=confirmation,
+                persist=False,
+            )
+        return {
+            **default_valuation(store, company.cik, company.ticker),
+            **_version_fields(company, context),
+        }
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
+        )
 
 
 @router.post("/companies/{ticker}/valuation/run")
-def valuation_run(ticker: str, payload: dict):
+def valuation_run(
+    ticker: str,
+    payload: dict,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
     from equitylens.valuation.dcf import ValuationError
-    from equitylens.valuation.service import run_custom
+    from equitylens.valuation.dcf import MODEL_VERSION
+    from equitylens.valuation.service import (
+        confirmed_valuation,
+        require_valuation_confirmation,
+        run_custom,
+    )
 
-    company = _resolve_company(ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
     try:
         persist = bool(payload.get("persist", True))
-        return run_custom(_store(), company.cik, company.ticker, payload, persist=persist)
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+        )
+        if confirmation:
+            return confirmed_valuation(
+                store,
+                company_id=company.cik,
+                ticker=company.ticker,
+                confirmation=confirmation,
+                persist=persist,
+            )
+        return {
+            **run_custom(store, company.cik, company.ticker, payload, persist=persist),
+            **_version_fields(company, context),
+        }
     except ValuationError as exc:
+        status_code = 409 if exc.code.startswith("VALUATION_") else 400
         return JSONResponse(
-            status_code=400,
+            status_code=status_code,
             content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
         )
     except ValueError as exc:
@@ -812,11 +879,21 @@ def valuation_run(ticker: str, payload: dict):
 
 
 @router.post("/companies/{ticker}/valuation/reverse-dcf")
-def valuation_reverse(ticker: str, payload: dict):
-    from equitylens.valuation.dcf import ValuationError
-    from equitylens.valuation.service import reverse_dcf
+def valuation_reverse(
+    ticker: str,
+    payload: dict,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+    from equitylens.valuation.service import (
+        require_valuation_confirmation,
+        reverse_dcf,
+    )
 
-    company = _resolve_company(ticker)
+    store, company, context = _versioned_company(
+        ticker, security_id=security_id, publication_id=publication_id
+    )
     if "target_price" not in payload:
         return JSONResponse(
             status_code=400,
@@ -824,10 +901,29 @@ def valuation_reverse(ticker: str, payload: dict):
                                "message": "target_price is required (market quote or user input)"}},
         )
     try:
-        return reverse_dcf(_store(), company.cik, company.ticker, payload)
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company.cik,
+            security_id=company.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+        )
+        return {
+            **reverse_dcf(
+                store,
+                company.cik,
+                company.ticker,
+                payload,
+                confirmed_assumptions=confirmation["assumptions"] if confirmation else None,
+                security_id=company.security_id,
+            ),
+            **_version_fields(company, context),
+        }
     except ValuationError as exc:
+        status_code = 409 if exc.code.startswith("VALUATION_") else 400
         return JSONResponse(
-            status_code=400,
+            status_code=status_code,
             content={"error": {"code": exc.code, "field": exc.field, "message": exc.message}},
         )
     except (TypeError, ValueError) as exc:
@@ -956,7 +1052,9 @@ def market_quote(
         module="market",
     )
     return {
-        **quote_block(store, company.cik, company.ticker),
+        **quote_block(
+            store, company.cik, company.ticker, security_id=company.security_id
+        ),
         **_version_fields(company, context),
     }
 

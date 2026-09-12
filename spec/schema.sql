@@ -330,9 +330,16 @@ CREATE TABLE IF NOT EXISTS market_observation (
 CREATE TABLE IF NOT EXISTS valuation_assumption_set (
   assumption_set_id VARCHAR PRIMARY KEY,
   company_id VARCHAR NOT NULL,
+  security_id VARCHAR,
+  publication_id VARCHAR,
   name VARCHAR NOT NULL,
   model_name VARCHAR NOT NULL,
+  model_version VARCHAR,
   assumptions_json JSON NOT NULL,
+  assumptions_hash VARCHAR,
+  confirmation_fingerprint VARCHAR,
+  status VARCHAR,
+  confirmed_at TIMESTAMP,
   source_metadata_json JSON,
   created_at TIMESTAMP NOT NULL
 );
@@ -340,6 +347,8 @@ CREATE TABLE IF NOT EXISTS valuation_assumption_set (
 CREATE TABLE IF NOT EXISTS valuation_run (
   valuation_run_id VARCHAR PRIMARY KEY,
   company_id VARCHAR NOT NULL,
+  security_id VARCHAR,
+  publication_id VARCHAR,
   model_name VARCHAR NOT NULL,
   model_version VARCHAR NOT NULL,
   run_at TIMESTAMP NOT NULL,
@@ -351,12 +360,15 @@ CREATE TABLE IF NOT EXISTS valuation_run (
   input_fingerprint VARCHAR,
   scenarios_json JSON,
   sensitivity_json JSON,
-  model_quality_json JSON
+  model_quality_json JSON,
+  confirmation_fingerprint VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS valuation_plan (
   plan_id VARCHAR PRIMARY KEY,
   company_id VARCHAR NOT NULL,
+  security_id VARCHAR,
+  publication_id VARCHAR,
   ticker VARCHAR NOT NULL,
   name VARCHAR NOT NULL,
   reference_value DOUBLE,

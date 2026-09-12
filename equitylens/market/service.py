@@ -113,11 +113,17 @@ def sync_quotes(tickers: list[str], fetch: bool = True, store: DuckDBStore | Non
         if fetch:
             try:
                 quote = fetch_quote(ticker, provider_name)
-                report.quotes.append(_persist_one(store, company.cik, ticker, quote, raw_dir))
+                report.quotes.append(
+                    _persist_one(
+                        store, company.cik, company.security_id, ticker, quote, raw_dir
+                    )
+                )
             except ProviderError as exc:
                 report.warnings.append(str(exc))
         else:
-            replayed = _replay_latest(store, company.cik, ticker, raw_dir, provider_name)
+            replayed = _replay_latest(
+                store, company.cik, company.security_id, ticker, raw_dir, provider_name
+            )
             report.quotes.extend(replayed)
             if not replayed:
                 report.warnings.append("no local snapshots to replay (run without --no-fetch first)")
@@ -125,18 +131,30 @@ def sync_quotes(tickers: list[str], fetch: bool = True, store: DuckDBStore | Non
     return reports
 
 
-def _persist_one(store: DuckDBStore, company_id: str, ticker: str, quote: ProviderQuote,
-                 raw_dir) -> dict:
+def _persist_one(
+    store: DuckDBStore,
+    company_id: str,
+    security_id: str | None,
+    ticker: str,
+    quote: ProviderQuote,
+    raw_dir,
+) -> dict:
     content = snapshot_bytes(quote)
     snap_dir = raw_dir / "market" / ticker
     _, sha = save_snapshot(snap_dir, f"{quote.provider}_{_utc_compact()}.json", content)
-    row = quote.to_row(company_id, sha, _now())
+    row = quote.to_row(company_id, sha, _now(), security_id=security_id)
     store.insert_market_quote(row)
     return {"provider": quote.provider, "price": quote.price, "observed_at": quote.observed_at}
 
 
-def _replay_latest(store: DuckDBStore, company_id: str, ticker: str, raw_dir,
-                   provider_name: str | None) -> list[dict]:
+def _replay_latest(
+    store: DuckDBStore,
+    company_id: str,
+    security_id: str | None,
+    ticker: str,
+    raw_dir,
+    provider_name: str | None,
+) -> list[dict]:
     """Re-parse the most recent snapshot file per provider and append rows."""
     import json
 
@@ -157,7 +175,9 @@ def _replay_latest(store: DuckDBStore, company_id: str, ticker: str, raw_dir,
         try:
             quote = parser(snap, ticker)
             fetched_at = _fetch_time_from_snapshot_name(files[-1].name) or _now()
-            row = quote.to_row(company_id, None, fetched_at)
+            row = quote.to_row(
+                company_id, None, fetched_at, security_id=security_id
+            )
             store.insert_market_quote(row)
             out.append({"provider": name, "price": quote.price, "observed_at": quote.observed_at})
         except ProviderError as exc:
@@ -167,18 +187,25 @@ def _replay_latest(store: DuckDBStore, company_id: str, ticker: str, raw_dir,
 
 # ------------------------------------------------------------- read paths ---
 
-def latest_quote_row(store: DuckDBStore, company_id: str) -> dict | None:
-    return store.latest_market_quote(company_id)
+def latest_quote_row(
+    store: DuckDBStore, company_id: str, security_id: str | None = None
+) -> dict | None:
+    return store.latest_market_quote(company_id, security_id)
 
 
 def _reason_no_sync(ticker: str) -> str:
     return f"行情未同步：先运行 equitylens sync-quotes {ticker}（本地快照模式，不伪造价格）"
 
 
-def quote_block(store: DuckDBStore, company_id: str, ticker: str) -> dict:
+def quote_block(
+    store: DuckDBStore,
+    company_id: str,
+    ticker: str,
+    security_id: str | None = None,
+) -> dict:
     """GET /market/quote body: quote + deterministic derived market facts."""
     cfg = get_config()
-    row = latest_quote_row(store, company_id)
+    row = latest_quote_row(store, company_id, security_id)
     if row is None:
         return {"status": "UNAVAILABLE", "configured": bool(cfg.active_providers),
                 "synced": False, "reason": _reason_no_sync(ticker)}
@@ -282,9 +309,10 @@ def _derived(store: DuckDBStore, company_id: str, row: dict) -> dict:
 
 
 def valuation_market_block(store: DuckDBStore, company_id: str, ticker: str,
-                           fair_value_per_share: float | None) -> dict:
+                           fair_value_per_share: float | None,
+                           security_id: str | None = None) -> dict:
     """Market block embedded in valuation responses (compares price vs fair)."""
-    block = quote_block(store, company_id, ticker)
+    block = quote_block(store, company_id, ticker, security_id)
     if block["status"] == "OK" and fair_value_per_share:
         premium = (float(block["quote"]["price"]) / float(fair_value_per_share) - 1.0)
         block["derived"] = dict(block.get("derived") or {})
