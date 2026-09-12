@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T08 已实现并验证；正在按顺序执行后续阶段。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T09 已实现并验证；正在按顺序执行最终验收。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -14,7 +14,7 @@
 | T06 维护者复核闭环 | 已完成 | 6 passed；T01—T06 回归 47 passed | 已自检 | 固定审查包、旧批准失效、质量阻断、CLI API-only 与原子发布反例 |
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
-| T09 页面流程 | 未开始 | 未运行 | 未开始 | — |
+| T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
 | T10 真实接入及完整验收 | 未开始 | 未运行 | 未开始 | — |
 
 ## 每阶段记录格式
@@ -161,3 +161,22 @@
 证据文件/报告：`tests/integration/test_onboarding_valuation.py`、`spec/openapi_stub.yaml`。
 
 遗留问题与下一步：legacy AAPL/MSFT 在完成 T10 新标准复核前保留原估值兼容入口；一旦质量状态升级，和新增证券一样要求显式确认。T09 将在页面展示这些门禁状态和确认入口。
+
+## T09 页面申请与质量报告
+
+阶段与提交号：T09；提交在本阶段记录更新后创建。
+
+实际改动：移除前端硬编码公司目录和静默 fallback，页面只展示已发布公司并将 security/publication 固定绑定到所有正式读取；新增添加公司、建档中心、任务详情和质量报告四个组件，支持发现、幂等申请、两档可见性轮询、取消/重试、审查包、revision/fingerprint 复核及发布后刷新。请求使用 AbortController 和序列号隔离迟到响应；估值区显式展示待配置或数据阻断。补齐键盘焦点、Escape、重复提交保护、移动端操作区与现有浏览器 fixture。
+
+测试命令及结果：
+
+- RED：新增建档浏览器路径在页面仍使用硬编码目录且缺少“添加公司”入口时失败，符合未实现契约。
+- 新增路径：`PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec playwright test e2e/company-onboarding.spec.ts --project=chromium`，`6 passed`。
+- 浏览器全量：同一 Chrome 配置执行 `pnpm exec playwright test --project=chromium`，`18 passed in 18.1s`；覆盖发布前后目录、重复提交、Escape/焦点恢复、质量阻断、迟到响应、移动端和估值配置门禁。
+- 静态核验：`pnpm exec tsc --noEmit && pnpm lint` 通过。
+- API 回归：`uv run pytest tests/integration/test_onboarding_api.py -q`，`7 passed`。
+- 独立视觉巡检：Python Playwright 启动真实 Next.js 页面并等待 mock API 稳定后截取桌面/移动端；弹窗 `scrollWidth=clientWidth=372`，无横向溢出，移动端主要操作完整可见。
+
+证据文件/报告：`apps/web/e2e/company-onboarding.spec.ts`、`/tmp/equitylens-onboarding-desktop.png`、`/tmp/equitylens-onboarding-mobile.png`。
+
+遗留问题与下一步：浏览器路径使用确定性 API fixture，不能替代 T10 真实后端隔离库在线验收；T10 将固定官方来源快照、逐发行人 golden、迁移恢复演练并完成教程。

@@ -1,4 +1,7 @@
 export type CompanyInfo = {
+  company_id?: string;
+  security_id?: string;
+  publication_id?: string | null;
   ticker: string;
   cik: string;
   name: string;
@@ -7,6 +10,97 @@ export type CompanyInfo = {
   sic_description?: string | null;
   website?: string | null;
   source_freshness: Record<string, { fetched_at: string; sha256: string }>;
+};
+
+export type CompanyCapability = {
+  module: string;
+  status: string;
+  reason: string | null;
+  coverage?: Record<string, unknown> | null;
+};
+
+export type CompanyListItem = {
+  company_id: string;
+  security_id: string;
+  ticker: string;
+  name: string;
+  exchange: string | null;
+  publication_id: string | null;
+  quality_status: string;
+  capabilities: CompanyCapability[];
+};
+
+export type DiscoveryCandidate = {
+  candidate_id: string;
+  company_id: string;
+  legal_name: string;
+  ticker: string;
+  exchange: string;
+  class_label?: string | null;
+  currency: string;
+  instrument_type: string;
+  evidence: Record<string, unknown>[];
+};
+
+export type DiscoveryResult = {
+  discovery_id: string;
+  ticker: string;
+  identity_hash: string;
+  expires_at: string;
+  candidates: DiscoveryCandidate[];
+  eligibility: { status: string; reason_code?: string | null; reason?: string | null; template?: string | null };
+  coverage: { form_counts: Record<string, number>; earliest_report_date?: string | null; latest_report_date?: string | null };
+  evidence: Record<string, unknown>[];
+};
+
+export type QualityCheck = {
+  check_id: string;
+  scope_key: string;
+  status: string;
+  severity: string;
+  reason?: string | null;
+  actual?: unknown;
+  expected?: unknown;
+  evidence?: unknown;
+};
+
+export type OnboardingTask = {
+  onboarding_id: string;
+  company_id: string;
+  ticker?: string;
+  company_name?: string;
+  state: string;
+  current_step: string | null;
+  revision: number;
+  cancel_requested: boolean;
+  input_fingerprint: string;
+  discovery_id?: string | null;
+  profile_id?: string | null;
+  dataset_id?: string | null;
+  quality_report_id?: string | null;
+  review_id?: string | null;
+  publication_id?: string | null;
+  error?: { code?: string; message?: string; [key: string]: unknown } | null;
+  created_at: string;
+  updated_at: string;
+  actions: string[];
+  steps?: Record<string, unknown>[];
+  checks?: QualityCheck[];
+  blocking_reasons?: { check_id: string; reason?: string | null }[];
+};
+
+export type ReviewPackage = {
+  onboarding_id: string;
+  company_id: string;
+  revision: number;
+  fingerprint: string;
+  dataset_id: string;
+  dataset_hash: string;
+  profile_id: string;
+  profile_hash: string;
+  profile: Record<string, unknown>;
+  source_manifest: Record<string, unknown>;
+  quality: { result: string; checks: QualityCheck[]; [key: string]: unknown };
 };
 
 export type Fact = {

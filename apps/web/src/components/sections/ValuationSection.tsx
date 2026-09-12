@@ -129,10 +129,12 @@ const RNG = {
 
 export function ValuationSection({
   ticker,
+  gate = null,
   refreshGeneration = 0,
   refreshReviewRequired = false,
 }: {
   ticker: string;
+  gate?: { status: string; reason: string | null } | null;
   refreshGeneration?: number;
   refreshReviewRequired?: boolean;
 }) {
@@ -267,6 +269,7 @@ export function ValuationSection({
   }, [ticker, applyResponse, prefillReverseTarget]);
 
   useEffect(() => {
+    if (gate && gate.status !== "READY") return;
     let cancelled = false;
     (async () => {
       try {
@@ -284,12 +287,13 @@ export function ValuationSection({
     return () => {
       cancelled = true;
     };
-  }, [ticker, applyResponse, prefillReverseTarget, loadPlans]);
+  }, [ticker, gate, applyResponse, prefillReverseTarget, loadPlans]);
 
   useEffect(() => {
+    if (gate && gate.status !== "READY") return;
     const timer = window.setTimeout(() => void loadPlans(), 0);
     return () => window.clearTimeout(timer);
-  }, [refreshGeneration, loadPlans]);
+  }, [refreshGeneration, gate, loadPlans]);
 
   const saveRun = useCallback(() => {
     const current = draftRef.current;
@@ -467,6 +471,7 @@ export function ValuationSection({
     );
   }, [base]);
 
+  if (gate && gate.status !== "READY") return <Card className="card-pad" data-testid="valuation-gate"><div className="section-head"><div><span className="eyebrow">Valuation readiness</span><h2 style={{ margin: "4px 0" }}>估值尚未开放</h2></div><Pill tone={gate.status === "BLOCKED" ? "bad" : "warn"}>{gate.status === "BLOCKED" ? "数据阻断" : "待配置"}</Pill></div><div className="next-step">{gate.reason ?? "该证券尚未确认估值模型、币种与每股口径。"}<br />下一步：在公司档案中确认估值配置，并重新通过发布质量门禁。</div></Card>;
   if (error && !base) return <Card><ErrorBox message={error} onRetry={loadDefault} /></Card>;
   if (!base) return <Spinner label="正在加载估值引擎…" />;
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { CompanyInfo, Fact, MarketQuote, OverviewResponse } from "@/lib/types";
+import type { CompanyInfo, CompanyListItem, Fact, MarketQuote, OnboardingTask, OverviewResponse } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
@@ -14,6 +14,8 @@ import { AiSection } from "@/components/sections/AiSection";
 import { MoatSection } from "@/components/sections/MoatSection";
 import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
+import { AddCompanyDialog } from "@/components/companies/AddCompanyDialog";
+import { OnboardingCenter } from "@/components/companies/OnboardingCenter";
 
 type Cached = { info: CompanyInfo; overview: OverviewResponse };
 type FreshnessModule = {
@@ -35,7 +37,12 @@ type RefreshResult = {
 };
 
 export default function Home() {
-  const [company, setCompany] = useState("AAPL");
+  const [companies, setCompanies] = useState<CompanyListItem[]>([]);
+  const [company, setCompany] = useState("");
+  const [companyListError, setCompanyListError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [centerOpen, setCenterOpen] = useState(false);
+  const [createdTask, setCreatedTask] = useState<OnboardingTask | null>(null);
   const [mode, setMode] = useState<"beginner" | "pro">("beginner");
   const [tab, setTab] = useState<TabKey>("overview");
   const [cache, setCache] = useState<Record<string, Cached>>({});
@@ -52,6 +59,29 @@ export default function Home() {
   const [valuationReviewGeneration, setValuationReviewGeneration] = useState<Record<string, number>>({});
   const companyRef = useRef(company);
   const refreshRequestSeq = useRef(0);
+  const dataRequestSeq = useRef(0);
+
+  const loadCompanies = useCallback(async () => {
+    const controller = new AbortController();
+    try {
+      const response = await api.companies(controller.signal);
+      setCompanies(response.items);
+      setCompany((current) => {
+        const next = current && response.items.some((item) => item.ticker === current) ? current : response.items[0]?.ticker ?? "";
+        companyRef.current = next;
+        return next;
+      });
+      setCompanyListError(null);
+    } catch (reason) {
+      if (!controller.signal.aborted) setCompanyListError(`研究公司列表加载失败：${String(reason)} 请检查 API 后重试。`);
+    }
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadCompanies(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadCompanies]);
 
   useEffect(() => {
     document.body.classList.toggle("pro", mode === "pro");
@@ -85,15 +115,21 @@ export default function Home() {
   // optional module (market quote / freshness) failure never hides the core
   // company + overview data (U05).
   useEffect(() => {
+    if (!company) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const requestSeq = ++dataRequestSeq.current;
+    const selected = companies.find((item) => item.ticker === company);
+    if (!selected) return () => controller.abort();
+    const identity = { security_id: selected.security_id, publication_id: selected.publication_id };
     (async () => {
       const [infoR, overviewR, mqR, freshR] = await Promise.allSettled([
-        api.company(company),
-        api.overview(company),
-        api.marketQuote(company),
-        api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness`),
+        api.company(company, identity, controller.signal),
+        api.overview(company, identity, controller.signal),
+        api.marketQuote(company, identity, controller.signal),
+        api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness?security_id=${encodeURIComponent(selected.security_id)}&publication_id=${encodeURIComponent(selected.publication_id ?? "")}`, { signal: controller.signal }),
       ]);
-      if (cancelled) return;
+      if (cancelled || requestSeq !== dataRequestSeq.current) return;
       if (infoR.status === "fulfilled" && overviewR.status === "fulfilled") {
         setCache((prev) => ({ ...prev, [company]: { info: infoR.value, overview: overviewR.value } }));
         setError(null);
@@ -105,8 +141,9 @@ export default function Home() {
     })();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [company, reloadKey]);
+  }, [company, companies, reloadKey]);
 
   const entry = cache[company];
   const openMetric = useCallback((key: string, fact: Fact | null) => {
@@ -172,10 +209,13 @@ export default function Home() {
 
   return (
     <div className="app">
-      <Sidebar company={company} tab={tab} onCompany={selectCompany} onTab={setTab} />
+      <Sidebar companies={companies} company={company} tab={tab} onCompany={selectCompany} onTab={setTab} onAddCompany={() => setAddOpen(true)} onOnboardingCenter={() => setCenterOpen(true)} />
       <main>
-        <Topbar mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} onCompany={selectCompany} />
+        <Topbar companies={companies} mode={mode} onMode={setMode} realData={realDataTabs.includes(tab)} onCompany={selectCompany} onAddCompany={() => setAddOpen(true)} onOnboardingCenter={() => setCenterOpen(true)} />
         <div className="content">
+          {companyListError ? <div className="action-error company-list-error" role="alert">{companyListError} <button onClick={() => void loadCompanies()}>重试</button></div> : null}
+          {!company && !companyListError ? <div className="onboarding-empty">正在读取已发布公司…</div> : null}
+          {company ? <>
           <Hero company={entry?.info ?? null} market={market[company] ?? null} />
           <div className="research-toolbar">
             <div className="tool-left">
@@ -262,8 +302,9 @@ export default function Home() {
           {tab === "valuation" ? (
             <section className="section active" id="section-valuation">
               <ValuationSection
-                key={company}
+                key={`${company}:${companies.find((item) => item.ticker === company)?.publication_id ?? "none"}`}
                 ticker={company}
+                gate={companies.find((item) => item.ticker === company)?.capabilities.find((capability) => capability.module === "valuation") ?? null}
                 refreshGeneration={valuationReviewGeneration[company] ?? 0}
                 refreshReviewRequired={(valuationReviewGeneration[company] ?? 0) > 0}
               />
@@ -279,6 +320,7 @@ export default function Home() {
               <AiSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
             </section>
           ) : null}
+          </> : null}
         </div>
       </main>
 
@@ -292,6 +334,8 @@ export default function Home() {
         }}
       />
       <SourceDrawer entityId={sourceEntity} onClose={() => setSourceEntity(null)} />
+      <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setCenterOpen(true); }} />
+      <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={() => void loadCompanies()} />
     </div>
   );
 }

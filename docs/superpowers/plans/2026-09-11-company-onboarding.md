@@ -490,8 +490,8 @@ def test_new_security_requires_confirmed_assumptions(valuation_case):
 
 接口：前端仅消费第 9 节 API；固定 publication 贯穿页面，任务 revision 控制操作。
 
-- [ ] 阅读本地 Next.js 指南，沿用现有样式与请求模式。
-- [ ] 写浏览器用户路径：
+- [x] 阅读本地 Next.js 指南，沿用现有样式与请求模式。
+- [x] 写浏览器用户路径：
 
 ```typescript
 test('company appears only after publication', async ({ page }) => {
@@ -506,9 +506,9 @@ test('company appears only after publication', async ({ page }) => {
 });
 ```
 
-- [ ] 运行 `pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts` 确认行为失败。
-- [ ] 实现对话框、列表、详情、轮询、取消重试、审查包下载和质量报告；为上述测试定义 API fixture，另补发布后列表出现、重载、迟到响应和键盘焦点测试。
-- [ ] 运行 TypeScript、ESLint 和上述浏览器测试通过，更新进度并提交 `feat: add company onboarding pages`。
+- [x] 运行 `pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts` 确认行为失败。
+- [x] 实现对话框、列表、详情、轮询、取消重试、审查包下载和质量报告；为上述测试定义 API fixture，另补发布后列表出现、重载、迟到响应和键盘焦点测试。
+- [x] 运行 TypeScript、ESLint 和上述浏览器测试通过，更新进度并提交 `feat: add company onboarding pages`。
 
 ### T10：真实发行人接入、迁移验收与使用文档
 

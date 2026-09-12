@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { stubPublishedCompanyDirectory } from "./company-directory-fixture";
+
+test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page); });
 
 const inputs = {
   revenue_base: 100_000_000_000,
@@ -50,10 +53,10 @@ function response(next = inputs) {
 }
 
 async function stub(page: Page) {
-  await page.route("**/api/v1/companies/AAPL", (route) => route.fulfill({ json: { ticker: "AAPL", cik: "0000320193", name: "Apple Inc.", exchange: "NASDAQ", fiscal_year_end: "09-30", source_freshness: {} } }));
-  await page.route("**/api/v1/companies/AAPL/overview", (route) => route.fulfill({ json: { ticker: "AAPL", latest_period: { fiscal_year: 2025, fiscal_quarter: 4 }, kpis: {}, trend: {}, provenance_available: true } }));
-  await page.route("**/api/v1/companies/AAPL/market/quote", (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
-  await page.route("**/api/v1/companies/AAPL/freshness", (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
+  await page.route("**/api/v1/companies/AAPL?**", (route) => route.fulfill({ json: { ticker: "AAPL", cik: "0000320193", name: "Apple Inc.", exchange: "NASDAQ", fiscal_year_end: "09-30", source_freshness: {} } }));
+  await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: { ticker: "AAPL", latest_period: { fiscal_year: 2025, fiscal_quarter: 4 }, kpis: {}, trend: {}, provenance_available: true } }));
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
+  await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
   await page.route("**/api/v1/companies/AAPL/valuation/default", (route) => route.fulfill({ json: response() }));
   await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) => route.fulfill({ json: { plans: [] } }));
   await page.route("**/api/v1/companies/AAPL/valuation/run", (route) => {
@@ -65,14 +68,14 @@ async function stub(page: Page) {
 async function stubFinancials(page: Page) {
   for (const ticker of ["AAPL", "MSFT"]) {
     const name = ticker === "AAPL" ? "Apple Inc." : "Microsoft Corp.";
-    await page.route(`**/api/v1/companies/${ticker}`, (route) => route.fulfill({
+    await page.route(`**/api/v1/companies/${ticker}?**`, (route) => route.fulfill({
       json: { ticker, cik: ticker === "AAPL" ? "0000320193" : "0000789019", name, exchange: "NASDAQ", fiscal_year_end: "06-30", source_freshness: {} },
     }));
-    await page.route(`**/api/v1/companies/${ticker}/overview`, (route) => route.fulfill({
+    await page.route(`**/api/v1/companies/${ticker}/overview?**`, (route) => route.fulfill({
       json: { ticker, latest_period: { fiscal_year: 2025, fiscal_quarter: 4 }, kpis: {}, trend: {}, provenance_available: true },
     }));
-    await page.route(`**/api/v1/companies/${ticker}/market/quote`, (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
-    await page.route(`**/api/v1/companies/${ticker}/freshness`, (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
+    await page.route(`**/api/v1/companies/${ticker}/market/quote?**`, (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
+    await page.route(`**/api/v1/companies/${ticker}/freshness?**`, (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
     await page.route(`**/api/v1/companies/${ticker}/metrics?**`, (route) => {
       const url = new URL(route.request().url());
       const frequency = url.searchParams.get("frequency") ?? "quarterly";

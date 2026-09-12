@@ -54,8 +54,24 @@ def _raise_service_error(exc: Exception) -> None:
     raise HTTPException(status_code, _detail(code, str(exc))) from exc
 
 
-def _task_payload(task, **extra) -> dict[str, Any]:
-    return {**task.model_dump(mode="json"), **extra}
+def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    if store is not None:
+        row = store.query_one(
+            """
+            SELECT a.ticker, c.legal_name AS company_name
+            FROM company c
+            LEFT JOIN security s ON s.company_id=c.company_id AND s.status='ACTIVE'
+            LEFT JOIN security_ticker_alias a ON a.security_id=s.security_id
+              AND a.valid_from <= CURRENT_DATE
+              AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)
+            WHERE c.company_id=? ORDER BY a.ticker LIMIT 1
+            """,
+            [task.company_id],
+        )
+        if row:
+            identity = {"ticker": row.get("ticker"), "company_name": row.get("company_name")}
+    return {**task.model_dump(mode="json"), **identity, **extra}
 
 
 @router.get("/companies")
@@ -138,7 +154,7 @@ def create_onboarding(
             CompanyRegistry(store),
             OnboardingRepository(store),
         ).create(**body.model_dump(), idempotency_key=idempotency_key)
-        return _task_payload(task, existing=existing)
+        return _task_payload(task, store=store, existing=existing)
     except (DiscoveryError, OnboardingConflict, CompanyRegistryError) as exc:
         _raise_service_error(exc)
 
@@ -160,7 +176,7 @@ def onboarding_list(
     repository = OnboardingRepository(store)
     items = [repository.get(row["onboarding_id"]) for row in rows[:limit]]
     return {
-        "items": [item.model_dump(mode="json") for item in items],
+        "items": [_task_payload(item, store=store) for item in items],
         "next_cursor": items[-1].onboarding_id if len(rows) > limit else None,
     }
 
@@ -186,16 +202,17 @@ def onboarding_detail(task_id: str):
         for row in checks
         if row["status"] == "FAIL" and row["severity"] == "BLOCKER"
     ]
-    return _task_payload(task, steps=attempts, checks=checks, blocking_reasons=blocking)
+    return _task_payload(task, store=store, steps=attempts, checks=checks, blocking_reasons=blocking)
 
 
 @router.post("/company-onboardings/{task_id}/retry")
 def retry_onboarding(task_id: str, body: RevisionRequest):
     try:
-        task = OnboardingRepository(_store()).retry(
+        store = _store()
+        task = OnboardingRepository(store).retry(
             task_id, expected_revision=body.expected_revision
         )
-        return _task_payload(task)
+        return _task_payload(task, store=store)
     except (KeyError, OnboardingConflict) as exc:
         _raise_service_error(exc)
 
@@ -203,10 +220,11 @@ def retry_onboarding(task_id: str, body: RevisionRequest):
 @router.post("/company-onboardings/{task_id}/cancel")
 def cancel_onboarding(task_id: str, body: RevisionRequest):
     try:
-        task = OnboardingRepository(_store()).cancel(
+        store = _store()
+        task = OnboardingRepository(store).cancel(
             task_id, expected_revision=body.expected_revision
         )
-        return _task_payload(task)
+        return _task_payload(task, store=store)
     except (KeyError, OnboardingConflict) as exc:
         _raise_service_error(exc)
 
@@ -229,7 +247,7 @@ def import_profile(task_id: str, body: ProfileImportRequest):
         task = IssuerProfileService(
             PublicationRepository(store), OnboardingRepository(store)
         ).import_profile(task_id, body.expected_revision, body.profile)
-        return _task_payload(task)
+        return _task_payload(task, store=store)
     except KeyError as exc:
         _raise_service_error(exc)
     except OnboardingConflict as exc:
@@ -246,7 +264,7 @@ def review(task_id: str, body: ReviewRequest):
         record = ReviewService(store, tasks, PublicationRepository(store)).review(
             task_id, **body.model_dump()
         )
-        return _task_payload(tasks.get(task_id), review=record.__dict__)
+        return _task_payload(tasks.get(task_id), store=store, review=record.__dict__)
     except (KeyError, ReviewConflict) as exc:
         _raise_service_error(exc)
 

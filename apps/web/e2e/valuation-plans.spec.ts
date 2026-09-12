@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubPublishedCompanyDirectory } from "./company-directory-fixture";
+
+test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page); });
 
 const inputs = {
   revenue_base: 100, revenue_growth: [0.08, 0.07, 0.06, 0.05, 0.04],
@@ -38,17 +41,17 @@ function runResponse(saved = false) {
 }
 
 async function stubShell(page: Page) {
-  await page.route("**/api/v1/companies/AAPL", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/AAPL?**", (route) => route.fulfill({ json: {
     ticker: "AAPL", cik: "0000320193", name: "Apple Inc.", exchange: "NASDAQ",
     fiscal_year_end: "09-30", source_freshness: {},
   }}));
-  await page.route("**/api/v1/companies/AAPL/overview", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: {
     ticker: "AAPL", latest_period: null, kpis: {}, trend: {}, provenance_available: true,
   }}));
-  await page.route("**/api/v1/companies/AAPL/market/quote", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: {
     status: "UNAVAILABLE", configured: true, synced: false, reason: "test",
   }}));
-  await page.route("**/api/v1/companies/AAPL/freshness", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: {
     modules: [], stale_modules: [], hint: null,
   }}));
   await page.route("**/api/v1/companies/AAPL/valuation/default", (route) =>
