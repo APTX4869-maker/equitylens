@@ -183,7 +183,7 @@
 
 ## T10 真实发行人接入、迁移验收与教程
 
-阶段与提交号：T10；提交在本阶段记录更新后创建，目标提交信息 `test: verify issuer onboarding end to end`。
+阶段与提交号：T10；`e6fc9af test: verify issuer onboarding end to end`。
 
 实际改动：固定 KO/COST 官方 submissions 与 Company Facts 快照及人工转录预期，新增 KO/COST profile v1、AAPL/MSFT profile v2、四发行人 golden 和真实 FETCH→BUILD→VALIDATE→PUBLISH 持久化流水线；profile concept 白名单、来源哈希绑定、同申报版本派生、同期间质量检查、适用性专属证据、证券双向一致性和分代重试预算均在生产路径强制执行。审查批准只原子转入 `PUBLISHING`，持久化执行器是唯一 publisher。新增用户/维护者教程和真实接入记录。
 

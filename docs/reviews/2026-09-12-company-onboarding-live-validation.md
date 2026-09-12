@@ -35,7 +35,7 @@ KO/COST 的核心数值、覆盖期、单位、accession 与 Company Facts raw l
 - 主报告：`report.json`；双次 material table 回放与 source identity 幂等，数据库/原始目录备份哈希一致，历史估值运行保真。
 - 故障报告：`failure-recovery.json`；事务内把 Apple 名称改为故障标记后主动抛错，回滚前后均为 `Apple Inc.`；从备份恢复数据库的 SHA-256 与源备份均为 `ebfbaf7374235d71b2a016b70f5bf9c83591e2408e3b868f3cd6b156b63bdfe5`。
 
-仓库内的可移植证据位于 `tests/fixtures/onboarding/`、`tests/golden/test_onboarding_issuers.py` 和 `config/issuers/`；上述绝对路径仅记录本机历史演练。验收环境关键版本：DuckDB 1.5.5、Pydantic 2.13.5、FastAPI 0.141.1、HTTPX 0.28.1。T10 开始基线提交为 `e25673711fbbc67fa24455a109cf22e58de96f8f`，最终提交在完成全量验证后回填进度表。
+仓库内的可移植证据位于 `tests/fixtures/onboarding/`、`tests/golden/test_onboarding_issuers.py` 和 `config/issuers/`；上述绝对路径仅记录本机历史演练。验收环境关键版本：DuckDB 1.5.5、Pydantic 2.13.5、FastAPI 0.141.1、HTTPX 0.28.1。T10 开始基线提交为 `e25673711fbbc67fa24455a109cf22e58de96f8f`，实现与全量验收提交为 `e6fc9af`。
 
 正式数据库和正式 raw 目录在本次验收中均未写入；没有覆盖用户数据。
 
