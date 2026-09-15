@@ -71,10 +71,46 @@ async function stubMicrosoftShell(page: Page) {
   }}));
 }
 
+test("full refresh uses bounded sequential module requests", async ({ page }) => {
+  await stubShell(page);
+  const refreshBodies: Array<{ modules?: string[] }> = [];
+  const refreshUrls: string[] = [];
+  const moduleNames = ["financials", "segments", "management", "quotes"];
+
+  await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
+    refreshUrls.push(route.request().url());
+    const body = route.request().postDataJSON() as { modules?: string[] };
+    refreshBodies.push(body);
+    const selected = body.modules?.[0];
+    return route.fulfill({ json: {
+      refresh_id: `refresh-${selected ?? "all"}`,
+      status: "ok",
+      review_required: selected === "financials",
+      modules: Object.fromEntries(moduleNames.map((moduleName) => [
+        moduleName,
+        {
+          status: moduleName === selected ? "ok" : "skipped",
+          retryable: false,
+          changed: moduleName === selected && selected === "financials",
+        },
+      ])),
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+
+  await expect.poll(() => refreshBodies.length).toBe(4);
+  expect(refreshBodies).toEqual(moduleNames.map((moduleName) => ({ modules: [moduleName] })));
+  expect(refreshUrls.every((url) => url.startsWith("http://127.0.0.1:8000/"))).toBe(true);
+  await expect(page.getByText(/financials:成功.*segments:成功.*management:成功.*quotes:成功/)).toBeVisible();
+});
+
 test("refresh reloads the active module and retries only a failed module", async ({ page }) => {
   await stubShell(page);
   let metricRequests = 0;
   const refreshBodies: unknown[] = [];
+  let segmentAttempts = 0;
 
   await page.route("**/api/v1/companies/AAPL/metrics?**", (route) => {
     metricRequests += 1;
@@ -83,24 +119,24 @@ test("refresh reloads the active module and retries only a failed module", async
   await page.route("**/api/v1/companies/AAPL/facts?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", facts: [] } }));
   await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
-    const body = route.request().postDataJSON();
+    const body = route.request().postDataJSON() as { modules: string[] };
+    const selected = body.modules[0];
     refreshBodies.push(body);
-    const retrying = Array.isArray(body.modules);
+    if (selected === "segments") segmentAttempts += 1;
+    const failed = selected === "segments" && segmentAttempts === 1;
+    const modules = Object.fromEntries(["financials", "segments", "management", "quotes"].map(
+      (moduleName) => [moduleName, {
+        status: moduleName === selected ? (failed ? "error" : "ok") : "skipped",
+        retryable: moduleName === selected && failed,
+        reason: moduleName === selected && failed ? "segment failure" : undefined,
+        changed: moduleName === selected && selected === "financials",
+      }],
+    ));
     return route.fulfill({ json: {
-      refresh_id: retrying ? "refresh-2" : "refresh-1",
-      status: retrying ? "ok" : "partial",
-      modules: retrying ? {
-        financials: { status: "skipped", retryable: false, changed: false },
-        segments: { status: "ok", retryable: false, changed: false },
-        management: { status: "skipped", retryable: false, changed: false },
-        quotes: { status: "skipped", retryable: false, changed: false },
-      } : {
-        financials: { status: "ok", retryable: false, changed: true },
-        segments: { status: "error", retryable: true, reason: "segment failure", changed: false },
-        management: { status: "ok", retryable: false, changed: false },
-        quotes: { status: "ok", retryable: false, changed: true },
-      },
-      review_required: !retrying,
+      refresh_id: `refresh-${selected}-${segmentAttempts}`,
+      status: failed ? "partial" : "ok",
+      modules,
+      review_required: selected === "financials",
     } });
   });
 
@@ -114,8 +150,14 @@ test("refresh reloads the active module and retries only a failed module", async
   await expect(page.getByRole("button", { name: "重试 segments" })).toBeVisible();
 
   await page.getByRole("button", { name: "重试 segments" }).click();
-  await expect.poll(() => refreshBodies.length).toBe(2);
-  expect(refreshBodies).toEqual([{}, { modules: ["segments"] }]);
+  await expect.poll(() => refreshBodies.length).toBe(5);
+  expect(refreshBodies).toEqual([
+    { modules: ["financials"] },
+    { modules: ["segments"] },
+    { modules: ["management"] },
+    { modules: ["quotes"] },
+    { modules: ["segments"] },
+  ]);
   await expect(page.getByText(/segments:成功/)).toBeVisible();
 });
 
@@ -129,24 +171,25 @@ test("module retry cannot clear valuation review before recalculation", async ({
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
     return route.fulfill({ json: valuationResponse(body.assumptions.revenue_growth) });
   });
+  let segmentAttempts = 0;
   await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
-    const body = route.request().postDataJSON() as { modules?: string[] };
-    const retry = body.modules?.[0] === "segments";
+    const body = route.request().postDataJSON() as { modules: string[] };
+    const selected = body.modules[0];
+    if (selected === "segments") segmentAttempts += 1;
+    const failed = selected === "segments" && segmentAttempts === 1;
+    const modules = Object.fromEntries(["financials", "segments", "management", "quotes"].map(
+      (moduleName) => [moduleName, {
+        status: moduleName === selected ? (failed ? "error" : "ok") : "skipped",
+        retryable: moduleName === selected && failed,
+        reason: moduleName === selected && failed ? "retry me" : undefined,
+        changed: moduleName === selected && selected === "financials",
+      }],
+    ));
     return route.fulfill({ json: {
-      refresh_id: retry ? "refresh-retry" : "refresh-valuation",
-      status: retry ? "ok" : "partial",
-      review_required: !retry,
-      modules: retry ? {
-        financials: { status: "skipped", retryable: false, changed: false },
-        segments: { status: "ok", retryable: false, changed: false },
-        management: { status: "skipped", retryable: false, changed: false },
-        quotes: { status: "skipped", retryable: false, changed: false },
-      } : {
-        financials: { status: "ok", retryable: false, changed: true },
-        segments: { status: "error", retryable: true, changed: false, reason: "retry me" },
-        management: { status: "ok", retryable: false, changed: false },
-        quotes: { status: "ok", retryable: false, changed: true },
-      },
+      refresh_id: `refresh-${selected}-${segmentAttempts}`,
+      status: failed ? "partial" : "ok",
+      review_required: selected === "financials",
+      modules,
     } });
   });
 

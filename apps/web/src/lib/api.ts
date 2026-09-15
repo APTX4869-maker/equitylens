@@ -25,6 +25,19 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function longRunningApiPath(path: string): string {
+  const configured = process.env.NEXT_PUBLIC_EQUITYLENS_API_URL?.replace(/\/$/, "");
+  if (configured) return `${configured}${path}`;
+  if (
+    typeof window !== "undefined" &&
+    window.location.port === "3000" &&
+    ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ) {
+    return `http://127.0.0.1:8000${path}`;
+  }
+  return path;
+}
+
 function identityQuery(identity?: { security_id?: string; publication_id?: string | null }) {
   const params = new URLSearchParams();
   if (identity?.security_id) params.set("security_id", identity.security_id);
@@ -34,6 +47,8 @@ function identityQuery(identity?: { security_id?: string; publication_id?: strin
 
 export const api = {
   fetchJson: <T>(path: string, init?: RequestInit): Promise<T> => getJson<T>(path, init),
+  fetchLongRunningJson: <T>(path: string, init?: RequestInit): Promise<T> =>
+    getJson<T>(longRunningApiPath(path), init),
   companies: (signal?: AbortSignal) => getJson<{ items: CompanyListItem[]; next_cursor: string | null }>("/api/v1/companies?limit=200", { signal }),
   discoverCompany: (ticker: string, signal?: AbortSignal) => getJson<DiscoveryResult>("/api/v1/companies/discover", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticker }), signal,

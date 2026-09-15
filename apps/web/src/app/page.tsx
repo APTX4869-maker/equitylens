@@ -161,14 +161,41 @@ export default function Home() {
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      const d = await api.fetchJson<RefreshResult>(
-        `/api/v1/companies/${requestCompany}/refresh`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(modules?.length ? { modules } : {}),
+      const batches = modules?.length
+        ? [modules]
+        : ["financials", "segments", "management", "quotes"].map((moduleName) => [moduleName]);
+      let combined: RefreshResult | null = null;
+      for (const batch of batches) {
+        const response = await api.fetchLongRunningJson<RefreshResult>(
+          `/api/v1/companies/${requestCompany}/refresh`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modules: batch }),
+          }
+        );
+        if (requestSeq !== refreshRequestSeq.current || companyRef.current !== requestCompany) return;
+        if (!combined) {
+          combined = response;
+          continue;
         }
-      );
+        const mergedModules: Record<string, RefreshModule> = { ...combined.modules };
+        for (const moduleName of batch) {
+          if (response.modules[moduleName]) mergedModules[moduleName] = response.modules[moduleName];
+        }
+        combined = {
+          ...response,
+          modules: mergedModules,
+          review_required: combined.review_required || response.review_required,
+        };
+      }
+      if (!combined) return;
+      const d = {
+        ...combined,
+        status: Object.values(combined.modules).some((moduleResult) => moduleResult.status === "error")
+          ? "partial" as const
+          : "ok" as const,
+      };
       if (requestSeq !== refreshRequestSeq.current || companyRef.current !== requestCompany) return;
       setRefreshResult((previous) => {
         if (!modules?.length || !previous) return d;
