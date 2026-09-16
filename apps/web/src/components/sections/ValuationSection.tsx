@@ -9,6 +9,7 @@ import {
   buildPreviewRequest,
   draftFingerprint,
   draftFromInputs,
+  rebaseDraftOnDefaults,
   updateDraft,
   type DcfInputs,
   type DraftEdit,
@@ -164,7 +165,9 @@ export function ValuationSection({
   const [changedFields, setChangedFields] = useState<string[]>([]);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
+  const [draftBaselineRefresh, setDraftBaselineRefresh] = useState(refreshGeneration);
   const reqSeq = useRef(0);
+  const defaultReqSeq = useRef(0);
   const reverseReqSeq = useRef(0);
   const draftRef = useRef<DcfInputs | null>(null);
   const targetPriceRef = useRef("");
@@ -215,9 +218,12 @@ export function ValuationSection({
   }, [ticker]);
 
   const preview = useCallback(
-    async (next: DcfInputs, persist = false) => {
+    async (
+      next: DcfInputs,
+      persist = false,
+      calculatedRefresh = refreshGenerationRef.current,
+    ) => {
       const seq = ++reqSeq.current;
-      const calculatedRefresh = refreshGenerationRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -226,7 +232,7 @@ export function ValuationSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(buildPreviewRequest(next, persist)),
         });
-        if (seq !== reqSeq.current) return; // stale response: ignore
+        if (seq !== reqSeq.current || calculatedRefresh !== refreshGenerationRef.current) return;
         applyResponse(d, persist, calculatedRefresh);
       } catch (e) {
         if (seq !== reqSeq.current) return;
@@ -256,44 +262,96 @@ export function ValuationSection({
   );
 
   const loadDefault = useCallback(async () => {
+    const requestSeq = ++defaultReqSeq.current;
+    const calculatedRefresh = refreshGenerationRef.current;
+    setLoading(true);
     try {
       const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
-      applyResponse(d, false, refreshGenerationRef.current);
+      if (
+        requestSeq !== defaultReqSeq.current
+        || calculatedRefresh !== refreshGenerationRef.current
+      ) return;
+      applyResponse(d, false, calculatedRefresh);
       prefillReverseTarget(d);
       setReverse(null);
     } catch (e) {
-      setError(String(e));
+      if (requestSeq === defaultReqSeq.current) setError(String(e));
     } finally {
-      setLoading(false);
+      if (requestSeq === defaultReqSeq.current) setLoading(false);
     }
   }, [ticker, applyResponse, prefillReverseTarget]);
 
+  const rebaseOnLatestDefault = useCallback(async (
+    targetRefresh = refreshGenerationRef.current,
+  ) => {
+    const requestSeq = ++defaultReqSeq.current;
+    // A refresh supersedes every preview/reverse request that started against
+    // the previous fact baseline. Their finally blocks must not unlock the UI.
+    reqSeq.current += 1;
+    reverseReqSeq.current += 1;
+    setReverseLoading(false);
+    let previewStarted = false;
+    setLoading(true);
+    setError(null);
+    try {
+      const latest = await api.fetchJson<RunResponse>(
+        `/api/v1/companies/${ticker}/valuation/default`
+      );
+      if (
+        requestSeq !== defaultReqSeq.current
+        || targetRefresh !== refreshGenerationRef.current
+      ) return;
+      const latestInputs = draftFromInputs(latest.assumptions.inputs);
+      const next = draftRef.current
+        ? rebaseDraftOnDefaults(latestInputs, draftRef.current)
+        : latestInputs;
+      // Make the fresh fact-derived baseline authoritative before the network
+      // preview starts. A slider edit during that request must inherit the new
+      // revenue/cash/share inputs rather than revive the pre-refresh snapshot.
+      draftRef.current = next;
+      setDraft(next);
+      setDraftBaselineRefresh(targetRefresh);
+      setSaved(false);
+      previewStarted = true;
+      await preview(next, false, targetRefresh);
+    } catch (e) {
+      if (requestSeq === defaultReqSeq.current) setError(String(e));
+    } finally {
+      if (!previewStarted && requestSeq === defaultReqSeq.current) setLoading(false);
+    }
+  }, [ticker, preview]);
+
   useEffect(() => {
     if (gate && gate.status !== "READY") return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
-        if (cancelled) return;
-        applyResponse(d, false, refreshGenerationRef.current);
-        prefillReverseTarget(d);
-        setReverse(null);
-        setError(null);
-        void loadPlans();
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ticker, gate, applyResponse, prefillReverseTarget, loadPlans]);
+    const timer = window.setTimeout(() => void loadDefault(), 0);
+    return () => window.clearTimeout(timer);
+  }, [ticker, gate, loadDefault]);
 
   useEffect(() => {
     if (gate && gate.status !== "READY") return;
     const timer = window.setTimeout(() => void loadPlans(), 0);
     return () => window.clearTimeout(timer);
   }, [refreshGeneration, gate, loadPlans]);
+
+  useEffect(() => {
+    if (
+      (gate && gate.status !== "READY")
+      || !refreshReviewRequired
+      || refreshGeneration <= lastCalculatedRefresh
+    ) return;
+    const targetRefresh = refreshGeneration;
+    const timer = window.setTimeout(
+      () => void rebaseOnLatestDefault(targetRefresh),
+      0,
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    refreshGeneration,
+    refreshReviewRequired,
+    lastCalculatedRefresh,
+    gate,
+    rebaseOnLatestDefault,
+  ]);
 
   const saveRun = useCallback(() => {
     const current = draftRef.current;
@@ -544,7 +602,7 @@ export function ValuationSection({
           <div className="card-sub" style={{ color: "#b7791f" }}>
             财务或行情快照已更新。当前草稿仍保留，但页面上的估值结果来自刷新前的数据，请重新计算后再保存。
           </div>
-          <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => draftRef.current && void preview(draftRef.current, false)} disabled={loading}>
+          <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => void rebaseOnLatestDefault()} disabled={loading}>
             按当前草稿重新计算
           </button>
         </Card>
@@ -600,7 +658,7 @@ export function ValuationSection({
       </Card>
 
       {loading ? <div className="muted" style={{ marginBottom: 8 }}>正在重算…</div> : null}
-      {error ? <Card style={{ marginBottom: 12 }}><ErrorBox message={error} onRetry={() => draftRef.current && preview(draftRef.current)} /></Card> : null}
+      {error ? <Card style={{ marginBottom: 12 }}><ErrorBox message={error} onRetry={() => void rebaseOnLatestDefault()} /></Card> : null}
 
       <div className="grid grid-2" style={{ marginTop: 12 }}>
         <Card className="card-pad" data-testid="dcf-model">
@@ -620,35 +678,40 @@ export function ValuationSection({
             <div className="dcf-control">
               <label htmlFor="growth-slider">首年收入增速（路径逐年递减）</label>
               <input id="growth-slider" type="range" min={RNG.growth.min} max={RNG.growth.max} step={RNG.growth.step}
-                value={growthPct} onChange={(e) => edit({ field: "growth", percent: Number(e.target.value) })} />
+                value={growthPct} disabled={refreshGeneration > draftBaselineRefresh}
+                onChange={(e) => edit({ field: "growth", percent: Number(e.target.value) })} />
               <output>{growthPct.toFixed(1)}%</output>
               {assumptionNote("revenue_growth")}
             </div>
             <div className="dcf-control">
               <label htmlFor="margin-slider">第5年营业利润率</label>
               <input id="margin-slider" type="range" min={RNG.margin.min} max={RNG.margin.max} step={RNG.margin.step}
-                value={marginPct} onChange={(e) => edit({ field: "margin", percent: Number(e.target.value) })} />
+                value={marginPct} disabled={refreshGeneration > draftBaselineRefresh}
+                onChange={(e) => edit({ field: "margin", percent: Number(e.target.value) })} />
               <output>{marginPct.toFixed(1)}%</output>
               {assumptionNote("op_margin_end")}
             </div>
             <div className="dcf-control">
               <label htmlFor="wacc-slider">WACC 折现率</label>
               <input id="wacc-slider" type="range" min={RNG.wacc.min} max={RNG.wacc.max} step={RNG.wacc.step}
-                value={waccPct} onChange={(e) => edit({ field: "wacc", percent: Number(e.target.value) })} />
+                value={waccPct} disabled={refreshGeneration > draftBaselineRefresh}
+                onChange={(e) => edit({ field: "wacc", percent: Number(e.target.value) })} />
               <output>{waccPct.toFixed(2)}%</output>
               {assumptionNote("wacc")}
             </div>
             <div className="dcf-control">
               <label htmlFor="terminal-slider">永续增长率</label>
               <input id="terminal-slider" type="range" min={RNG.terminal.min} max={RNG.terminal.max} step={RNG.terminal.step}
-                value={terminalPct} onChange={(e) => edit({ field: "terminal", percent: Number(e.target.value) })} />
+                value={terminalPct} disabled={refreshGeneration > draftBaselineRefresh}
+                onChange={(e) => edit({ field: "terminal", percent: Number(e.target.value) })} />
               <output>{terminalPct.toFixed(2)}%</output>
               {assumptionNote("terminal_growth")}
             </div>
             <div className="dcf-control">
               <label htmlFor="roic-slider">稳定期增量资本回报率</label>
               <input id="roic-slider" type="range" min={RNG.roic.min} max={RNG.roic.max} step={RNG.roic.step}
-                value={roicPct} onChange={(e) => edit({ field: "roic", percent: Number(e.target.value) })} />
+                value={roicPct} disabled={refreshGeneration > draftBaselineRefresh}
+                onChange={(e) => edit({ field: "roic", percent: Number(e.target.value) })} />
               <output>{roicPct.toFixed(0)}%</output>
               {assumptionNote("terminal_roic")}
             </div>

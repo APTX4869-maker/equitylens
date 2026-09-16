@@ -34,6 +34,23 @@ export function draftFromInputs(inputs: DcfInputs): DcfInputs {
   return { ...inputs, revenue_growth: [...(inputs.revenue_growth ?? [])] };
 }
 
+/** Rebase a user's five editable assumptions onto newly loaded company data.
+ *
+ * Revenue, margins, cash, shares, and other fact-derived inputs must come from
+ * the fresh default response. Only the controls the user can intentionally edit
+ * survive a data refresh.
+ */
+export function rebaseDraftOnDefaults(defaults: DcfInputs, current: DcfInputs): DcfInputs {
+  return {
+    ...draftFromInputs(defaults),
+    revenue_growth: [...current.revenue_growth],
+    op_margin_end: current.op_margin_end,
+    wacc: current.wacc,
+    terminal_growth: current.terminal_growth,
+    terminal_roic: current.terminal_roic,
+  };
+}
+
 /** Pure synchronous edit.
  *
  * Only a growth edit rebuilds the five-year path (anchored at the user CAGR and

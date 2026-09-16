@@ -36,6 +36,14 @@ type RefreshResult = {
   review_required: boolean;
 };
 
+const FRESHNESS_SHORT_LABELS: Record<string, string> = {
+  sec_financials: "财务",
+  segments: "分部",
+  management: "治理",
+  market_quote: "行情",
+  valuation_runs: "估值运行",
+};
+
 export default function Home() {
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [company, setCompany] = useState("");
@@ -261,14 +269,24 @@ export default function Home() {
                   {entry?.overview?.latest_period ? `FY${entry.overview.latest_period.fiscal_year} Q${entry.overview.latest_period.fiscal_quarter}` : "—"}
                 </span>
               </div>
-              <div className="tool-group" title={freshness[company]?.hint ?? "各数据模块最近更新时间；过期/缺失模块会标色"}>
+              <div
+                className="tool-group freshness-group"
+                data-testid="freshness-group"
+                title={freshness[company]?.hint ?? "各数据模块最近更新时间；过期/缺失模块会标色"}
+              >
                 <span className="tool-label">数据新鲜度</span>
                 {(freshness[company]?.modules ?? []).slice(0, 5).map((m) => {
                   const color = m.status === "ok" ? "#2c8b72" : m.status === "stale" ? "#b58900" : "#c0392b";
                   return (
-                    <span key={m.key} className="tool-value" title={m.detail} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8 }}>
+                    <span
+                      key={m.key}
+                      className="tool-value"
+                      data-testid={`freshness-${m.key}`}
+                      title={m.detail}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8 }}
+                    >
                       <span className="fresh-dot" style={{ background: color }} />
-                      {m.as_of ?? "未同步"}
+                      {FRESHNESS_SHORT_LABELS[m.key] ?? m.label} {m.as_of?.slice(0, 10) ?? "未同步"}
                     </span>
                   );
                 })}
