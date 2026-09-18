@@ -101,7 +101,7 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
           {error ? <div className="action-error" role="alert">{error}</div> : null}
           {discovery ? (
             <div className="candidate-sheet">
-              <div className="candidate-status"><span className={`status-dot ${discovery.eligibility.status === "ELIGIBLE" ? "pass" : "fail"}`} />{discovery.eligibility.status === "ELIGIBLE" ? "符合自动建档范围" : discovery.eligibility.reason ?? "需要人工适配"}</div>
+              <div className="candidate-status"><span className={`status-dot ${discovery.eligibility.status === "SUPPORTED" ? "pass" : "fail"}`} />{discovery.eligibility.status === "SUPPORTED" ? "符合自动建档范围" : discovery.eligibility.reason ?? "需要人工适配"}</div>
               {discovery.candidates.map((candidate) => (
                 <label className={`candidate-row ${candidateId === candidate.candidate_id ? "selected" : ""}`} key={candidate.candidate_id}>
                   <input type="radio" name="candidate" value={candidate.candidate_id} checked={candidateId === candidate.candidate_id} onChange={() => setCandidateId(candidate.candidate_id)} />
@@ -111,7 +111,7 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
               <div className="coverage-strip">
                 <span>10-K {discovery.coverage.form_counts["10-K"] ?? 0} 份</span><span>10-Q {discovery.coverage.form_counts["10-Q"] ?? 0} 份</span><span>覆盖至 {discovery.coverage.latest_report_date ?? "未知"}</span>
               </div>
-              <button className="primary-action full" onClick={() => void create()} disabled={busy || !candidateId || discovery.eligibility.status === "INELIGIBLE"}>{busy ? "正在创建…" : "确认并建档"}</button>
+              <button className="primary-action full" onClick={() => void create()} disabled={busy || !candidateId || discovery.eligibility.status === "REJECTED"}>{busy ? "正在创建…" : "确认并建档"}</button>
             </div>
           ) : null}
         </div>

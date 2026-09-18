@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import Any
 
@@ -77,31 +79,79 @@ def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
     return {**task.model_dump(mode="json"), **identity, **extra}
 
 
+def _decode_company_cursor(cursor: str | None) -> tuple[str | None, str | None, str | None]:
+    if cursor is None:
+        return None, None, None
+    if not cursor.startswith("v1:"):
+        return cursor, "\uffff", "\uffff"
+    try:
+        token = cursor.removeprefix("v1:")
+        padding = "=" * (-len(token) % 4)
+        decoded = base64.b64decode(token + padding, altchars=b"-_", validate=True)
+        values = json.loads(decoded)
+        if (
+            not isinstance(values, list)
+            or len(values) != 3
+            or not all(isinstance(value, str) and value for value in values)
+        ):
+            raise ValueError("invalid company cursor payload")
+        return values[0], values[1], values[2]
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(422, _detail("INVALID_CURSOR", "company cursor is invalid")) from exc
+
+
+def _encode_company_cursor(security_id: str, ticker: str, alias_id: str) -> str:
+    payload = json.dumps([security_id, ticker, alias_id], separators=(",", ":")).encode()
+    return "v1:" + base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
 @router.get("/companies")
 def companies(
     cursor: str | None = None,
     limit: int = Query(50, ge=1, le=200),
 ):
     store = _store()
+    cursor_security_id, cursor_ticker, cursor_alias_id = _decode_company_cursor(cursor)
     rows = store.query(
         """
         SELECT c.company_id, s.security_id, a.ticker, c.legal_name AS name,
                s.exchange, c.active_publication_id AS publication_id,
-               c.quality_status
+               c.quality_status, a.alias_id AS _cursor_alias_id
         FROM security s
         JOIN company c ON c.company_id=s.company_id
         JOIN security_ticker_alias a ON a.security_id=s.security_id
-        WHERE s.status='ACTIVE' AND a.valid_from <= CURRENT_DATE
+        WHERE s.status='ACTIVE' AND c.active_publication_id IS NOT NULL
+          AND a.valid_from <= CURRENT_DATE
           AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)
-          AND (? IS NULL OR s.security_id > ?)
-        ORDER BY s.security_id, a.ticker
+          AND (
+            ? IS NULL
+            OR s.security_id > ?
+            OR (s.security_id = ? AND a.ticker > ?)
+            OR (s.security_id = ? AND a.ticker = ? AND a.alias_id > ?)
+          )
+        ORDER BY s.security_id, a.ticker, a.alias_id
         LIMIT ?
         """,
-        [cursor, cursor, limit + 1],
+        [
+            cursor_security_id,
+            cursor_security_id,
+            cursor_security_id,
+            cursor_ticker,
+            cursor_security_id,
+            cursor_ticker,
+            cursor_alias_id,
+            limit + 1,
+        ],
     )
     has_more = len(rows) > limit
     items = rows[:limit]
+    next_cursor = _encode_company_cursor(
+        items[-1]["security_id"],
+        items[-1]["ticker"],
+        items[-1]["_cursor_alias_id"],
+    ) if has_more else None
     for item in items:
+        item.pop("_cursor_alias_id", None)
         capabilities = store.query(
             "SELECT module, status, reason, coverage_json FROM company_capability WHERE publication_id=? ORDER BY module",
             [item["publication_id"]],
@@ -125,7 +175,7 @@ def companies(
         item["capabilities"] = capabilities
     return {
         "items": items,
-        "next_cursor": items[-1]["security_id"] if has_more else None,
+        "next_cursor": next_cursor,
     }
 
 

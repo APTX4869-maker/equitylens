@@ -191,6 +191,44 @@ def test_company_and_task_lists_are_paginated_and_cancellation_is_terminal(db, m
     assert again.status_code == 409
 
 
+def test_unpublished_onboarding_candidate_is_not_listed_as_research_company(db, monkeypatch):
+    client, discovery = _client(db, monkeypatch)
+    created, _ = _create(client, discovery)
+    assert created.status_code == 202
+    assert created.json()["publication_id"] is None
+
+    response = client.get("/api/v1/companies", params={"limit": 200})
+
+    assert response.status_code == 200
+    assert all(item["publication_id"] is not None for item in response.json()["items"])
+    assert "EXAMPLE" not in {item["ticker"] for item in response.json()["items"]}
+
+
+def test_company_directory_pagination_does_not_skip_a_second_active_alias(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    apple_security = db.query_one(
+        "SELECT security_id FROM security_ticker_alias WHERE ticker='AAPL'"
+    )
+    CompanyRegistry(db).add_ticker_alias(
+        apple_security["security_id"], ticker="AAPLX", exchange="NASDAQ"
+    )
+
+    tickers: list[str] = []
+    cursor = None
+    for _ in range(10):
+        params = {"limit": 1}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/api/v1/companies", params=params)
+        assert response.status_code == 200
+        tickers.extend(item["ticker"] for item in response.json()["items"])
+        cursor = response.json()["next_cursor"]
+        if cursor is None:
+            break
+
+    assert {"AAPL", "AAPLX"}.issubset(tickers)
+
+
 def test_ambiguous_ticker_requires_security_id(db, monkeypatch):
     client, _ = _client(db, monkeypatch)
     registry = CompanyRegistry(db)

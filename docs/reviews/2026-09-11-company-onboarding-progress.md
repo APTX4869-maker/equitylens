@@ -201,3 +201,17 @@
 复核：三轮代码审查逐项修复 profile/来源绑定、候选竞态、年度期间、派生 accession、durable publish、共享 SEC 限流、适用性证据、核心 filing context、版本化重试与多股类双向一致性；最终复核无 Critical/Important 遗留。
 
 遗留问题与下一步：KO/COST 的 Company Facts 足以独立验证核心数值，但没有真实 filing/iXBRL 行级 context/locator 或分部维度；当前环境获取 SEC Archives 文档为 403。因此质量明确保留 `LINEAGE.filing_context` 和 `SEGMENTS.reconciliation` BLOCKER，两家公司未批准、未发布。AAPL/MSFT 保留 `LEGACY_UNREVIEWED`。取得并固定官方 iXBRL 后必须生成新候选、重跑质量并重新审查，不能沿用旧指纹或手工置为 PASS。
+
+## 上线后回归：未发布公司目录隔离（2026-09-16）
+
+实际问题：创建 NVDA 建档任务后，身份注册已写入 `company/security`，但尚无 publication。公司目录查询遗漏发布门槛，返回 `publication_id=null` 的 NVDA；页面默认选中首项后，其总览、行情和新鲜度请求均返回 404。真实发现接口同时返回 `SUPPORTED/REJECTED`，页面仍使用旧的 `ELIGIBLE/INELIGIBLE` 枚举。
+
+修复：后端公司目录只返回 `active_publication_id` 非空的证券；前端再次过滤无 publication 的异常响应，避免错误项成为当前公司；添加公司弹窗按真实 `SUPPORTED/REJECTED` 枚举展示和门禁。目录刷新增加请求代次并稳定发布回调，旧响应不会覆盖新发布公司；分页游标改为完整 `(security_id, ticker, alias_id)` 排序键并兼容旧游标。NVDA 建档任务继续保留为 `NEEDS_ADAPTATION`，未删除、未冒充正式发布。
+
+验证：
+
+- TDD 后端回归先失败、修复后通过；`uv run pytest -q`：`350 passed, 1 warning in 129.80s`。
+- `pnpm --dir apps/web lint` 与 `pnpm --dir apps/web build` 通过。
+- 新增未发布目录防御、目录迟到响应、SUPPORTED 展示和 REJECTED 门禁浏览器反例；全量 Playwright：`28 passed in 17.9s`。
+- 真实数据库 API：公司目录仅返回 AAPL、MSFT；建档任务仍返回 NVDA `NEEDS_ADAPTATION`、`publication_id=null`。
+- 真实浏览器：默认进入 Apple，侧栏无 NVDA，无“公司或财务总览加载失败”，控制台错误与失败请求均为 0。

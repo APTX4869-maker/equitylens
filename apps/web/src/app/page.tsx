@@ -66,25 +66,34 @@ export default function Home() {
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
   const [valuationReviewGeneration, setValuationReviewGeneration] = useState<Record<string, number>>({});
   const companyRef = useRef(company);
+  const companyListRequestSeq = useRef(0);
   const refreshRequestSeq = useRef(0);
   const dataRequestSeq = useRef(0);
 
   const loadCompanies = useCallback(async () => {
     const controller = new AbortController();
+    const requestSeq = ++companyListRequestSeq.current;
     try {
       const response = await api.companies(controller.signal);
-      setCompanies(response.items);
+      if (requestSeq !== companyListRequestSeq.current) return;
+      const publishedItems = response.items.filter((item) => item.publication_id !== null);
+      setCompanies(publishedItems);
       setCompany((current) => {
-        const next = current && response.items.some((item) => item.ticker === current) ? current : response.items[0]?.ticker ?? "";
+        const next = current && publishedItems.some((item) => item.ticker === current) ? current : publishedItems[0]?.ticker ?? "";
         companyRef.current = next;
         return next;
       });
       setCompanyListError(null);
     } catch (reason) {
-      if (!controller.signal.aborted) setCompanyListError(`研究公司列表加载失败：${String(reason)} 请检查 API 后重试。`);
+      if (requestSeq === companyListRequestSeq.current && !controller.signal.aborted) {
+        setCompanyListError(`研究公司列表加载失败：${String(reason)} 请检查 API 后重试。`);
+      }
     }
-    return () => controller.abort();
   }, []);
+
+  const handlePublished = useCallback(() => {
+    void loadCompanies();
+  }, [loadCompanies]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadCompanies(), 0);
@@ -380,7 +389,7 @@ export default function Home() {
       />
       <SourceDrawer entityId={sourceEntity} onClose={() => setSourceEntity(null)} />
       <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setCenterOpen(true); }} />
-      <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={() => void loadCompanies()} />
+      <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={handlePublished} />
     </div>
   );
 }

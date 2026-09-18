@@ -49,7 +49,7 @@ async function installOnboardingApiFixture(page: Page) {
     await route.fulfill({ json: {
       discovery_id: "discovery-ko", ticker: "KO", identity_hash: "identity-ko", expires_at: "2026-09-12T02:00:00Z",
       candidates: [{ candidate_id: "candidate-ko", company_id: "0000021344", legal_name: "The Coca-Cola Company", ticker: "KO", exchange: "NYSE", currency: "USD", instrument_type: "COMMON_STOCK", evidence: [{ source: "SEC" }] }],
-      eligibility: { status: "ELIGIBLE", template: "us_gaap_operating_v1" },
+      eligibility: { status: "SUPPORTED", template: "us_gaap_operating_v1" },
       coverage: { form_counts: { "10-K": 3, "10-Q": 9 }, earliest_report_date: "2023-12-31", latest_report_date: "2026-06-30" }, evidence: [],
     }});
   });
@@ -92,6 +92,71 @@ test("company appears only after publication and duplicate submit is prevented",
   await expect(page.getByTestId("company-list").getByText("KO", { exact: true })).toBeVisible();
 });
 
+test("unpublished directory entries are ignored instead of becoming the active company", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  const unpublishedNvidia = {
+    ...apple,
+    company_id: "0001045810",
+    security_id: "sec-nvda",
+    ticker: "NVDA",
+    name: "NVIDIA Corp.",
+    publication_id: null,
+    quality_status: "PENDING",
+    capabilities: [],
+  };
+  await page.route("**/api/v1/companies?**", (route) => route.fulfill({
+    json: { items: [unpublishedNvidia, apple], next_cursor: null },
+  }));
+
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: /Apple Inc/ })).toBeVisible();
+  await expect(page.getByTestId("company-list").getByText("NVDA", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("公司或财务总览加载失败")).toHaveCount(0);
+});
+
+test("an older company directory response cannot hide a newly published company", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  let requestCount = 0;
+  let published = false;
+  let staleResponseFinished = false;
+  let releaseFirst!: () => void;
+  const firstResponseGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/company-onboardings/onboarding-ko/review")) published = true;
+  });
+  await page.route((url) => url.pathname === "/api/v1/companies", async (route) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      await firstResponseGate;
+      await route.fulfill({ json: { items: [apple], next_cursor: null } });
+      staleResponseFinished = true;
+      return;
+    }
+    return route.fulfill({ json: {
+      items: published
+        ? [apple, { ...apple, company_id: "0000021344", security_id: "sec-ko", ticker: "KO", name: "The Coca-Cola Company", exchange: "NYSE", publication_id: "pub-ko" }]
+        : [apple],
+      next_cursor: null,
+    }});
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "添加公司" }).click();
+  await page.getByLabel("股票代码").fill("KO");
+  await page.getByRole("button", { name: "识别公司" }).click();
+  await page.getByRole("button", { name: "确认并建档" }).click();
+  await page.getByRole("button", { name: "批准并发布" }).click();
+  await expect(page.getByTestId("company-list").getByText("KO", { exact: true })).toBeVisible();
+
+  releaseFirst();
+  await expect.poll(() => requestCount).toBe(2);
+  await expect.poll(() => staleResponseFinished).toBe(true);
+  await page.waitForTimeout(250);
+  expect(requestCount).toBe(2);
+  await expect(page.getByTestId("company-list").getByText("KO", { exact: true })).toBeVisible();
+});
+
 test("add-company dialog supports Escape and restores focus", async ({ page }) => {
   await installOnboardingApiFixture(page);
   await page.goto("/");
@@ -102,6 +167,35 @@ test("add-company dialog supports Escape and restores focus", async ({ page }) =
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "添加研究公司" })).toBeHidden();
   await expect(trigger).toBeFocused();
+});
+
+test("supported SEC discovery is presented as eligible for onboarding", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "添加公司" }).click();
+  await page.getByLabel("股票代码").fill("KO");
+  await page.getByRole("button", { name: "识别公司" }).click();
+
+  await expect(page.getByText("符合自动建档范围")).toBeVisible();
+  await expect(page.getByText("需要人工适配")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "确认并建档" })).toBeEnabled();
+});
+
+test("rejected SEC discovery cannot start onboarding", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  await page.route("**/api/v1/companies/discover", (route) => route.fulfill({ json: {
+    discovery_id: "discovery-fund", ticker: "FUND", identity_hash: "identity-fund", expires_at: "2026-09-12T02:00:00Z",
+    candidates: [{ candidate_id: "candidate-fund", company_id: "0000000002", legal_name: "Example Fund", ticker: "FUND", exchange: "NYSE", currency: "USD", instrument_type: "ETF", evidence: [{ source: "SEC" }] }],
+    eligibility: { status: "REJECTED", reason_code: "UNSUPPORTED_INSTRUMENT", reason: "不支持基金或 ETF" },
+    coverage: { form_counts: {}, earliest_report_date: null, latest_report_date: null }, evidence: [],
+  }}));
+  await page.goto("/");
+  await page.getByRole("button", { name: "添加公司" }).click();
+  await page.getByLabel("股票代码").fill("FUND");
+  await page.getByRole("button", { name: "识别公司" }).click();
+
+  await expect(page.getByText("不支持基金或 ETF")).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认并建档" })).toBeDisabled();
 });
 
 test("quality failure disables approval with a next step", async ({ page }) => {
