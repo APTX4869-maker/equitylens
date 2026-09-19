@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -111,6 +112,69 @@ def test_same_issuer_reuses_active_task(db):
     )
 
     assert second.onboarding_id == first.onboarding_id
+
+
+def test_fetch_bundle_is_immutable_and_bound_atomically(db):
+    repository = OnboardingRepository(db)
+    security_id = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    task = repository.create_task(
+        company_id="0000320193",
+        security_id=security_id,
+        input_fingerprint="bundle-fixture",
+    )
+    documents = [
+        {
+            "document_id": "submissions-sha",
+            "document_type": "SUBMISSIONS",
+            "accession_number": None,
+            "form_type": None,
+            "filed_at": None,
+            "report_date": None,
+            "fetched_at": datetime(2026, 9, 19, tzinfo=timezone.utc),
+            "source_url": "https://data.sec.gov/submissions/CIK0000320193.json",
+            "content_sha256": "a" * 64,
+            "raw_locator": "sec/0000320193/submissions.aaaaaaaa.json",
+        }
+    ]
+
+    bundle = repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=task.revision,
+        fetcher_version="sec-v1",
+        parser_version="ixbrl-v1",
+        documents=documents,
+    )
+    current = repository.get(task.onboarding_id)
+    loaded = repository.get_fetch_bundle(bundle.fetch_bundle_id)
+
+    assert current.fetch_bundle_id == bundle.fetch_bundle_id
+    assert current.revision == task.revision + 1
+    assert loaded == bundle
+    assert loaded.documents[0].raw_locator == documents[0]["raw_locator"]
+    assert repository.list_events(task.onboarding_id)[0].event_type == "FETCH_BUNDLE_ACTIVATED"
+
+    replay = repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=current.revision,
+        fetcher_version="sec-v1",
+        parser_version="ixbrl-v1",
+        documents=documents,
+    )
+    assert replay.fetch_bundle_id == bundle.fetch_bundle_id
+    assert repository.get(task.onboarding_id).revision == current.revision
+
+    changed = [{**documents[0], "content_sha256": "b" * 64}]
+    with pytest.raises(OnboardingConflict) as exc:
+        repository.create_fetch_bundle(
+            task.onboarding_id,
+            expected_revision=task.revision,
+            fetcher_version="sec-v1",
+            parser_version="ixbrl-v1",
+            documents=changed,
+        )
+    assert exc.value.code == "TASK_CONFLICT"
 
 
 def test_cancel_requested_at_running_boundary_becomes_cancelled(db):

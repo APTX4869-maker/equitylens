@@ -39,7 +39,7 @@
 - Produces: `FetchBundle`, `FetchDocument`, `OnboardingEvent`, `OnboardingRepository.create_fetch_bundle(...)`, `get_fetch_bundle(...)`, `append_event(...)`.
 - Produces task pointers `fetch_bundle_id` and `profile_candidate_id` without mutating historical artifacts.
 
-- [ ] **Step 1: Add failing migration and transaction tests**
+- [x] **Step 1: Add failing migration and transaction tests**
 
 ```python
 def test_fetch_bundle_is_immutable_and_bound_atomically(repository):
@@ -51,23 +51,23 @@ def test_fetch_bundle_is_immutable_and_bound_atomically(repository):
         repository.create_fetch_bundle(task.onboarding_id, task.revision, documents=OTHER_DOCUMENTS)
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
 Run: `uv run pytest tests/integration/test_onboarding_migration.py tests/integration/test_onboarding_runner.py -q`
 
 Expected: failures for missing bundle/event tables, models, and task fields.
 
-- [ ] **Step 3: Add migration 7 and typed repository operations**
+- [x] **Step 3: Add migration 7 and typed repository operations**
 
 Create additive tables `onboarding_fetch_bundle`, `onboarding_fetch_document`, `issuer_profile_candidate`, `onboarding_event`, and `profile_import_idempotency`; add nullable task pointers. Store canonical JSON and enforce uniqueness for `(onboarding_id, content_sha256)` and `(onboarding_id, input_sha256)`. Implement each compound write through the existing writer transaction.
 
-- [ ] **Step 4: Re-run focused tests and migration idempotence**
+- [x] **Step 4: Re-run focused tests and migration idempotence**
 
 Run: `uv run pytest tests/integration/test_onboarding_migration.py tests/integration/test_onboarding_runner.py -q`
 
 Expected: PASS, including a second migration run applying no versions and preserving prior task/profile rows.
 
-- [ ] **Step 5: Update progress and commit**
+- [x] **Step 5: Update progress and commit**
 
 ```bash
 git add equitylens/storage/migrations.py equitylens/onboarding/models.py equitylens/onboarding/repository.py tests/integration/test_onboarding_migration.py tests/integration/test_onboarding_runner.py docs/reviews/2026-09-11-company-onboarding-progress.md
@@ -377,4 +377,3 @@ git diff --check
 - Spec coverage: sections 4.1.1/4.1.2 map to C02/C03; persistence and atomicity to C01/C04/C05; APIs/refetch to C06; state/progress/heartbeat to C07; workbench/global UX to C08/C09; compatibility, security, and real acceptance to C01—C10.
 - Placeholder scan: no deferred implementation placeholders are used; the only deferred feature is the explicitly out-of-scope refresh improvement in spec section 14.
 - Type consistency: C01 bundle/candidate/event models feed C02—C07; C03 exports Profile v2 validation used by C04—C06; C07 is the sole progress source consumed by C08/C09.
-

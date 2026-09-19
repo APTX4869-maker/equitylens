@@ -10,6 +10,9 @@ from typing import Any
 
 from equitylens.onboarding.models import (
     ACTIVE_STATES,
+    FetchBundle,
+    FetchDocument,
+    OnboardingEvent,
     OnboardingStep,
     TaskState,
     TaskView,
@@ -25,7 +28,17 @@ class OnboardingConflict(RuntimeError):
 
 
 def _json(value: Any) -> str | None:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True) if value is not None else None
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=lambda item: item.isoformat() if hasattr(item, "isoformat") else str(item),
+        )
+        if value is not None
+        else None
+    )
 
 
 def _step_input_hash(task: TaskView) -> str:
@@ -114,6 +127,8 @@ class OnboardingRepository:
             cancel_requested=row["cancel_requested"],
             input_fingerprint=row["input_fingerprint"],
             discovery_id=row.get("discovery_id"),
+            fetch_bundle_id=row.get("fetch_bundle_id"),
+            profile_candidate_id=row.get("profile_candidate_id"),
             profile_id=row.get("profile_id"),
             dataset_id=row.get("dataset_id"),
             quality_report_id=row.get("quality_report_id"),
@@ -124,6 +139,165 @@ class OnboardingRepository:
             updated_at=row["updated_at"],
             actions=actions,
         )
+
+    def create_fetch_bundle(
+        self,
+        task_id: str,
+        *,
+        expected_revision: int,
+        fetcher_version: str,
+        parser_version: str,
+        documents: list[dict[str, Any] | FetchDocument],
+    ) -> FetchBundle:
+        parsed = [
+            item if isinstance(item, FetchDocument) else FetchDocument.model_validate(item)
+            for item in documents
+        ]
+        canonical_documents = [
+            item.model_dump(mode="json")
+            for item in sorted(parsed, key=lambda document: document.document_id)
+        ]
+        content_sha256 = hashlib.sha256(
+            _json(
+                {
+                    "fetcher_version": fetcher_version,
+                    "parser_version": parser_version,
+                    "documents": canonical_documents,
+                }
+            ).encode()
+        ).hexdigest()
+        bundle_id: str | None = None
+        with self.writer.transaction(self.store):
+            task = self.store._conn.execute(
+                "SELECT revision, fetch_bundle_id FROM company_onboarding WHERE onboarding_id=?",
+                [task_id],
+            ).fetchone()
+            if task is None:
+                raise KeyError(task_id)
+            existing = self.store._conn.execute(
+                """
+                SELECT fetch_bundle_id FROM onboarding_fetch_bundle
+                WHERE onboarding_id=? AND content_sha256=?
+                """,
+                [task_id, content_sha256],
+            ).fetchone()
+            if existing and task[1] == existing[0]:
+                bundle_id = existing[0]
+            else:
+                if task[0] != expected_revision:
+                    raise OnboardingConflict("TASK_CONFLICT", "task revision changed")
+                bundle_id = existing[0] if existing else str(uuid.uuid4())
+                if not existing:
+                    self.store._conn.execute(
+                        """
+                        INSERT INTO onboarding_fetch_bundle VALUES (?, ?, ?, ?, ?, now())
+                        """,
+                        [bundle_id, task_id, fetcher_version, parser_version, content_sha256],
+                    )
+                    for document in parsed:
+                        self.store._conn.execute(
+                            """
+                            INSERT INTO onboarding_fetch_document VALUES
+                              (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            [
+                                bundle_id,
+                                document.document_id,
+                                document.document_type,
+                                document.accession_number,
+                                document.form_type,
+                                document.filed_at,
+                                document.report_date,
+                                document.fetched_at,
+                                document.source_url,
+                                document.content_sha256,
+                                document.raw_locator,
+                            ],
+                        )
+                new_revision = task[0] + 1
+                self.store._conn.execute(
+                    """
+                    UPDATE company_onboarding SET fetch_bundle_id=?, revision=?, updated_at=now()
+                    WHERE onboarding_id=?
+                    """,
+                    [bundle_id, new_revision, task_id],
+                )
+                self._append_event_locked(
+                    task_id,
+                    event_type="FETCH_BUNDLE_ACTIVATED",
+                    actor_type="SYSTEM",
+                    task_revision=new_revision,
+                    payload={"fetch_bundle_id": bundle_id, "content_sha256": content_sha256},
+                )
+        return self.get_fetch_bundle(bundle_id)
+
+    def get_fetch_bundle(self, bundle_id: str) -> FetchBundle:
+        row = self.store.query_one(
+            "SELECT * FROM onboarding_fetch_bundle WHERE fetch_bundle_id=?", [bundle_id]
+        )
+        if row is None:
+            raise KeyError(bundle_id)
+        documents = self.store.query(
+            """
+            SELECT * EXCLUDE (fetch_bundle_id) FROM onboarding_fetch_document
+            WHERE fetch_bundle_id=? ORDER BY document_id
+            """,
+            [bundle_id],
+        )
+        return FetchBundle.model_validate({**row, "documents": documents})
+
+    def append_event(
+        self,
+        task_id: str,
+        *,
+        event_type: str,
+        actor_type: str,
+        task_revision: int,
+        payload: dict[str, Any] | None = None,
+    ) -> OnboardingEvent:
+        with self.writer.transaction(self.store):
+            event_id = self._append_event_locked(
+                task_id,
+                event_type=event_type,
+                actor_type=actor_type,
+                task_revision=task_revision,
+                payload=payload or {},
+            )
+        return self._get_event(event_id)
+
+    def _append_event_locked(
+        self,
+        task_id: str,
+        *,
+        event_type: str,
+        actor_type: str,
+        task_revision: int,
+        payload: dict[str, Any],
+    ) -> str:
+        event_id = str(uuid.uuid4())
+        self.store._conn.execute(
+            """
+            INSERT INTO onboarding_event VALUES (?, ?, ?, ?, ?, ?, now())
+            """,
+            [event_id, task_id, event_type, actor_type, task_revision, _json(payload)],
+        )
+        return event_id
+
+    def _get_event(self, event_id: str) -> OnboardingEvent:
+        row = self.store.query_one("SELECT * FROM onboarding_event WHERE event_id=?", [event_id])
+        if row is None:
+            raise KeyError(event_id)
+        payload = row.pop("payload_json")
+        return OnboardingEvent.model_validate(
+            {**row, "payload": json.loads(payload) if isinstance(payload, str) else payload}
+        )
+
+    def list_events(self, task_id: str) -> list[OnboardingEvent]:
+        rows = self.store.query(
+            "SELECT event_id FROM onboarding_event WHERE onboarding_id=? ORDER BY created_at, event_id",
+            [task_id],
+        )
+        return [self._get_event(row["event_id"]) for row in rows]
 
     def set_candidate(
         self,

@@ -4,6 +4,8 @@
 
 状态：T01—T10 已按顺序执行；T10 可独立完成的实现、迁移演练、教程、审查与全量验证已完成，真实发布因官方 iXBRL 证据不可取得而保持阻塞。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
+扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。
+
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
 | T01 身份注册与迁移 | 已完成 | 5 passed；真实库副本双次迁移通过 | 已自检 | `docs/reviews/2026-09-11-company-onboarding-pre-migration-inventory.md` |
@@ -16,6 +18,33 @@
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
 | T10 真实接入及完整验收 | 可独立部分已完成 | 75 个聚焦测试、348 个全量后端测试、18 个浏览器测试通过；前端类型/lint/build 通过 | 三轮审查收口，无 Critical/Important 遗留 | KO/COST 缺官方 filing/iXBRL 行级 context 与分部证据，未批准、未发布；迁移演练和失败恢复通过 |
+| C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
+| C02 固定 SEC 申报包 | 未开始 | 未运行 | 待复核 | 下一步 |
+| C03 Profile v2 与申报证据 | 未开始 | 未运行 | 待复核 | 依赖 C02 |
+| C04 确定性候选制品 | 未开始 | 未运行 | 待复核 | 依赖 C01—C03 |
+| C05 严格 YAML 与原子恢复 | 未开始 | 未运行 | 待复核 | 依赖 C04 |
+| C06 候选/导入/refetch API | 未开始 | 未运行 | 待复核 | 依赖 C05 |
+| C07 统一进度与 attention | 未开始 | 未运行 | 待复核 | 依赖 C01、C06 |
+| C08 五阶段与适配工作台 | 未开始 | 未运行 | 待复核 | 依赖 C06—C07 |
+| C09 全局任务入口 | 未开始 | 未运行 | 待复核 | 依赖 C07—C08 |
+| C10 NVDA 真实闭环 | 未开始 | 未运行 | 待复核 | 依赖 C01—C09 |
+
+## C01 不可变 FETCH 持久化
+
+阶段与提交号：C01；提交在本阶段记录更新后创建。
+
+实际改动：新增 migration v7，为任务增加 `fetch_bundle_id`、`profile_candidate_id`；新增不可变 bundle/document、候选、追加事件及 Profile 导入幂等表。repository 新增严格类型化 bundle 写入/读取和事件读取；bundle、任务指针、revision 与激活事件在同一 writer 事务提交，相同输入重放不增 revision，旧 revision 不可覆盖。
+
+测试命令及结果：
+
+- RED：两个新增用例 `2 failed`，分别确认迁移仅到 v6，以及 `create_fetch_bundle` 缺失。
+- GREEN：两个新增用例 `2 passed in 0.27s`。
+- 聚焦回归：`uv run pytest tests/integration/test_onboarding_migration.py tests/integration/test_onboarding_runner.py -q`，`13 passed in 1.05s`。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`tests/integration/test_onboarding_migration.py`、`tests/integration/test_onboarding_runner.py`。
+
+遗留问题与下一步：C01 仅建立持久化原语；C02 将实现确定性的 recent/history 合并、3 年/8 季/修订选择、主文档下载和完整 bundle 激活，流水线在 C02 前尚未调用新 bundle API。
 
 ## 每阶段记录格式
 

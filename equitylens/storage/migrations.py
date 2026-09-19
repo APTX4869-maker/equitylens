@@ -521,6 +521,85 @@ def _valuation_identity(conn: duckdb.DuckDBPyConnection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
 
 
+def _onboarding_closure_artifacts(conn: duckdb.DuckDBPyConnection) -> None:
+    for column in ("fetch_bundle_id VARCHAR", "profile_candidate_id VARCHAR"):
+        conn.execute(f"ALTER TABLE company_onboarding ADD COLUMN IF NOT EXISTS {column}")
+    for statement in (
+        """
+        CREATE TABLE IF NOT EXISTS onboarding_fetch_bundle (
+          fetch_bundle_id VARCHAR PRIMARY KEY,
+          onboarding_id VARCHAR NOT NULL,
+          fetcher_version VARCHAR NOT NULL,
+          parser_version VARCHAR NOT NULL,
+          content_sha256 VARCHAR NOT NULL,
+          created_at TIMESTAMP NOT NULL,
+          UNIQUE(onboarding_id, content_sha256)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS onboarding_fetch_document (
+          fetch_bundle_id VARCHAR NOT NULL,
+          document_id VARCHAR NOT NULL,
+          document_type VARCHAR NOT NULL,
+          accession_number VARCHAR,
+          form_type VARCHAR,
+          filed_at DATE,
+          report_date DATE,
+          fetched_at TIMESTAMP NOT NULL,
+          source_url VARCHAR NOT NULL,
+          content_sha256 VARCHAR NOT NULL,
+          raw_locator VARCHAR NOT NULL,
+          PRIMARY KEY(fetch_bundle_id, document_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS issuer_profile_candidate (
+          profile_candidate_id VARCHAR PRIMARY KEY,
+          onboarding_id VARCHAR NOT NULL,
+          task_revision INTEGER NOT NULL,
+          company_id VARCHAR NOT NULL,
+          fetch_bundle_id VARCHAR NOT NULL,
+          input_sha256 VARCHAR NOT NULL,
+          generator_version VARCHAR NOT NULL,
+          mapping_version VARCHAR NOT NULL,
+          mapping_sha256 VARCHAR NOT NULL,
+          snapshot_manifest_json JSON NOT NULL,
+          profile_json JSON NOT NULL,
+          unresolved_json JSON NOT NULL,
+          yaml_text VARCHAR NOT NULL,
+          content_sha256 VARCHAR NOT NULL,
+          yaml_sha256 VARCHAR NOT NULL,
+          created_at TIMESTAMP NOT NULL,
+          UNIQUE(onboarding_id, input_sha256)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS onboarding_event (
+          event_id VARCHAR PRIMARY KEY,
+          onboarding_id VARCHAR NOT NULL,
+          event_type VARCHAR NOT NULL,
+          actor_type VARCHAR NOT NULL,
+          task_revision INTEGER NOT NULL,
+          payload_json JSON NOT NULL,
+          created_at TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS profile_import_idempotency (
+          onboarding_id VARCHAR NOT NULL,
+          idempotency_key VARCHAR NOT NULL,
+          request_sha256 VARCHAR NOT NULL,
+          response_json JSON NOT NULL,
+          created_at TIMESTAMP NOT NULL,
+          PRIMARY KEY(onboarding_id, idempotency_key)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS fetch_bundle_task_idx ON onboarding_fetch_bundle(onboarding_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS onboarding_event_task_idx ON onboarding_event(onboarding_id, created_at)",
+    ):
+        conn.execute(statement)
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -567,6 +646,12 @@ MIGRATIONS = (
         name="valuation_security_publication_identity",
         signature="market_quote:+security;valuation_confirmation:v1;valuation_run:+identity;valuation_plan:+identity",
         apply=lambda conn: _valuation_identity(conn),
+    ),
+    Migration(
+        version=7,
+        name="onboarding_closure_artifacts",
+        signature="onboarding:+fetch_bundle,+profile_candidate;fetch_document:v1;profile_candidate:v1;onboarding_event:v1;profile_import_idempotency:v1",
+        apply=lambda conn: _onboarding_closure_artifacts(conn),
     ),
 )
 

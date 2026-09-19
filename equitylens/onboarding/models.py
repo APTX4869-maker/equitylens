@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -58,6 +58,45 @@ class StepAttempt(BaseModel):
     error: dict[str, Any] | None = None
 
 
+class FetchDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    document_type: str
+    accession_number: str | None = None
+    form_type: str | None = None
+    filed_at: date | None = None
+    report_date: date | None = None
+    fetched_at: datetime
+    source_url: str
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    raw_locator: str
+
+
+class FetchBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fetch_bundle_id: str
+    onboarding_id: str
+    fetcher_version: str
+    parser_version: str
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    documents: list[FetchDocument]
+    created_at: datetime
+
+
+class OnboardingEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str
+    onboarding_id: str
+    event_type: str
+    actor_type: str
+    task_revision: int
+    payload: dict[str, Any]
+    created_at: datetime
+
+
 class TaskView(BaseModel):
     onboarding_id: str
     company_id: str
@@ -67,6 +106,8 @@ class TaskView(BaseModel):
     cancel_requested: bool
     input_fingerprint: str
     discovery_id: str | None = None
+    fetch_bundle_id: str | None = None
+    profile_candidate_id: str | None = None
     profile_id: str | None = None
     dataset_id: str | None = None
     quality_report_id: str | None = None

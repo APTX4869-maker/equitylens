@@ -42,6 +42,12 @@ CREATE TABLE valuation_run (
   output_json JSON NOT NULL,
   warnings_json JSON
 );
+CREATE TABLE valuation_assumption_set (
+  assumption_set_id VARCHAR PRIMARY KEY
+);
+CREATE TABLE valuation_plan (
+  plan_id VARCHAR PRIMARY KEY
+);
 """
 
 
@@ -112,4 +118,30 @@ def test_applied_migration_checksum_is_immutable(tmp_path):
 
     with pytest.raises(MigrationChecksumError):
         apply_migrations(conn, target_version=1)
+    conn.close()
+
+
+def test_onboarding_closure_migration_is_additive_and_idempotent(tmp_path):
+    path = tmp_path / "legacy.duckdb"
+    _legacy_database(path)
+    conn = duckdb.connect(str(path))
+
+    first = apply_migrations(conn)
+    second = apply_migrations(conn)
+    tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+    task_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info('company_onboarding')").fetchall()
+    }
+
+    assert first == [1, 2, 3, 4, 5, 6, 7]
+    assert second == []
+    assert {
+        "onboarding_fetch_bundle",
+        "onboarding_fetch_document",
+        "issuer_profile_candidate",
+        "onboarding_event",
+        "profile_import_idempotency",
+    } <= tables
+    assert {"fetch_bundle_id", "profile_candidate_id"} <= task_columns
+    assert conn.execute("SELECT count(*) FROM company").fetchone() == (2,)
     conn.close()
