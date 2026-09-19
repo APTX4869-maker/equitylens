@@ -47,9 +47,21 @@ def normalize_ticker(value: str) -> str:
     if not TICKER_RE.fullmatch(ticker):
         raise DiscoveryError(
             "INVALID_TICKER",
-            "ticker must be 1-20 letters, digits, dots, or hyphens",
+            "股票代码只能包含 1—20 位字母、数字、点或连字符",
         )
     return ticker
+
+
+def _instrument_type(submissions: dict) -> str:
+    name = str(submissions.get("name") or "").upper()
+    sic = str(submissions.get("sic") or "")
+    if sic == "6770" or "SPAC" in name or "ACQUISITION CORP" in name or "BLANK CHECK" in name:
+        return "SPAC"
+    if " ETF" in name or sic == "6726":
+        return "ETF"
+    if " FUND" in name or sic == "6722":
+        return "FUND"
+    return "COMMON_STOCK"
 
 
 class SECDiscoverySource:
@@ -188,6 +200,7 @@ class CompanyDiscovery:
                         ticker=str(listed_ticker).upper(),
                         exchange=exchange,
                         class_label=None,
+                        instrument_type=_instrument_type(submissions),
                         evidence=[registry_evidence, evidence],
                     )
                 )
@@ -265,18 +278,18 @@ class CompanyDiscovery:
 
     @staticmethod
     def _eligibility(issuers: list[dict], filings: list[dict]) -> Eligibility:
-        names = " ".join(str(item.get("name") or "").upper() for item in issuers)
         sic_codes = {str(item.get("sic") or "") for item in issuers}
         entity_types = {str(item.get("entity_type") or "").lower() for item in issuers}
         forms = {str(row.get("form") or "").upper() for row in filings}
-        if (
-            any(token in names for token in (" ETF", " FUND", "SPAC"))
-            or sic_codes & {"6722", "6726"}
-        ) and "operating" not in entity_types:
+        instrument_types = {
+            _instrument_type({"name": item.get("name"), "sic": item.get("sic")})
+            for item in issuers
+        }
+        if instrument_types & {"ETF", "FUND", "SPAC"} and "operating" not in entity_types:
             return Eligibility(
                 status="REJECTED",
                 reason_code="UNSUPPORTED_INSTRUMENT",
-                reason="SEC evidence identifies a fund/ETF/SPAC rather than an operating company",
+                reason="当前仅支持经营性公司，暂不支持基金、ETF 或 SPAC",
             )
         if sic_codes & {"6021", "6022", "6035", "6311", "6331", "6798"}:
             return Eligibility(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, userErrorMessage } from "@/lib/api";
 import type { DiscoveryResult, OnboardingTask } from "@/lib/types";
 
 export function AddCompanyDialog({ open, onClose, onCreated }: {
@@ -62,7 +62,7 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
       setCandidateId(result.candidates[0]?.candidate_id ?? "");
       if (!result.candidates.length) setError("未找到可建档证券，请核对代码或交易所。");
     } catch (reason) {
-      if (!controller.signal.aborted) setError(`识别失败：${String(reason)} 请核对代码后重试。`);
+      if (!controller.signal.aborted) setError(`识别失败：${userErrorMessage(reason)} 请核对代码后重试。`);
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
@@ -77,7 +77,7 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
       onCreated(task, discovery.ticker);
       onClose();
     } catch (reason) {
-      setError(`建档未开始：${String(reason)} 请重新识别后再试。`);
+      setError(`建档未开始：${userErrorMessage(reason)} 请重新识别后再试。`);
     } finally {
       setBusy(false);
     }

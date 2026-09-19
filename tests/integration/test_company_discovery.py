@@ -127,6 +127,32 @@ def test_etf_is_rejected_with_submission_evidence(discovery_case):
 
     assert result.eligibility.status == "REJECTED"
     assert result.eligibility.reason_code == "UNSUPPORTED_INSTRUMENT"
+    assert result.eligibility.reason == "当前仅支持经营性公司，暂不支持基金、ETF 或 SPAC"
+    assert {candidate.instrument_type for candidate in result.candidates} == {"ETF"}
+
+
+def test_fund_is_rejected_and_classified_consistently(discovery_case):
+    source, discovery = discovery_case
+    source.submissions.update(
+        {"entityType": "other", "name": "Example Investment Fund", "sic": "6722"}
+    )
+
+    result = discovery.discover("EXAMPLE")
+
+    assert result.eligibility.reason_code == "UNSUPPORTED_INSTRUMENT"
+    assert {candidate.instrument_type for candidate in result.candidates} == {"FUND"}
+
+
+def test_blank_check_company_is_rejected_and_classified_as_spac(discovery_case):
+    source, discovery = discovery_case
+    source.submissions.update(
+        {"entityType": "other", "name": "Example Acquisition Corp", "sic": "6770"}
+    )
+
+    result = discovery.discover("EXAMPLE")
+
+    assert result.eligibility.reason_code == "UNSUPPORTED_INSTRUMENT"
+    assert {candidate.instrument_type for candidate in result.candidates} == {"SPAC"}
 
 
 def test_missing_supported_filing_regime_requires_adaptation(discovery_case):

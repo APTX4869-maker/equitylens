@@ -81,6 +81,20 @@ class OnboardingService:
                         "idempotency key was used for another request",
                     )
                 return self.tasks.get(json.loads(prior[1])["onboarding_id"])
+            published = self.store._conn.execute(
+                """
+                SELECT c.active_publication_id
+                FROM security s
+                JOIN company c ON c.company_id=s.company_id
+                WHERE s.security_id=? AND c.active_publication_id IS NOT NULL
+                """,
+                [security_id],
+            ).fetchone()
+            if published is not None:
+                raise OnboardingConflict(
+                    "ALREADY_PUBLISHED",
+                    "该证券已经在研究公司列表中，无需重复建档",
+                )
             company_exists = self.store._conn.execute(
                 "SELECT 1 FROM company WHERE company_id=?", [candidate.company_id]
             ).fetchone()

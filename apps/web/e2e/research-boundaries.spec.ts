@@ -38,6 +38,31 @@ test("risk page exposes incomplete coverage instead of claiming no risk", async 
   await expect(page.getByText("仅完成 1/2 项检查；未命中不代表未完成模块没有风险。")).toBeVisible();
 });
 
+test("risk evidence control uses a user-facing label while retaining provenance", async ({ page }) => {
+  await stubShell(page);
+  await page.route("**/api/v1/companies/AAPL/risks", (route) => route.fulfill({ json: {
+    risks: [{
+      category: "financial", severity: "HIGH", title: "现金流承压", description: "自由现金流下降",
+      evidence_ids: ["src_sec_000012345678"], monitoring: "自由现金流", confidence: "HIGH", generated_by: "deterministic-rules.v1",
+    }],
+    checks: [{ key: "cash_flow", status: "OK", reason: null, evidence_ids: ["src_sec_000012345678"] }],
+    coverage: { total: 1, completed: 1, complete: true, unavailable: [] },
+  } }));
+  await page.route("**/api/v1/provenance/src_sec_000012345678", (route) => route.fulfill({ json: {
+    entity_id: "src_sec_000012345678", kind: "source", tree: {
+      entity_id: "src_sec_000012345678", kind: "source", label: "SEC 10-Q", fields: {}, parents: [],
+    },
+  } }));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "△ 风险", exact: true }).click();
+  const evidence = page.getByRole("button", { name: "查看证据", exact: true });
+  await expect(evidence).toBeVisible();
+  await expect(page.getByText(/src_sec_0000/)).toHaveCount(0);
+  await evidence.click();
+  await expect(page.getByRole("dialog")).toContainText("SEC 10-Q");
+});
+
 test("research claims open resolvable evidence and unsupported questions stay in scope", async ({ page }) => {
   await stubShell(page);
   await page.route("**/api/v1/provenance/fact-1", (route) => route.fulfill({ json: {

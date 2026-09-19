@@ -204,6 +204,37 @@ def test_unpublished_onboarding_candidate_is_not_listed_as_research_company(db, 
     assert "EXAMPLE" not in {item["ticker"] for item in response.json()["items"]}
 
 
+def test_published_security_cannot_start_a_second_onboarding(db, monkeypatch):
+    client, discovery = _client(db, monkeypatch)
+    first, _ = _create(client, discovery, key="first-onboarding")
+    task = first.json()
+    cancelled = client.post(
+        f"/api/v1/company-onboardings/{task['onboarding_id']}/cancel",
+        json={"expected_revision": task["revision"]},
+    )
+    assert cancelled.status_code == 200
+    _publish_revenue(db, company_id=task["company_id"], version=101, value=100)
+
+    found = discovery.discover("EXAMPLE")
+    duplicate = client.post(
+        "/api/v1/company-onboardings",
+        headers={"Idempotency-Key": "published-duplicate"},
+        json={
+            "discovery_id": found.discovery_id,
+            "identity_hash": found.identity_hash,
+            "candidate_id": found.candidates[0].candidate_id,
+        },
+    )
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "ALREADY_PUBLISHED"
+    task_count = db.query_one(
+        "SELECT count(*) AS count FROM company_onboarding WHERE company_id=?",
+        [task["company_id"]],
+    )
+    assert task_count["count"] == 1
+
+
 def test_company_directory_pagination_does_not_skip_a_second_active_alias(db, monkeypatch):
     client, _ = _client(db, monkeypatch)
     apple_security = db.query_one(

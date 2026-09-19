@@ -25,6 +25,12 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export function userErrorMessage(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason.replace(/^Error:\s*/, "");
+  return "请求未完成";
+}
+
 function longRunningApiPath(path: string): string {
   const configured = process.env.NEXT_PUBLIC_EQUITYLENS_API_URL?.replace(/\/$/, "");
   if (configured) return `${configured}${path}`;

@@ -94,8 +94,8 @@ export function RisksSection({ ticker, onOpenSource }: { ticker: string; onOpenS
                   <span className="source-chip-sm">↗ 监控：{r.monitoring}</span>
                   <span className="source-chip-sm">依据：{r.generated_by}</span>
                   {r.evidence_ids.map((id) => (
-                    <button className="source-chip-sm" key={id} onClick={() => onOpenSource(id)}>
-                      查看证据 {id.slice(0, 12)}
+                    <button className="source-chip-sm" key={id} onClick={() => onOpenSource(id)} title="打开数据来源与计算链路">
+                      查看证据
                     </button>
                   ))}
                 </div>
