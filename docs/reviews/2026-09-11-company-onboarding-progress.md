@@ -25,7 +25,7 @@
 | C05 严格 YAML 与原子恢复 | 已完成 | RED 覆盖严格解析/事务冲突；GREEN 44 passed，扩展流水线回归合计 55 passed | 已自检 | v2-only、证据绑定、版本单调、幂等重放与回滚均已验证 |
 | C06 候选/导入/refetch API | 已完成 | RED 旧接口缺新端点/严格约束；GREEN 14 passed，OpenAPI 5 路径核验通过 | 已自检 | GET 无副作用；YAML/JSON 同一原子导入；refetch 指针规则已覆盖 |
 | C07 统一进度与 attention | 已完成 | RED 缺 progress 模块；GREEN 41 passed | 已自检 | 五阶段、45 秒停滞、取消快照、数据库精确计数已覆盖 |
-| C08 五阶段与适配工作台 | 未开始 | 未运行 | 待复核 | 依赖 C06—C07 |
+| C08 五阶段与适配工作台 | 已完成 | RED 无进度条；GREEN 17 浏览器测试，type/lint 通过 | 已自检 | 候选审查、证据、下载、上传边界和无刷新恢复已覆盖 |
 | C09 全局任务入口 | 未开始 | 未运行 | 待复核 | 依赖 C07—C08 |
 | C10 NVDA 真实闭环 | 未开始 | 未运行 | 待复核 | 依赖 C01—C09 |
 
@@ -148,6 +148,23 @@
 证据文件/报告：`equitylens/onboarding/progress.py`、`equitylens/onboarding/models.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/runner.py`、`equitylens/api/company_routes.py`、`tests/unit/test_onboarding_progress.py`、`tests/integration/test_onboarding_runner.py`、`tests/integration/test_onboarding_api.py`。
 
 遗留问题与下一步：后端现已提供工作台所需的权威状态和制品接口；C08 将把它们接入五阶段进度条、候选审查、下载、上传错误与 refetch 操作。
+
+## C08 五阶段与适配工作台
+
+阶段与提交号：C08；提交在本阶段记录更新后创建。
+
+实际改动：新增可访问的五阶段进度组件，严格按后端 progress 渲染：完成段绿色、当前/未完成段红色、未来段灰色，并同时提供图标、文字和 aria 状态。新增发行人适配工作台，可查看候选覆盖摘要、未解决字段、固定快照和逐项证据，下载候选/当前 Profile YAML，选择文件后显示名称与字节数，并在浏览器端阻止空文件和超过 512 KiB 的文件。一次文件选择只生成一个幂等键，服务端字段错误按路径展示；成功导入立即用响应替换任务并只在真实 RUNNING/QUEUED activity 下恢复轮询，无需手动刷新。`REFETCH` 仅按后端 actions 显示。
+
+测试命令及结果：
+
+- RED：新增浏览器用例找不到“建档总进度” progressbar。
+- GREEN：隔离端口运行 `company-onboarding.spec.ts`，`17 passed in 18.2s`；核心适配用例覆盖 40% 暂停、证据展开、空/超限文件、字段错误、幂等重试和成功后立即切换 60%。
+- `pnpm --dir apps/web exec tsc --noEmit` 与 `pnpm --dir apps/web lint` 通过。
+- 为避免复用主工作区旧的 3000 端口服务，Playwright 配置新增 `PLAYWRIGHT_PORT`，本阶段在 3011 隔离端口验证。
+
+证据文件/报告：`apps/web/src/components/companies/OnboardingProgress.tsx`、`apps/web/src/components/companies/ProfileWorkbench.tsx`、`apps/web/src/components/companies/OnboardingDetail.tsx`、`apps/web/src/lib/types.ts`、`apps/web/src/lib/api.ts`、`apps/web/e2e/company-onboarding.spec.ts`。
+
+遗留问题与下一步：建档中心内部已完整可用，但关闭弹窗后仍缺持续可见的全局待关注入口；C09 将在页面右下角增加最上层感叹号入口，并验证刷新恢复与精确计数。
 
 ## 每阶段记录格式
 

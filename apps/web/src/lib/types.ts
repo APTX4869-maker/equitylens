@@ -64,6 +64,43 @@ export type QualityCheck = {
   evidence?: unknown;
 };
 
+export type OnboardingProgressStage = {
+  id: "IDENTITY" | "FETCH" | "ADAPTATION" | "BUILD_VALIDATE" | "REVIEW_PUBLISH";
+  label: string;
+  status: "COMPLETED" | "CURRENT" | "UPCOMING";
+  activity: "QUEUED" | "RUNNING" | "WAITING_FOR_MAINTAINER" | "FAILED" | "CANCELLED" | "COMPLETED" | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type OnboardingProgress = {
+  completed: number;
+  total: 5;
+  percent: number;
+  current_stage: OnboardingProgressStage["id"];
+  activity: Exclude<OnboardingProgressStage["activity"], null>;
+  actor: "SYSTEM" | "MAINTAINER" | "NONE";
+  updated_at: string;
+  stalled: boolean;
+  stages: OnboardingProgressStage[];
+  fingerprint: string;
+};
+
+export type ProfileCandidate = {
+  profile_candidate_id: string;
+  onboarding_id: string;
+  task_revision: number;
+  fetch_bundle_id?: string;
+  input_sha256?: string;
+  content_sha256: string;
+  snapshot_manifest: Record<string, unknown>[];
+  profile: Record<string, unknown>;
+  unresolved_fields: { path: string; reason: string; action: string }[];
+  review_status: "NEEDS_ADAPTATION";
+  created_at: string;
+  current: boolean;
+};
+
 export type OnboardingTask = {
   onboarding_id: string;
   company_id: string;
@@ -75,6 +112,8 @@ export type OnboardingTask = {
   cancel_requested: boolean;
   input_fingerprint: string;
   discovery_id?: string | null;
+  fetch_bundle_id?: string | null;
+  profile_candidate_id?: string | null;
   profile_id?: string | null;
   dataset_id?: string | null;
   quality_report_id?: string | null;
@@ -84,6 +123,7 @@ export type OnboardingTask = {
   created_at: string;
   updated_at: string;
   actions: string[];
+  progress?: OnboardingProgress;
   steps?: Record<string, unknown>[];
   checks?: QualityCheck[];
   blocking_reasons?: { check_id: string; reason?: string | null }[];

@@ -8,19 +8,33 @@ import type {
   OverviewResponse,
   ProvenanceNode,
   OnboardingTask,
+  ProfileCandidate,
   ReviewPackage,
 } from "./types";
+
+export type ApiErrorDetail = {
+  code?: string;
+  message?: string;
+  remediation?: string;
+  field_errors?: { path: string; message: string }[];
+};
+
+export class ApiRequestError extends Error {
+  constructor(public status: number, public detail: ApiErrorDetail) {
+    super(detail.message || `请求失败（${status}）`);
+  }
+}
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { cache: "no-store", ...init });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    let message = body.slice(0, 200);
+    let detail: ApiErrorDetail = { message: body.slice(0, 200) };
     try {
-      const parsed = JSON.parse(body) as { detail?: { message?: string }; error?: { message?: string } };
-      message = parsed.detail?.message ?? parsed.error?.message ?? message;
+      const parsed = JSON.parse(body) as { detail?: ApiErrorDetail; error?: ApiErrorDetail };
+      detail = parsed.detail ?? parsed.error ?? detail;
     } catch { /* keep the response excerpt */ }
-    throw new Error(message || `请求失败（${res.status}）`);
+    throw new ApiRequestError(res.status, detail);
   }
   return res.json() as Promise<T>;
 }
@@ -65,8 +79,20 @@ export const api = {
       headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ discovery_id: discovery.discovery_id, identity_hash: discovery.identity_hash, candidate_id: candidateId }),
     }),
-  onboardings: (signal?: AbortSignal) => getJson<{ items: OnboardingTask[]; next_cursor: string | null }>("/api/v1/company-onboardings?limit=200", { signal }),
+  onboardings: (signal?: AbortSignal) => getJson<{ items: OnboardingTask[]; next_cursor: string | null; attention_count: number }>("/api/v1/company-onboardings?limit=200", { signal }),
   onboarding: (id: string, signal?: AbortSignal) => getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}`, { signal }),
+  profileCandidate: (id: string, signal?: AbortSignal) => getJson<ProfileCandidate>(`/api/v1/company-onboardings/${id}/profile-candidate`, { signal }),
+  importProfileYaml: (id: string, revision: number, yamlText: string, idempotencyKey: string) =>
+    getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}/profile-yaml`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ expected_revision: revision, yaml_text: yamlText }),
+    }),
+  refetchOnboarding: (id: string, revision: number) =>
+    getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}/refetch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_revision: revision }),
+    }),
   reviewPackage: (id: string, signal?: AbortSignal) => getJson<ReviewPackage>(`/api/v1/company-onboardings/${id}/review-package`, { signal }),
   reviewOnboarding: (id: string, body: { expected_revision: number; fingerprint: string; decision: "APPROVE" | "REJECT"; reviewer: string; note: string }) =>
     getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

@@ -284,22 +284,22 @@ Use fixed stage IDs `IDENTITY`, `FETCH`, `ADAPTATION`, `BUILD_VALIDATE`, `REVIEW
 - Consumes C06 endpoints and C07 progress verbatim; the frontend does not recreate backend state mapping.
 - Produces accessible stage rendering, candidate/evidence inspection, download/upload, field errors, authorized refetch, and automatic polling resumption.
 
-- [ ] **Step 1: Add failing Playwright paths** for 40% adaptation pause, colors plus accessible text, candidate evidence expansion, downloads, empty/oversized/invalid upload errors, stale revision, successful upload moving to stage 4 without refresh, and refetch visibility.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing Playwright paths** for 40% adaptation pause, colors plus accessible text, candidate evidence expansion, downloads, empty/oversized/invalid upload errors, stale revision, successful upload moving to stage 4 without refresh, and refetch visibility.
+- [x] **Step 2: Run RED**
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts --project=chromium`
 
-- [ ] **Step 3: Implement typed API and workbench components**
+- [x] **Step 3: Implement typed API and workbench components**
 
 Use green only for completed, red for current/incomplete, gray for upcoming, plus icons and screen-reader text. `NEEDS_ADAPTATION` copy is “任务已暂停，等待维护者操作”. Read the selected file in-browser, show name/bytes, reuse one UUID idempotency key for network retries, then immediately replace task state from the success response and restart polling only for true running activities.
 
-- [ ] **Step 4: Run GREEN, typecheck, and lint**
+- [x] **Step 4: Run GREEN, typecheck, and lint**
 
 Run: `pnpm --dir apps/web exec tsc --noEmit && pnpm --dir apps/web lint`
 
 Run: the Playwright command from Step 2.
 
-- [ ] **Step 5: Update progress and commit** with message `feat: add onboarding adaptation workbench`.
+- [x] **Step 5: Update progress and commit** with message `feat: add onboarding adaptation workbench`.
 
 ### C09: Global Task Indicator and Refresh Recovery
 

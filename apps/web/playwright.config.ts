@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const browserPath = process.env.PLAYWRIGHT_CHROME_PATH;
+const testPort = process.env.PLAYWRIGHT_PORT ?? "3000";
 
 // E2E coverage for valuation draft identity (V03/U02): out-of-order preview
 // responses must never associate an older growth path with a newer WACC/ticker,
@@ -11,7 +12,7 @@ export default defineConfig({
   timeout: 30_000,
   retries: process.env.CI ? 2 : 0,
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: `http://127.0.0.1:${testPort}`,
     trace: "on-first-retry",
   },
   projects: [{
@@ -22,9 +23,9 @@ export default defineConfig({
     },
   }],
   webServer: {
-    command: "pnpm dev",
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: !process.env.CI,
+    command: `pnpm dev --port ${testPort}`,
+    url: `http://127.0.0.1:${testPort}`,
+    reuseExistingServer: !process.env.CI && testPort === "3000",
     timeout: 120_000,
   },
 });

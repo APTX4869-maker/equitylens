@@ -255,6 +255,84 @@ test("adaptation-required task pauses polling and explains the required action",
   expect(detailRequests).toBe(settledRequestCount);
 });
 
+test("adaptation workbench shows five-stage progress, evidence, and resumes after YAML upload", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  const stages = ["IDENTITY", "FETCH", "ADAPTATION", "BUILD_VALIDATE", "REVIEW_PUBLISH"];
+  const progress = (completed: number, current: string, activity: string) => ({
+    completed, total: 5, percent: completed * 20, current_stage: current,
+    activity, actor: activity === "WAITING_FOR_MAINTAINER" ? "MAINTAINER" : "SYSTEM",
+    updated_at: "2026-09-19T10:00:00Z", stalled: false, fingerprint: `${completed}-${activity}`,
+    stages: stages.map((id, index) => ({
+      id, label: ["识别公司", "固定申报数据", "适配公司配置", "构建并校验", "审核并发布"][index],
+      status: index < completed ? "COMPLETED" : id === current ? "CURRENT" : "UPCOMING",
+      activity: index < completed ? "COMPLETED" : id === current ? activity : null,
+      started_at: null, completed_at: null,
+    })),
+  });
+  let task = {
+    onboarding_id: "onboarding-workbench", company_id: "0001045810", ticker: "NVDA", company_name: "NVIDIA CORP",
+    state: "NEEDS_ADAPTATION", current_step: "BUILD", revision: 3, cancel_requested: false,
+    input_fingerprint: "input-nvda", fetch_bundle_id: "bundle-nvda", profile_candidate_id: "candidate-nvda" as string | null,
+    profile_id: null as string | null, dataset_id: null, quality_report_id: null, review_id: null, publication_id: null,
+    error: { code: "ADAPTATION_REQUIRED", message: "需要审核发行人配置", remediation: "PROFILE_IMPORT" },
+    created_at: "2026-09-19T09:00:00Z", updated_at: "2026-09-19T10:00:00Z",
+    actions: ["CANCEL", "PROFILE_IMPORT"], progress: progress(2, "ADAPTATION", "WAITING_FOR_MAINTAINER"),
+  };
+  let uploadCalls = 0;
+  let uploadKey = "";
+  await page.route("**/api/v1/company-onboardings?**", (route) => route.fulfill({ json: { items: [task], next_cursor: null, attention_count: 1 } }));
+  await page.route("**/api/v1/company-onboardings/onboarding-workbench/profile-candidate", (route) => route.fulfill({ json: {
+    profile_candidate_id: "candidate-nvda", onboarding_id: task.onboarding_id, task_revision: 3,
+    content_sha256: "a".repeat(64), snapshot_manifest: [{ document_id: "filing:nvda", document_type: "FILING_DOCUMENT", form_type: "10-K", raw_locator: "sec/nvda/primary.html", content_sha256: "b".repeat(64) }],
+    profile: { schema_version: 2, company_id: task.company_id, metrics: { REVENUE: { concepts: ["us-gaap:Revenues"], evidence: ["ev-revenue"] } }, evidence: [{ evidence_id: "ev-revenue", source_document_id: "filing:nvda", content_sha256: "b".repeat(64), locator: "/html/body/fact" }] },
+    unresolved_fields: [{ path: "segments.parser", reason: "需要确认分部披露", action: "选择解析器或不适用" }],
+    review_status: "NEEDS_ADAPTATION", created_at: "2026-09-19T10:00:00Z", current: true,
+  }}));
+  await page.route("**/api/v1/company-onboardings/onboarding-workbench/profile-yaml", async (route) => {
+    uploadCalls += 1;
+    const key = route.request().headers()["idempotency-key"];
+    expect(key).toBeTruthy();
+    if (uploadCalls === 1) {
+      uploadKey = key;
+      return route.fulfill({ status: 422, json: { detail: {
+        code: "INVALID_PROFILE_YAML", message: "审核版配置有 1 个字段需要修正", remediation: "PROFILE_IMPORT",
+        field_errors: [{ path: "segments.parser", message: "Field required" }],
+      } } });
+    }
+    expect(key).toBe(uploadKey);
+    task = { ...task, state: "BUILDING", revision: 4, profile_candidate_id: null, profile_id: "profile-nvda", actions: ["CANCEL"], progress: progress(3, "BUILD_VALIDATE", "RUNNING") };
+    return route.fulfill({ json: task });
+  });
+  await page.route("**/api/v1/company-onboardings/onboarding-workbench", (route) => route.fulfill({ json: { ...task, steps: [], checks: [], blocking_reasons: [] } }));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "建档中心" }).click();
+  await expect(page.getByRole("progressbar", { name: "建档总进度" })).toHaveAttribute("aria-valuenow", "40");
+  await expect(page.getByText("任务已暂停，等待维护者操作")).toBeVisible();
+  await expect(page.getByLabel("适配公司配置：进行中")).toBeVisible();
+  await page.getByRole("button", { name: "查看候选配置" }).click();
+  await expect(page.getByText("segments.parser")).toBeVisible();
+  await page.getByText("ev-revenue").click();
+  await expect(page.getByText("/html/body/fact")).toBeVisible();
+
+  const picker = page.getByLabel("选择审核版 YAML");
+  await picker.setInputFiles({ name: "empty.yaml", mimeType: "application/yaml", buffer: Buffer.alloc(0) });
+  await expect(page.locator(".profile-workbench .action-error")).toContainText("YAML 文件为空");
+  await picker.setInputFiles({ name: "oversized.yaml", mimeType: "application/yaml", buffer: Buffer.alloc(512 * 1024 + 1) });
+  await expect(page.locator(".profile-workbench .action-error")).toContainText("超过 512 KiB");
+  await picker.setInputFiles({
+    name: "nvda-profile-v1.yaml", mimeType: "application/yaml",
+    buffer: Buffer.from("schema_version: 2\ncompany_id: '0001045810'\nversion: 1\n"),
+  });
+  await expect(page.getByText(/nvda-profile-v1.yaml/)).toBeVisible();
+  await page.getByRole("button", { name: "导入并继续" }).click();
+  await expect(page.getByText("segments.parser").last()).toBeVisible();
+  await expect(page.getByText("Field required")).toBeVisible();
+  await page.getByRole("button", { name: "导入并继续" }).click();
+  await expect(page.getByRole("progressbar", { name: "建档总进度" })).toHaveAttribute("aria-valuenow", "60");
+  await expect(page.getByText("构建并校验")).toBeVisible();
+});
+
 test("paused task does not retry-poll when its detail request fails", async ({ page }) => {
   await installOnboardingApiFixture(page);
   let detailRequests = 0;
