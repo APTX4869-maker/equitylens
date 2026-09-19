@@ -255,7 +255,7 @@ def test_untyped_deterministic_failure_is_not_retried(db):
 
 
 def test_revised_profile_gets_a_fresh_retry_budget(db):
-    from equitylens.issuers.profile import IssuerProfileService, load_profile_yaml
+    from equitylens.issuers.profile import IssuerProfileService
     from equitylens.publication.repository import PublicationRepository
 
     repository = OnboardingRepository(db)
@@ -266,6 +266,21 @@ def test_revised_profile_gets_a_fresh_retry_budget(db):
         company_id="0000320193",
         security_id=security_id,
         input_fingerprint="profile-retry-generation",
+    )
+    digest = "e" * 64
+    repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=task.revision,
+        fetcher_version="fixture",
+        parser_version="fixture",
+        documents=[{
+            "document_id": "filing:retry", "document_type": "FILING_DOCUMENT",
+            "accession_number": "retry", "form_type": "10-K",
+            "filed_at": "2026-01-01", "report_date": "2025-09-30",
+            "fetched_at": "2026-01-01T00:00:00Z",
+            "source_url": "https://www.sec.gov/retry", "content_sha256": digest,
+            "raw_locator": "sec/retry/primary.html",
+        }],
     )
     db._conn.execute(
         "UPDATE company_onboarding SET state='NEEDS_ADAPTATION', current_step='BUILD' WHERE onboarding_id=?",
@@ -281,10 +296,20 @@ def test_revised_profile_gets_a_fresh_retry_budget(db):
             [f"old-{number}", task.onboarding_id, number],
         )
     current = repository.get(task.onboarding_id)
-    revised = load_profile_yaml("config/issuers/0000320193/2.yaml").model_dump(
-        mode="json", exclude={"content_sha256"}
-    )
-    revised["version"] = 88
+    evidence = ["filing-evidence"]
+    revised = {
+        "schema_version": 2, "company_id": "0000320193", "version": 88,
+        "template": "us_gaap_operating_v1", "template_evidence": evidence,
+        "fiscal_calendar": {"year_end": "09-30", "week_based": True, "evidence": evidence},
+        "metrics": {"REVENUE": {"concepts": ["us-gaap:Revenues"], "unit": "USD", "context": "consolidated", "period": "duration", "selection": "latest_filed_same_basis", "evidence": evidence}},
+        "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": evidence},
+        "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": evidence},
+        "eps_method": "reported_diluted", "eps_method_evidence": evidence,
+        "securities": [{"ticker": "AAPL", "exchange": "NASDAQ", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": evidence}],
+        "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
+        "applicability_evidence": {"SEGMENTS": evidence},
+        "evidence": [{"evidence_id": "filing-evidence", "source_document_id": "filing:retry", "content_sha256": digest, "locator": "/html"}],
+    }
     imported = IssuerProfileService(PublicationRepository(db), repository).import_profile(
         task.onboarding_id, current.revision, revised
     )

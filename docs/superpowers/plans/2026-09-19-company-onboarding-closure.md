@@ -198,17 +198,17 @@ Candidate `input_sha256` hashes bundle SHA, generator version, mapping version/h
 **Interfaces:**
 - Produces: `load_strict_profile_yaml(text: str) -> IssuerProfileV2`; `import_profile_yaml(task_id, expected_revision, idempotency_key, yaml_text) -> TaskView`.
 
-- [ ] **Step 1: Add failing parser tests** for every size/shape restriction and failing repository tests for rollback, evidence mismatch, CIK mismatch, version monotonicity, same-key replay-before-revision, key/hash conflict, and new-key/stale-revision conflict.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing parser tests** for every size/shape restriction and failing repository tests for rollback, evidence mismatch, CIK mismatch, version monotonicity, same-key replay-before-revision, key/hash conflict, and new-key/stale-revision conflict.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_issuer_review.py tests/integration/test_onboarding_runner.py -q`
 
-- [ ] **Step 3: Implement the loader and one import transaction**
+- [x] **Step 3: Implement the loader and one import transaction**
 
 Inside the existing writer transaction: replay a prior successful idempotency row first; validate state/revision; validate Profile v2 and current bundle evidence; insert immutable profile; bind it; clear downstream pointers/errors/timer; stale BUILD/VALIDATE/PUBLISH attempts; enter `BUILDING/BUILD`; append `PROFILE_IMPORTED` and `TASK_RESUMED`; store the full success response. Validation failures and rolled-back errors do not consume the key.
 
-- [ ] **Step 4: Run GREEN and executor wake test** using the Step 2 command.
-- [ ] **Step 5: Update progress and commit** with message `feat: resume onboarding from reviewed yaml`.
+- [x] **Step 4: Run GREEN and executor wake test** using the Step 2 command.
+- [x] **Step 5: Update progress and commit** with message `feat: resume onboarding from reviewed yaml`.
 
 ### C06: Candidate, Import, and Refetch APIs
 

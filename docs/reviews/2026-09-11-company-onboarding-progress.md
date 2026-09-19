@@ -22,7 +22,7 @@
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
 | C04 确定性候选制品 | 已完成 | RED 缺候选构建接口；GREEN 聚焦 25 passed，兼容回归 13 passed | 已自检 | 候选、暂停、revision 与事件原子提交；永不自动批准 |
-| C05 严格 YAML 与原子恢复 | 未开始 | 未运行 | 待复核 | 依赖 C04 |
+| C05 严格 YAML 与原子恢复 | 已完成 | RED 覆盖严格解析/事务冲突；GREEN 44 passed，扩展流水线回归合计 55 passed | 已自检 | v2-only、证据绑定、版本单调、幂等重放与回滚均已验证 |
 | C06 候选/导入/refetch API | 未开始 | 未运行 | 待复核 | 依赖 C05 |
 | C07 统一进度与 attention | 未开始 | 未运行 | 待复核 | 依赖 C01、C06 |
 | C08 五阶段与适配工作台 | 未开始 | 未运行 | 待复核 | 依赖 C06—C07 |
@@ -96,6 +96,23 @@
 证据文件/报告：`equitylens/issuers/candidate.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/runner.py`、`equitylens/onboarding/pipeline.py`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_onboarding_pipeline.py`。
 
 遗留问题与下一步：候选目前已经可追踪但尚无严格的网页 YAML 导入恢复事务；C05 将实现受限 YAML loader、幂等导入和单事务恢复 BUILD。
+
+## C05 严格 YAML 与原子恢复
+
+阶段与提交号：C05；提交在本阶段记录更新后创建。
+
+实际改动：新增 512 KiB/深度 20/节点 20,000/scalar 64 KiB 上限的严格 SafeLoader，拒绝多文档、重复键、非字符串键、merge、anchor、alias、显式 tag、候选占位和 v1 新导入。Profile YAML 导入在单写者事务内先处理幂等重放，再校验 revision/state/CIK/当前 bundle 证据/版本单调性，随后一次性创建不可变 Profile、清空候选和下游指针、将旧 BUILD/VALIDATE/PUBLISH attempt 标为 STALE、恢复 `BUILDING/BUILD`、清除错误与定时器、写入 `PROFILE_IMPORTED`/`TASK_RESUMED` 事件并保存完整成功响应。失败不占用幂等键，事件写入异常会回滚全部变更。
+
+测试命令及结果：
+
+- RED：严格 YAML 限制与旧 v1 导入兼容用例暴露缺少新 loader/原子服务。
+- GREEN：`uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_issuer_review.py tests/integration/test_onboarding_runner.py -q`，`44 passed in 2.73s`；导入提交后 wake 回调已验证。
+- 扩展流水线回归：加入 `tests/integration/test_onboarding_pipeline.py` 后，`55 passed in 3.88s`。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`equitylens/issuers/yaml_loader.py`、`equitylens/issuers/profile.py`、`equitylens/onboarding/repository.py`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_issuer_review.py`、`tests/integration/test_onboarding_runner.py`、`tests/integration/test_onboarding_pipeline.py`。
+
+遗留问题与下一步：底层事务已完成，网页尚无候选读取/下载、YAML 上传和显式 refetch 接口；C06 将统一接入 API、稳定错误体和提交后 executor wake。
 
 ## 每阶段记录格式
 

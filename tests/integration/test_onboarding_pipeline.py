@@ -65,6 +65,33 @@ def _profile() -> dict:
     }
 
 
+def _profile_v2_for_bundle(bundle, version: int) -> dict:
+    filing = next(item for item in bundle.documents if item.document_type == "FILING_DOCUMENT")
+    evidence = ["filing-evidence"]
+    return {
+        "schema_version": 2, "company_id": CIK, "version": version,
+        "template": "us_gaap_operating_v1", "template_evidence": evidence,
+        "fiscal_calendar": {"year_end": "12-31", "week_based": False, "evidence": evidence},
+        "metrics": {"REVENUE": {"concepts": ["us-gaap:Revenues"], "unit": "USD", "context": "consolidated", "period": "duration", "selection": "latest_filed_same_basis", "evidence": evidence}},
+        "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": evidence},
+        "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": evidence},
+        "eps_method": "reported_diluted", "eps_method_evidence": evidence,
+        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": evidence}],
+        "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
+        "applicability_evidence": {"SEGMENTS": evidence},
+        "evidence": [{"evidence_id": "filing-evidence", "source_document_id": filing.document_id, "content_sha256": filing.content_sha256, "locator": "//*[@name='us-gaap:Revenues']"}],
+    }
+
+
+def _ixbrl_revenue() -> bytes:
+    return b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+    xmlns:xbrli='http://www.xbrl.org/2003/instance'>
+    <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+    <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+    <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
+    </html>"""
+
+
 def _payloads():
     submissions = _quality_window_submissions()
     companyfacts = {
@@ -283,8 +310,13 @@ def test_configured_pipeline_fetches_builds_and_validates(db, tmp_path):
     profile_path.write_text(yaml.safe_dump(_profile(), sort_keys=False))
 
     def fetch(url: str):
-        payload = submissions if "submissions" in url else companyfacts
-        return json.dumps(payload).encode(), {"fetched_at": "2026-09-12T00:00:00+00:00"}
+        if "submissions" in url:
+            content = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            content = json.dumps(companyfacts).encode()
+        else:
+            content = _ixbrl_revenue()
+        return content, {"fetched_at": "2026-09-12T00:00:00+00:00"}
 
     security_id = _register(db)
     repository = OnboardingRepository(db)
@@ -351,8 +383,13 @@ def test_profile_import_after_pause_rebuilds_instead_of_skipping_build(db, tmp_p
     submissions, companyfacts = _payloads()
 
     def fetch(url: str):
-        payload = submissions if "submissions" in url else companyfacts
-        return json.dumps(payload).encode(), {"fetched_at": "2026-09-12T00:00:00+00:00"}
+        if "submissions" in url:
+            content = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            content = json.dumps(companyfacts).encode()
+        else:
+            content = _ixbrl_revenue()
+        return content, {"fetched_at": "2026-09-12T00:00:00+00:00"}
 
     security_id = _register(db)
     repository = OnboardingRepository(db)
@@ -367,8 +404,9 @@ def test_profile_import_after_pause_rebuilds_instead_of_skipping_build(db, tmp_p
     runner.run_once()
     paused = repository.get(task.onboarding_id)
 
+    bundle = repository.get_fetch_bundle(paused.fetch_bundle_id)
     imported = IssuerProfileService(PublicationRepository(db), repository).import_profile(
-        task.onboarding_id, paused.revision, _profile()
+        task.onboarding_id, paused.revision, _profile_v2_for_bundle(bundle, 1)
     )
     assert imported.current_step.value == "BUILD"
 
@@ -387,8 +425,13 @@ def test_revised_profile_after_validation_pause_invalidates_completed_build(db, 
     profile_path.write_text(yaml.safe_dump(_profile(), sort_keys=False))
 
     def fetch(url: str):
-        payload = submissions if "submissions" in url else companyfacts
-        return json.dumps(payload).encode(), {"fetched_at": "2026-09-12T00:00:00+00:00"}
+        if "submissions" in url:
+            content = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            content = json.dumps(companyfacts).encode()
+        else:
+            content = _ixbrl_revenue()
+        return content, {"fetched_at": "2026-09-12T00:00:00+00:00"}
 
     security_id = _register(db)
     repository = OnboardingRepository(db)
@@ -404,8 +447,7 @@ def test_revised_profile_after_validation_pause_invalidates_completed_build(db, 
     runner.run_once()
     paused = repository.get(task.onboarding_id)
     old_dataset_id = paused.dataset_id
-    revised = _profile()
-    revised["version"] = 2
+    revised = _profile_v2_for_bundle(repository.get_fetch_bundle(paused.fetch_bundle_id), 2)
     imported = IssuerProfileService(PublicationRepository(db), repository).import_profile(
         task.onboarding_id, paused.revision, revised
     )

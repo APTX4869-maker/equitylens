@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import yaml
 
 import pytest
 
-from equitylens.onboarding.repository import OnboardingRepository
+from equitylens.onboarding.repository import OnboardingConflict, OnboardingRepository
 from equitylens.onboarding.pipeline import OnboardingPipeline
 from equitylens.onboarding.runner import OnboardingRunner
 from equitylens.publication.builder import DatasetBuilder
@@ -55,6 +56,53 @@ def _profile(company_id: str, version: int) -> dict:
             }
         ],
     }
+
+
+def _profile_v2(company_id: str, version: int, document_id: str, digest: str) -> dict:
+    evidence_id = "filing-evidence"
+    return {
+        "schema_version": 2,
+        "company_id": company_id,
+        "version": version,
+        "template": "us_gaap_operating_v1",
+        "template_evidence": [evidence_id],
+        "fiscal_calendar": {"year_end": "09-30", "week_based": True, "evidence": [evidence_id]},
+        "metrics": {"REVENUE": {"concepts": ["us-gaap:Revenues"], "unit": "USD", "context": "consolidated", "period": "duration", "selection": "latest_filed_same_basis", "evidence": [evidence_id]}},
+        "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": [evidence_id]},
+        "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": [evidence_id]},
+        "eps_method": "reported_diluted",
+        "eps_method_evidence": [evidence_id],
+        "securities": [{"ticker": "AAPL", "exchange": "NASDAQ", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": [evidence_id]}],
+        "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
+        "applicability_evidence": {"SEGMENTS": [evidence_id]},
+        "evidence": [{"evidence_id": evidence_id, "source_document_id": document_id, "content_sha256": digest, "locator": "/html/body"}],
+    }
+
+
+def _prepare_import_task(tasks, task_id: str):
+    current = tasks.get(task_id)
+    digest = "d" * 64
+    bundle = tasks.create_fetch_bundle(
+        task_id,
+        expected_revision=current.revision,
+        fetcher_version="fixture",
+        parser_version="fixture",
+        documents=[{
+            "document_id": "filing:fixture", "document_type": "FILING_DOCUMENT",
+            "accession_number": "fixture", "form_type": "10-K",
+            "filed_at": "2026-01-01", "report_date": "2025-09-30",
+            "fetched_at": "2026-01-01T00:00:00Z",
+            "source_url": "https://www.sec.gov/fixture", "content_sha256": digest,
+            "raw_locator": "sec/fixture/primary.html",
+        }],
+    )
+    tasks.store._conn.execute(
+        """UPDATE company_onboarding SET state='NEEDS_ADAPTATION', current_step='BUILD',
+           dataset_id='old-dataset', quality_report_id='old-report', review_id=NULL
+           WHERE onboarding_id=?""",
+        [task_id],
+    )
+    return tasks.get(task_id), bundle.documents[0]
 
 
 def _fact(company_id: str, value: float, fact_id: str) -> dict:
@@ -248,11 +296,10 @@ def test_durable_runner_retries_approved_publication(review_case):
 
 def test_profile_import_is_immutable_and_invalidates_candidate(review_case):
     _, _, tasks, publications, task_id, _ = review_case
-    task = tasks.get(task_id)
-    imported = IssuerProfileService(publications, tasks).import_profile(
-        task_id,
-        task.revision,
-        _profile(task.company_id, 104),
+    task, document = _prepare_import_task(tasks, task_id)
+    imported = IssuerProfileService(publications, tasks).import_profile_yaml(
+        task_id, task.revision, "import-104",
+        yaml.safe_dump(_profile_v2(task.company_id, 104, document.document_id, document.content_sha256)),
     )
 
     assert imported.state.value == "BUILDING"
@@ -261,6 +308,82 @@ def test_profile_import_is_immutable_and_invalidates_candidate(review_case):
     assert imported.dataset_id is None
     assert imported.quality_report_id is None
     assert imported.review_id is None
+
+
+def test_profile_yaml_import_is_idempotent_and_rejects_conflicts(review_case):
+    _, _, tasks, publications, task_id, _ = review_case
+    task, document = _prepare_import_task(tasks, task_id)
+    profile = _profile_v2(task.company_id, 105, document.document_id, document.content_sha256)
+    text = yaml.safe_dump(profile)
+    wakes = []
+    service = IssuerProfileService(publications, tasks, wake=lambda: wakes.append(True))
+
+    first = service.import_profile_yaml(task_id, task.revision, "same-key", text)
+    assert wakes == [True]
+    replay = service.import_profile_yaml(task_id, task.revision, "same-key", text)
+    assert replay == first
+    with pytest.raises(OnboardingConflict) as conflict:
+        changed = {**profile, "version": 106}
+        service.import_profile_yaml(task_id, task.revision, "same-key", yaml.safe_dump(changed))
+    assert conflict.value.code == "IDEMPOTENCY_CONFLICT"
+    with pytest.raises(OnboardingConflict) as stale:
+        service.import_profile_yaml(task_id, task.revision, "new-key", text)
+    assert stale.value.code == "TASK_CONFLICT"
+
+
+def test_profile_yaml_import_rolls_back_every_write_on_event_failure(review_case, monkeypatch):
+    _, _, tasks, publications, task_id, _ = review_case
+    task, document = _prepare_import_task(tasks, task_id)
+    profile = _profile_v2(task.company_id, 107, document.document_id, document.content_sha256)
+    before = tasks.get(task_id)
+    monkeypatch.setattr(
+        tasks, "_append_event_locked", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("event failed"))
+    )
+
+    with pytest.raises(RuntimeError, match="event failed"):
+        IssuerProfileService(publications, tasks).import_profile_yaml(
+            task_id, task.revision, "rollback-key", yaml.safe_dump(profile)
+        )
+
+    after = tasks.get(task_id)
+    assert after.profile_id == before.profile_id
+    assert after.state == before.state
+    assert tasks.store.query_one(
+        "SELECT 1 FROM issuer_profile_version WHERE company_id=? AND version=107",
+        [task.company_id],
+    ) is None
+    assert tasks.store.query_one(
+        "SELECT 1 FROM profile_import_idempotency WHERE onboarding_id=? AND idempotency_key='rollback-key'",
+        [task_id],
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        (lambda profile: profile.update(company_id="0000000002"), "PROFILE_COMPANY_MISMATCH"),
+        (lambda profile: profile["evidence"][0].update(content_sha256="f" * 64), "PROFILE_EVIDENCE_MISMATCH"),
+        (lambda profile: profile.update(version=1), "PROFILE_VERSION_CONFLICT"),
+    ],
+)
+def test_profile_yaml_import_rejects_identity_evidence_and_version_conflicts(
+    review_case, mutation, code
+):
+    _, _, tasks, publications, task_id, _ = review_case
+    task, document = _prepare_import_task(tasks, task_id)
+    profile = _profile_v2(task.company_id, 108, document.document_id, document.content_sha256)
+    mutation(profile)
+
+    with pytest.raises(OnboardingConflict) as error:
+        IssuerProfileService(publications, tasks).import_profile_yaml(
+            task_id, task.revision, f"invalid-{code}", yaml.safe_dump(profile)
+        )
+    assert error.value.code == code
+    assert tasks.get(task_id).state.value == "NEEDS_ADAPTATION"
+    assert tasks.store.query_one(
+        "SELECT 1 FROM profile_import_idempotency WHERE onboarding_id=? AND idempotency_key=?",
+        [task_id, f"invalid-{code}"],
+    ) is None
 
 
 def test_maintainer_review_command_calls_api_without_database_fallback(monkeypatch):

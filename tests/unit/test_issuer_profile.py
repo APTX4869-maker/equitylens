@@ -12,6 +12,7 @@ from equitylens.issuers.profile import (
     load_profile_yaml,
     validate_profile_v2_against_bundle,
 )
+from equitylens.issuers.yaml_loader import load_strict_profile_yaml
 from equitylens.issuers.candidate import build_candidate_artifact, build_candidate_profile
 from equitylens.onboarding.models import FetchBundle, FetchDocument
 from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixbrl
@@ -278,6 +279,41 @@ def test_new_profile_import_validation_rejects_schema_v1():
     with pytest.raises(ValueError, match="schema_version 2"):
         service.validate_for_import(valid_profile())
     assert service.validate_for_import(valid_profile_v2()).schema_version == 2
+
+
+@pytest.mark.parametrize(
+    "text,match",
+    [
+        ("schema_version: 2\nschema_version: 2\n", "duplicate"),
+        ("&base {schema_version: 2}\n", "anchors"),
+        ("schema_version: !!int '2'\n", "tags"),
+        ("1: value\n", "keys must be strings"),
+        ("schema_version: 2\n---\nschema_version: 2\n", "exactly one"),
+    ],
+)
+def test_strict_profile_yaml_rejects_ambiguous_yaml(text, match):
+    with pytest.raises(ValueError, match=match):
+        load_strict_profile_yaml(text)
+
+
+def test_strict_profile_yaml_enforces_bounded_shape_and_placeholders():
+    with pytest.raises(ValueError, match="524288"):
+        load_strict_profile_yaml("x" * (512 * 1024 + 1))
+    with pytest.raises(ValueError, match="depth"):
+        load_strict_profile_yaml("value: " + "[" * 21 + "0" + "]" * 21)
+    with pytest.raises(ValueError, match="scalar"):
+        load_strict_profile_yaml("value: '" + "x" * (64 * 1024 + 1) + "'")
+    with pytest.raises(ValueError, match="20000"):
+        load_strict_profile_yaml("values: [" + ",".join("0" for _ in range(20_001)) + "]")
+    candidate = valid_profile_v2()
+    candidate["metrics"]["REVENUE"]["unit"] = "__REVIEW_REQUIRED__"
+    with pytest.raises(ValueError, match="review-required"):
+        load_strict_profile_yaml(yaml.safe_dump(candidate))
+
+
+def test_strict_profile_yaml_returns_profile_v2():
+    parsed = load_strict_profile_yaml(yaml.safe_dump(valid_profile_v2()))
+    assert parsed.schema_version == 2
 
 
 def test_profile_v2_evidence_must_resolve_to_current_bundle_document():

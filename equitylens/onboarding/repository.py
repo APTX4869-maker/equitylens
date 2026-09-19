@@ -402,6 +402,150 @@ class OnboardingRepository:
             )
         return self.get(task.onboarding_id)
 
+    def import_profile_atomic(
+        self,
+        task_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str,
+        request_sha256: str,
+        profile: Any,
+    ) -> TaskView:
+        """Install Profile v2 and resume BUILD as one idempotent transaction."""
+        with self.writer.transaction(self.store):
+            prior = self.store._conn.execute(
+                """
+                SELECT request_sha256, response_json FROM profile_import_idempotency
+                WHERE onboarding_id=? AND idempotency_key=?
+                """,
+                [task_id, idempotency_key],
+            ).fetchone()
+            if prior:
+                if prior[0] != request_sha256:
+                    raise OnboardingConflict(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was used for another profile import",
+                    )
+                response = json.loads(prior[1]) if isinstance(prior[1], str) else prior[1]
+                return TaskView.model_validate(response)
+
+            task = self.store._conn.execute(
+                """
+                SELECT company_id, state, current_step, revision, cancel_requested,
+                  fetch_bundle_id FROM company_onboarding WHERE onboarding_id=?
+                """,
+                [task_id],
+            ).fetchone()
+            if task is None:
+                raise KeyError(task_id)
+            company_id, state, current_step, revision, cancelled, bundle_id = task
+            if revision != expected_revision or cancelled:
+                raise OnboardingConflict("TASK_CONFLICT", "task revision changed or was cancelled")
+            allowed = state == "NEEDS_ADAPTATION" or (
+                state == "FAILED" and current_step in {"BUILD", "VALIDATE"}
+            )
+            if not allowed:
+                raise OnboardingConflict("TASK_CONFLICT", "task does not allow profile import")
+            if profile.company_id != company_id:
+                raise OnboardingConflict(
+                    "PROFILE_COMPANY_MISMATCH",
+                    "profile company_id does not match onboarding company",
+                )
+            if not bundle_id:
+                raise OnboardingConflict(
+                    "FETCH_BUNDLE_INCOMPLETE", "current fixed fetch bundle is missing"
+                )
+            fixed = set(
+                self.store._conn.execute(
+                    """
+                    SELECT document_id, content_sha256 FROM onboarding_fetch_document
+                    WHERE fetch_bundle_id=?
+                    """,
+                    [bundle_id],
+                ).fetchall()
+            )
+            missing = [
+                item.evidence_id
+                for item in profile.evidence
+                if (item.source_document_id, item.content_sha256) not in fixed
+            ]
+            if missing:
+                raise OnboardingConflict(
+                    "PROFILE_EVIDENCE_MISMATCH",
+                    f"profile evidence is not in the current fetch bundle: {', '.join(missing)}",
+                )
+            maximum = self.store._conn.execute(
+                "SELECT max(version) FROM issuer_profile_version WHERE company_id=?",
+                [company_id],
+            ).fetchone()[0]
+            if maximum is not None and profile.version <= maximum:
+                raise OnboardingConflict(
+                    "PROFILE_VERSION_CONFLICT",
+                    f"profile version must be greater than {maximum}",
+                )
+            content = profile.model_dump(mode="json", exclude={"content_sha256"})
+            content_json = _json(content)
+            content_sha256 = hashlib.sha256(content_json.encode()).hexdigest()
+            profile_id = str(uuid.uuid4())
+            self.store._conn.execute(
+                """
+                INSERT INTO issuer_profile_version
+                  (profile_id, company_id, version, schema_version, content_json,
+                   content_sha256, created_at)
+                VALUES (?, ?, ?, 2, ?, ?, now())
+                """,
+                [profile_id, company_id, profile.version, content_json, content_sha256],
+            )
+            self.store._conn.execute(
+                """
+                UPDATE onboarding_step_attempt SET state='STALE'
+                WHERE onboarding_id=? AND step IN ('BUILD','VALIDATE','PUBLISH')
+                  AND state <> 'RUNNING'
+                """,
+                [task_id],
+            )
+            new_revision = revision + 1
+            self.store._conn.execute(
+                """
+                UPDATE company_onboarding SET profile_candidate_id=NULL, profile_id=?,
+                  dataset_id=NULL, quality_report_id=NULL, review_id=NULL,
+                  publication_id=NULL, state='BUILDING', current_step='BUILD',
+                  revision=?, error_json=NULL, next_attempt_at=NULL, updated_at=now()
+                WHERE onboarding_id=?
+                """,
+                [profile_id, new_revision, task_id],
+            )
+            self._append_event_locked(
+                task_id,
+                event_type="PROFILE_IMPORTED",
+                actor_type="MAINTAINER",
+                task_revision=new_revision,
+                payload={
+                    "profile_id": profile_id,
+                    "version": profile.version,
+                    "content_sha256": content_sha256,
+                    "fetch_bundle_id": bundle_id,
+                },
+            )
+            self._append_event_locked(
+                task_id,
+                event_type="TASK_RESUMED",
+                actor_type="SYSTEM",
+                task_revision=new_revision,
+                payload={"current_step": "BUILD"},
+            )
+            response = self.get(task_id)
+            response_json = response.model_dump(mode="json")
+            self.store._conn.execute(
+                """
+                INSERT INTO profile_import_idempotency
+                  (onboarding_id, idempotency_key, request_sha256, response_json, created_at)
+                VALUES (?, ?, ?, ?, now())
+                """,
+                [task_id, idempotency_key, request_sha256, _json(response_json)],
+            )
+        return response
+
     def set_candidate(
         self,
         task_id: str,
