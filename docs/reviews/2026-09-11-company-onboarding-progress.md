@@ -20,7 +20,7 @@
 | T10 真实接入及完整验收 | 可独立部分已完成 | 75 个聚焦测试、348 个全量后端测试、18 个浏览器测试通过；前端类型/lint/build 通过 | 三轮审查收口，无 Critical/Important 遗留 | KO/COST 缺官方 filing/iXBRL 行级 context 与分部证据，未批准、未发布；迁移演练和失败恢复通过 |
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
-| C03 Profile v2 与申报证据 | 未开始 | 未运行 | 待复核 | 依赖 C02 |
+| C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
 | C04 确定性候选制品 | 未开始 | 未运行 | 待复核 | 依赖 C01—C03 |
 | C05 严格 YAML 与原子恢复 | 未开始 | 未运行 | 待复核 | 依赖 C04 |
 | C06 候选/导入/refetch API | 未开始 | 未运行 | 待复核 | 依赖 C05 |
@@ -62,6 +62,23 @@
 证据文件/报告：`tests/unit/test_onboarding_fetch_bundle.py`、`tests/integration/test_onboarding_pipeline.py`。
 
 遗留问题与下一步：C02 固定了 iXBRL 主文档但 BUILD 尚未将其解析为正式 lineage/segment 证据；C03 将增加 Profile v2 严格模型，并把 required metrics 从 bundle 主文档解析而不是由 Company Facts 冒充来源。
+
+## C03 Profile v2 与申报证据
+
+阶段与提交号：C03；提交在本阶段记录更新后创建。
+
+实际改动：新增严格 Profile v2 模型及 JSON Schema，覆盖模板、财年、每个 metric、现金债务、EPS、证券、适用性和声明式分部 parser 的证据引用及条件约束；证据必须匹配当前 bundle 的 document ID 与 SHA。iXBRL 数值事实保留真实 context ID、XPath locator 和维度；分部配置从审核 Profile 构造。BUILD 对 v2 只按 bundle 相对 locator/SHA 读取申报主文档并生成 formal raw/canonical/segment facts；Company Facts 仅保留发现/交叉检查身份，不再冒充 filing lineage。v1 历史 Profile 保持原读取路径。
+
+测试命令及结果：
+
+- RED：分别确认 `IssuerProfileV2`、bundle evidence validator、iXBRL locator、profile segment config 与 profiled iXBRL normalization 缺失。
+- GREEN：`uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onboarding_pipeline.py tests/golden/test_golden_segments.py -q`，`31 passed in 1.82s`。
+- v2 集成反例把 Company Facts revenue 设为 999、申报 iXBRL revenue 设为 100；sealed dataset 只出现 100，且每条 raw fact 均带 `context_id=ctx`、真实 XPath 和 filing source document。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`config/issuers/schema-v2.json`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_onboarding_pipeline.py`、`tests/golden/test_golden_segments.py`。
+
+遗留问题与下一步：Profile v2 当前只能由已有文件或低层 repository 绑定；C04 将生成完整、可审查但不可直接构建的候选制品，并在无审核 Profile 时原子绑定候选后暂停。
 
 ## 每阶段记录格式
 

@@ -12,6 +12,8 @@ Fact semantics per the Inline XBRL spec:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+from typing import Any
 
 from lxml import etree
 
@@ -37,6 +39,7 @@ class IxbrlFact:
     period_start: str | None = None
     period_end: str | None = None
     instant: str | None = None
+    locator: str = ""
 
     @property
     def value(self) -> float | None:
@@ -105,6 +108,7 @@ class IxbrlDocument:
                     period_start=ctx.get("period_start"),
                     period_end=ctx.get("period_end"),
                     instant=ctx.get("instant"),
+                    locator=self.root.getroottree().getpath(el),
                 )
             )
         return out
@@ -131,3 +135,60 @@ class IxbrlDocument:
                 }
             )
         return out
+
+
+def normalize_profiled_ixbrl(
+    document: IxbrlDocument,
+    *,
+    profile: Any,
+    mappings: Any,
+    calendar: Any,
+    source_document_id: str,
+    company_id: str,
+    accession_number: str,
+    form_type: str,
+    filed_at: str,
+):
+    """Normalize only reviewed profile concepts from a fixed iXBRL document."""
+    from equitylens.normalization.normalize import normalize_companyfacts
+
+    facts: dict[str, dict] = {}
+    evidence: dict[tuple, IxbrlFact] = {}
+    for metric in profile.metrics.values():
+        for qualified_name in metric.concepts:
+            taxonomy, concept = qualified_name.split(":", 1)
+            for fact in document.facts(qualified_name):
+                if fact.value is None or fact.dims:
+                    continue
+                entry = {
+                    "start": fact.period_start,
+                    "end": fact.period_end or fact.instant,
+                    "val": fact.value,
+                    "accn": accession_number,
+                    "form": form_type,
+                    "filed": filed_at,
+                }
+                unit = fact.unit_ref or metric.unit
+                facts.setdefault(taxonomy, {}).setdefault(concept, {}).setdefault(
+                    "units", {}
+                ).setdefault(unit, []).append(entry)
+                evidence[(concept, unit, entry["start"], entry["end"], entry["val"])] = fact
+    raw, canonical, result = normalize_companyfacts(
+        {"facts": facts}, mappings, calendar, source_document_id, company_id
+    )
+    for row in raw:
+        fact = evidence.get(
+            (
+                row["concept"],
+                row["unit"],
+                row.get("start_date"),
+                row.get("end_date") or row.get("instant_date"),
+                row.get("raw_value"),
+            )
+        )
+        if fact is None:
+            continue
+        row["context_id"] = fact.context_ref
+        row["locator"] = fact.locator
+        row["dimensions_json"] = json.dumps(fact.dims, ensure_ascii=False)
+    return raw, canonical, result

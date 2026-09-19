@@ -18,10 +18,18 @@ from equitylens.config import (
     SEC_SUBMISSIONS_URL,
 )
 from equitylens.ingestion.sec.client import SECClient
-from equitylens.issuers.profile import IssuerProfile, load_profile_yaml
+from equitylens.issuers.profile import (
+    IssuerProfile,
+    IssuerProfileV2,
+    load_profile_yaml,
+    parse_profile,
+    validate_profile_v2_against_bundle,
+)
 from equitylens.issuers.review import ReviewService
 from equitylens.normalization.fiscal_periods import FiscalCalendar
+from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixbrl
 from equitylens.normalization.normalize import normalize_companyfacts
+from equitylens.normalization.segments import extract_segments, segment_config_from_profile
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.onboarding.models import OnboardingStep, TaskState
 from equitylens.onboarding.fetch_bundle import collect_submission_rows, select_required_filings
@@ -31,6 +39,7 @@ from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 from equitylens.quality.engine import QualityEngine
 from equitylens.quality.models import CheckStatus, Severity
+from equitylens.onboarding.fetch_bundle import load_bundle_document
 from equitylens.storage.raw_store import load_snapshot_record, save_snapshot
 
 
@@ -47,7 +56,7 @@ class OnboardingFetchError(RuntimeError):
 class ProfileMappingRegistry:
     """Restrict the reviewed global rule shapes to profile-approved concepts."""
 
-    def __init__(self, profile: IssuerProfile) -> None:
+    def __init__(self, profile: IssuerProfile | IssuerProfileV2) -> None:
         self.base = MappingRegistry()
         self.profile = profile
         self.allowed = {
@@ -229,14 +238,14 @@ class OnboardingPipeline:
             "document_count": len(bundle.documents),
         }
 
-    def _profile(self, task) -> tuple[IssuerProfile, str]:
+    def _profile(self, task) -> tuple[IssuerProfile | IssuerProfileV2, str]:
         publications = PublicationRepository(self.store)
         if task.profile_id:
             row = self.store.query_one(
                 "SELECT content_json FROM issuer_profile_version WHERE profile_id=?",
                 [task.profile_id],
             )
-            profile = IssuerProfile.model_validate(json.loads(row["content_json"]))
+            profile = parse_profile(json.loads(row["content_json"]))
             if profile.company_id != task.company_id:
                 raise ValueError("profile company_id does not match onboarding company")
             return profile, task.profile_id
@@ -264,6 +273,8 @@ class OnboardingPipeline:
 
     def build(self, task) -> dict:
         profile, profile_id = self._profile(task)
+        if isinstance(profile, IssuerProfileV2):
+            return self._build_v2(task, profile, profile_id)
         directory = self.raw_dir / "sec" / task.company_id
         submissions = load_snapshot_record(directory, "submissions.json")
         companyfacts = load_snapshot_record(directory, "companyfacts.json")
@@ -326,8 +337,101 @@ class OnboardingPipeline:
         )
         return {"dataset_id": dataset_id, "canonical_count": result.canonical_count}
 
+    def _build_v2(self, task, profile: IssuerProfileV2, profile_id: str) -> dict:
+        if not task.fetch_bundle_id:
+            raise RuntimeError("a fixed SEC fetch bundle is required")
+        bundle = self.repository.get_fetch_bundle(task.fetch_bundle_id)
+        validate_profile_v2_against_bundle(profile, bundle)
+        submissions_document = next(
+            (item for item in bundle.documents if item.document_type == "SUBMISSIONS"), None
+        )
+        if submissions_document is None:
+            raise RuntimeError("fixed submissions document is missing")
+        submissions = json.loads(load_bundle_document(self.raw_dir, submissions_document))
+        calendar = FiscalCalendar.from_submissions(
+            submissions, fallback_mm_dd=profile.fiscal_calendar.year_end
+        )
+        mappings = self._profile_mappings(profile)
+        rows: list[tuple[str, str, dict]] = []
+        source_documents: list[dict] = []
+        raw_rows: list[dict] = []
+        canonical_rows: list[dict] = []
+        segment_rows: list[dict] = []
+        segment_config = (
+            segment_config_from_profile(profile)
+            if profile.segments.parser == "ixbrl_segments_v1"
+            else None
+        )
+        for document in bundle.documents:
+            local_path = self.raw_dir / document.raw_locator
+            source = {
+                "source_document_id": document.document_id,
+                "company_id": task.company_id,
+                "provider": "SEC",
+                "document_type": document.document_type,
+                "form_type": document.form_type,
+                "accession_number": document.accession_number,
+                "source_url": document.source_url,
+                "fetched_at": document.fetched_at,
+                "content_sha256": document.content_sha256,
+                "local_path": str(local_path),
+            }
+            source_documents.append(source)
+            if document.document_type != "FILING_DOCUMENT":
+                continue
+            content = load_bundle_document(self.raw_dir, document)
+            ixbrl = IxbrlDocument.parse(content)
+            doc_raw, doc_canonical, _ = normalize_profiled_ixbrl(
+                ixbrl,
+                profile=profile,
+                mappings=mappings,
+                calendar=calendar,
+                source_document_id=document.document_id,
+                company_id=task.company_id,
+                accession_number=document.accession_number or "",
+                form_type=document.form_type or "",
+                filed_at=document.filed_at.isoformat() if document.filed_at else "",
+            )
+            raw_rows.extend(doc_raw)
+            canonical_rows.extend(doc_canonical)
+            if segment_config is not None:
+                extracted, _ = extract_segments(
+                    profile.securities[0].ticker,
+                    ixbrl,
+                    segment_config,
+                    calendar,
+                    document.document_id,
+                )
+                for item in extracted:
+                    item["company_id"] = task.company_id
+                segment_rows.extend(extracted)
+        rows.extend(("source_document", item["source_document_id"], item) for item in source_documents)
+        rows.extend(("raw_fact", item["raw_fact_id"], item) for item in raw_rows)
+        rows.extend(("canonical_fact", item["canonical_fact_id"], item) for item in canonical_rows)
+        rows.extend(("segment_fact", item["segment_fact_id"], item) for item in segment_rows)
+        dataset_id = DatasetBuilder(self.store).seal_rows(
+            company_id=task.company_id,
+            profile_id=profile_id,
+            source_manifest={
+                "fetch_bundle_id": bundle.fetch_bundle_id,
+                "fetch_bundle_sha256": bundle.content_sha256,
+                "documents": source_documents,
+                "profile_version": profile.version,
+            },
+            rows=rows,
+        )
+        self.repository.set_candidate(
+            task.onboarding_id,
+            expected_revision=task.revision,
+            profile_id=profile_id,
+            dataset_id=dataset_id,
+            state=TaskState.BUILDING,
+            current_step=OnboardingStep.BUILD,
+        )
+        return {"dataset_id": dataset_id, "canonical_count": len(canonical_rows)}
+
     @staticmethod
-    def _profile_mappings(profile: IssuerProfile) -> ProfileMappingRegistry:
+    def _profile_mappings(profile: IssuerProfile | IssuerProfileV2) -> ProfileMappingRegistry:
         return ProfileMappingRegistry(profile)
 
     def validate(self, task) -> dict:

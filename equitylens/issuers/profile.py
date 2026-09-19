@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 from equitylens.publication.models import sha256_json
 
 if False:  # pragma: no cover - imports only for type checkers
+    from equitylens.onboarding.models import FetchBundle
     from equitylens.onboarding.repository import OnboardingRepository
     from equitylens.publication.repository import PublicationRepository
 
@@ -95,14 +96,143 @@ class IssuerProfile(StrictModel):
         )
 
 
-def load_profile_yaml(path: Path | str) -> IssuerProfile:
+class FiscalCalendarConfigV2(FiscalCalendarConfig):
+    evidence: list[str] = Field(min_length=1)
+
+
+class MetricConfigV2(MetricConfig):
+    evidence: list[str] = Field(min_length=1)
+
+
+class SegmentMemberV2(StrictModel):
+    label: str = Field(min_length=1)
+    aggregate: bool = False
+
+
+class SegmentAxisV2(StrictModel):
+    name: str = Field(min_length=1)
+    kind: Literal["segment", "product", "geo"]
+    label: str = Field(min_length=1)
+    members: dict[str, SegmentMemberV2] = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1)
+
+
+class SegmentConfigV2(StrictModel):
+    parser: Literal["ixbrl_segments_v1", "not_applicable"]
+    axes: list[SegmentAxisV2]
+    reconciliation: Literal["explicit_eliminations", "not_applicable"]
+    revenue_concept: str | None
+    profit_concept: str | None
+    evidence: list[str] = Field(min_length=1)
+
+
+class CashDebtConfigV2(CashDebtConfig):
+    evidence: list[str] = Field(min_length=1)
+
+
+class IssuerProfileV2(StrictModel):
+    schema_version: Literal[2]
+    company_id: str = Field(pattern=r"^\d{10}$")
+    version: int = Field(ge=1)
+    template: Literal["us_gaap_operating_v1"]
+    template_evidence: list[str] = Field(min_length=1)
+    fiscal_calendar: FiscalCalendarConfigV2
+    metrics: dict[str, MetricConfigV2] = Field(min_length=1)
+    segments: SegmentConfigV2
+    cash_debt: CashDebtConfigV2
+    eps_method: Literal["reported_diluted", "two_class", "preferred_adjusted"] | None
+    eps_method_evidence: list[str]
+    securities: list[SecurityConfig] = Field(min_length=1)
+    applicability: dict[str, Literal["required", "not_disclosed", "not_applicable"]]
+    applicability_evidence: dict[str, list[str]] = Field(default_factory=dict)
+    evidence: list[EvidenceConfig] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_conditions_and_evidence(self):
+        evidence_ids = [item.evidence_id for item in self.evidence]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("evidence_id values must be unique")
+        required_modules = {"EPS", "SEGMENTS", "VALUATION"}
+        if set(self.applicability) != required_modules:
+            raise ValueError(f"applicability must declare {sorted(required_modules)}")
+        if self.segments.parser == "ixbrl_segments_v1":
+            if not self.segments.axes:
+                raise ValueError("segments.axes must contain at least one axis")
+            if not self.segments.revenue_concept:
+                raise ValueError("segments.revenue_concept is required")
+            if self.segments.reconciliation != "explicit_eliminations":
+                raise ValueError("iXBRL segments require explicit_eliminations")
+            if self.applicability["SEGMENTS"] == "not_applicable":
+                raise ValueError("iXBRL segments cannot be not_applicable")
+        else:
+            if self.segments.axes:
+                raise ValueError("segments.axes must be empty when parser is not_applicable")
+            if self.segments.revenue_concept is not None or self.segments.profit_concept is not None:
+                raise ValueError("segment concepts must be null when parser is not_applicable")
+            if self.segments.reconciliation != "not_applicable":
+                raise ValueError("segment reconciliation must be not_applicable")
+            if self.applicability["SEGMENTS"] != "not_applicable":
+                raise ValueError("SEGMENTS applicability must be not_applicable")
+        if (self.applicability["EPS"] == "required" or self.eps_method is not None) and not self.eps_method_evidence:
+            raise ValueError("eps_method_evidence is required")
+
+        referenced = set(self.template_evidence)
+        referenced.update(self.fiscal_calendar.evidence)
+        referenced.update(item for metric in self.metrics.values() for item in metric.evidence)
+        referenced.update(self.segments.evidence)
+        referenced.update(item for axis in self.segments.axes for item in axis.evidence)
+        referenced.update(self.cash_debt.evidence)
+        referenced.update(self.eps_method_evidence)
+        referenced.update(item for security in self.securities for item in security.evidence)
+        for module, status in self.applicability.items():
+            module_evidence = self.applicability_evidence.get(module, [])
+            if status in {"not_disclosed", "not_applicable"} and not module_evidence:
+                raise ValueError(f"applicability_evidence.{module} is required")
+            referenced.update(module_evidence)
+        missing = referenced - set(evidence_ids)
+        if missing:
+            raise ValueError(f"evidence references are missing: {sorted(missing)}")
+        return self
+
+    @computed_field
+    @property
+    def content_sha256(self) -> str:
+        return sha256_json(self.model_dump(mode="json", exclude={"content_sha256"}))
+
+
+class ProfileEvidenceError(ValueError):
+    pass
+
+
+def validate_profile_v2_against_bundle(
+    profile: IssuerProfileV2, bundle: "FetchBundle"
+) -> None:
+    fixed = {(item.document_id, item.content_sha256) for item in bundle.documents}
+    missing = [
+        f"{item.source_document_id}@{item.content_sha256}"
+        for item in profile.evidence
+        if (item.source_document_id, item.content_sha256) not in fixed
+    ]
+    if missing:
+        raise ProfileEvidenceError(
+            f"profile evidence is not in the current fetch bundle: {', '.join(missing)}"
+        )
+
+
+def parse_profile(data: dict) -> IssuerProfile | IssuerProfileV2:
+    if data.get("schema_version") == 2:
+        return IssuerProfileV2.model_validate(data)
+    return IssuerProfile.model_validate(data)
+
+
+def load_profile_yaml(path: Path | str) -> IssuerProfile | IssuerProfileV2:
     try:
         data = yaml.safe_load(Path(path).read_text())
     except yaml.YAMLError as exc:
         raise ValueError(f"profile must use safe YAML data only: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("profile must use safe YAML and contain one object")
-    return IssuerProfile.model_validate(data)
+    return parse_profile(data)
 
 
 class IssuerProfileService:
@@ -114,8 +244,13 @@ class IssuerProfileService:
         self.publications = publications
         self.tasks = tasks
 
-    def validate(self, profile: dict) -> IssuerProfile:
-        return IssuerProfile.model_validate(profile)
+    def validate(self, profile: dict) -> IssuerProfile | IssuerProfileV2:
+        return parse_profile(profile)
+
+    def validate_for_import(self, profile: dict) -> IssuerProfileV2:
+        if profile.get("schema_version") != 2:
+            raise ValueError("new profile imports require schema_version 2")
+        return IssuerProfileV2.model_validate(profile)
 
     def import_profile(
         self, task_id: str, expected_revision: int, profile: dict

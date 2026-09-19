@@ -12,7 +12,9 @@ copying total-company margins.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -77,6 +79,29 @@ class SegmentConfigRegistry:
         return self._issuers.get(ticker.upper())
 
 
+def segment_config_from_profile(profile: Any) -> IssuerSegmentConfig:
+    """Build the declarative segment parser config from a reviewed v2 profile."""
+    if profile.schema_version != 2 or profile.segments.parser != "ixbrl_segments_v1":
+        raise ValueError("profile does not declare the supported iXBRL segment parser")
+    return IssuerSegmentConfig(
+        ticker=profile.securities[0].ticker,
+        axes=[
+            SegmentAxis(
+                name=axis.name,
+                kind=axis.kind,
+                label=axis.label,
+                members={
+                    name: member.model_dump(mode="json")
+                    for name, member in axis.members.items()
+                },
+            )
+            for axis in profile.segments.axes
+        ],
+        revenue_concept=profile.segments.revenue_concept,
+        profit_concept=profile.segments.profit_concept,
+    )
+
+
 def extract_segments(
     ticker: str,
     ixbrl: IxbrlDocument,
@@ -117,7 +142,7 @@ def extract_segments(
         seen.add(key)
         rows.append(
             {
-                "segment_fact_id": f"sf_{source_document_id[:10]}_{axis_name}_{member}_{metric}_{fy}_{fq or 'fy'}_{ptype}_{len(rows)}",
+                "segment_fact_id": f"sf_{hashlib.sha256(source_document_id.encode()).hexdigest()[:12]}_{axis_name}_{member}_{metric}_{fy}_{fq or 'fy'}_{ptype}_{len(rows)}",
                 "company_id": None,  # caller fills
                 "segment_name_reported": member,
                 "segment_name_canonical": label,

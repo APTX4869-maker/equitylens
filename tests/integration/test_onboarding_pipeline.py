@@ -200,6 +200,81 @@ def test_fetch_atomically_binds_fixed_filing_bundle(db, tmp_path):
     assert repository.get_fetch_bundle(current.fetch_bundle_id).content_sha256 == original_sha
 
 
+def test_profile_v2_build_uses_filing_context_instead_of_companyfacts(db, tmp_path):
+    submissions = _quality_window_submissions()
+    companyfacts = {
+        "cik": int(CIK),
+        "facts": {"us-gaap": {"Revenues": {"units": {"USD": [{"val": 999}]}}}},
+    }
+    ixbrl = b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+    xmlns:xbrli='http://www.xbrl.org/2003/instance'>
+    <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+    <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+    <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
+    </html>"""
+
+    def fetch(url: str):
+        if "submissions" in url:
+            content = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            content = json.dumps(companyfacts).encode()
+        else:
+            content = ixbrl
+        return content, {"fetched_at": "2026-09-19T00:00:00+00:00"}
+
+    security_id = _register(db)
+    repository = OnboardingRepository(db)
+    task = repository.create_task(
+        company_id=CIK, security_id=security_id, input_fingerprint="v2-filing-lineage"
+    )
+    pipeline = OnboardingPipeline(db, repository, raw_dir=tmp_path / "raw", fetcher=fetch)
+    runner = OnboardingRunner(db, repository, handlers=pipeline.handlers())
+    assert runner.run_once()
+    current = repository.get(task.onboarding_id)
+    bundle = repository.get_fetch_bundle(current.fetch_bundle_id)
+    filing = next(item for item in bundle.documents if item.document_type == "FILING_DOCUMENT")
+    evidence = {
+        "evidence_id": "filing-evidence",
+        "source_document_id": filing.document_id,
+        "content_sha256": filing.content_sha256,
+        "locator": "//*[@name='us-gaap:Revenues']",
+    }
+    profile = {
+        "schema_version": 2, "company_id": CIK, "version": 2,
+        "template": "us_gaap_operating_v1", "template_evidence": ["filing-evidence"],
+        "fiscal_calendar": {"year_end": "12-31", "week_based": False, "evidence": ["filing-evidence"]},
+        "metrics": {"REVENUE": {"concepts": ["us-gaap:Revenues"], "unit": "USD", "context": "consolidated", "period": "duration", "selection": "latest_filed_same_basis", "evidence": ["filing-evidence"]}},
+        "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": ["filing-evidence"]},
+        "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": ["filing-evidence"]},
+        "eps_method": "reported_diluted", "eps_method_evidence": ["filing-evidence"],
+        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": ["filing-evidence"]}],
+        "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
+        "applicability_evidence": {"SEGMENTS": ["filing-evidence"]}, "evidence": [evidence],
+    }
+    profile_id = PublicationRepository(db).create_profile(
+        CIK, version=2, schema_version=2, content=profile
+    )
+    bound = repository.set_candidate(
+        current.onboarding_id,
+        expected_revision=current.revision,
+        profile_id=profile_id,
+        state=TaskState.BUILDING,
+        current_step=current.current_step,
+    )
+
+    assert runner.run_once()
+    built = repository.get(bound.onboarding_id)
+    raw_rows = db.query(
+        "SELECT payload_json FROM dataset_row WHERE dataset_id=? AND entity_type='raw_fact'",
+        [built.dataset_id],
+    )
+    parsed = [json.loads(row["payload_json"]) for row in raw_rows]
+    assert parsed
+    assert {row["raw_value"] for row in parsed} == {100.0}
+    assert all(row["context_id"] == "ctx" and row["locator"].startswith("/") for row in parsed)
+    assert all(row["source_document_id"].startswith("filing:") for row in parsed)
+
+
 def test_configured_pipeline_fetches_builds_and_validates(db, tmp_path):
     submissions, companyfacts = _payloads()
     profile_root = tmp_path / "profiles"

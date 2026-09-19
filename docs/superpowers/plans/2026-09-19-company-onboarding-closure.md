@@ -131,12 +131,12 @@ Expected: changing a mutable raw `submissions.json` after activation does not ch
 - Consumes: C02 bundle documents and SHA locators.
 - Produces: discriminated `IssuerProfileV1 | IssuerProfileV2`; `validate_profile_v2_against_bundle(profile, bundle)`; iXBRL facts retaining source document, context ID, and locator.
 
-- [ ] **Step 1: Add failing model and lineage tests** for all v2 evidence fields, segment parser conditions, EPS conditions, unique evidence IDs, unknown fields, v1 import rejection, and Company Facts not satisfying filing lineage.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing model and lineage tests** for all v2 evidence fields, segment parser conditions, EPS conditions, unique evidence IDs, unknown fields, v1 import rejection, and Company Facts not satisfying filing lineage.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onboarding_pipeline.py tests/golden/test_golden_segments.py -q`
 
-- [ ] **Step 3: Implement v2 strict models and evidence resolution**
+- [x] **Step 3: Implement v2 strict models and evidence resolution**
 
 ```python
 IssuerProfile = Annotated[IssuerProfileV1 | IssuerProfileV2, Field(discriminator="schema_version")]
@@ -151,11 +151,11 @@ def validate_profile_v2_against_bundle(profile: IssuerProfileV2, bundle: FetchBu
 
 Move issuer-specific segment axes/members into v2 and make BUILD parse only bundle iXBRL documents for required formal facts.
 
-- [ ] **Step 4: Run GREEN and schema export check**
+- [x] **Step 4: Run GREEN and schema export check**
 
 Run: `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onboarding_pipeline.py tests/golden/test_golden_segments.py -q`
 
-- [ ] **Step 5: Update progress and commit** with message `feat: require profile v2 filing evidence`.
+- [x] **Step 5: Update progress and commit** with message `feat: require profile v2 filing evidence`.
 
 ### C04: Deterministic Candidate Artifact
 

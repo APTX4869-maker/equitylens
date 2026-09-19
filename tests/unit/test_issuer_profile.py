@@ -3,8 +3,20 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from equitylens.issuers.profile import IssuerProfile, load_profile_yaml
+from equitylens.issuers.profile import (
+    IssuerProfile,
+    IssuerProfileV2,
+    IssuerProfileService,
+    ProfileEvidenceError,
+    load_profile_yaml,
+    validate_profile_v2_against_bundle,
+)
 from equitylens.issuers.candidate import build_candidate_profile
+from equitylens.onboarding.models import FetchBundle, FetchDocument
+from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixbrl
+from equitylens.normalization.fiscal_periods import FiscalCalendar
+from equitylens.onboarding.pipeline import ProfileMappingRegistry
+from equitylens.normalization.segments import segment_config_from_profile
 
 
 def valid_profile() -> dict:
@@ -45,6 +57,70 @@ def valid_profile() -> dict:
                 "source_document_id": "doc-1",
                 "content_sha256": "a" * 64,
                 "locator": "statement:income",
+            }
+        ],
+    }
+
+
+def valid_profile_v2() -> dict:
+    return {
+        "schema_version": 2,
+        "company_id": "0000000001",
+        "version": 2,
+        "template": "us_gaap_operating_v1",
+        "template_evidence": ["filing-evidence"],
+        "fiscal_calendar": {
+            "year_end": "12-31",
+            "week_based": False,
+            "evidence": ["filing-evidence"],
+        },
+        "metrics": {
+            "REVENUE": {
+                "concepts": ["us-gaap:Revenues"],
+                "unit": "USD",
+                "context": "consolidated",
+                "period": "duration",
+                "selection": "latest_filed_same_basis",
+                "evidence": ["filing-evidence"],
+            }
+        },
+        "segments": {
+            "parser": "not_applicable",
+            "axes": [],
+            "reconciliation": "not_applicable",
+            "revenue_concept": None,
+            "profit_concept": None,
+            "evidence": ["filing-evidence"],
+        },
+        "cash_debt": {
+            "cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"],
+            "debt_components": ["us-gaap:LongTermDebtNoncurrent"],
+            "restricted_cash_policy": "separate",
+            "evidence": ["filing-evidence"],
+        },
+        "eps_method": "reported_diluted",
+        "eps_method_evidence": ["filing-evidence"],
+        "securities": [
+            {
+                "ticker": "EXAMPLE",
+                "exchange": "NYSE",
+                "currency": "USD",
+                "instrument_type": "COMMON_STOCK",
+                "evidence": ["filing-evidence"],
+            }
+        ],
+        "applicability": {
+            "EPS": "required",
+            "SEGMENTS": "not_applicable",
+            "VALUATION": "required",
+        },
+        "applicability_evidence": {"SEGMENTS": ["filing-evidence"]},
+        "evidence": [
+            {
+                "evidence_id": "filing-evidence",
+                "source_document_id": "filing:one",
+                "content_sha256": "a" * 64,
+                "locator": "//*[@id='revenue']",
             }
         ],
     }
@@ -108,3 +184,131 @@ def test_candidate_only_recommends_concepts_present_in_snapshot():
     }
     assert result["unresolved_metrics"] == ["NET_INCOME"]
     assert result["review_status"] == "NEEDS_ADAPTATION"
+
+
+def test_profile_v2_enforces_segment_conditions_and_all_evidence_references():
+    parsed = IssuerProfileV2.model_validate(valid_profile_v2())
+    assert parsed.schema_version == 2
+
+    invalid = valid_profile_v2()
+    invalid["segments"] = {
+        **invalid["segments"],
+        "parser": "ixbrl_segments_v1",
+        "reconciliation": "explicit_eliminations",
+    }
+    invalid["applicability"]["SEGMENTS"] = "required"
+    with pytest.raises(ValidationError, match="axes"):
+        IssuerProfileV2.model_validate(invalid)
+
+    missing = valid_profile_v2()
+    missing["metrics"]["REVENUE"]["evidence"] = ["does-not-exist"]
+    with pytest.raises(ValidationError, match="does-not-exist"):
+        IssuerProfileV2.model_validate(missing)
+
+
+def test_new_profile_import_validation_rejects_schema_v1():
+    service = IssuerProfileService()
+    with pytest.raises(ValueError, match="schema_version 2"):
+        service.validate_for_import(valid_profile())
+    assert service.validate_for_import(valid_profile_v2()).schema_version == 2
+
+
+def test_profile_v2_evidence_must_resolve_to_current_bundle_document():
+    profile = IssuerProfileV2.model_validate(valid_profile_v2())
+    document = FetchDocument(
+        document_id="filing:one",
+        document_type="FILING_DOCUMENT",
+        accession_number="one",
+        form_type="10-K",
+        filed_at="2025-03-01",
+        report_date="2025-01-31",
+        fetched_at="2025-03-01T00:00:00Z",
+        source_url="https://www.sec.gov/example",
+        content_sha256="a" * 64,
+        raw_locator="sec/one/primary.html",
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id="bundle",
+        onboarding_id="task",
+        fetcher_version="v1",
+        parser_version="v1",
+        content_sha256="b" * 64,
+        documents=[document],
+        created_at="2025-03-01T00:00:00Z",
+    )
+    validate_profile_v2_against_bundle(profile, bundle)
+
+    wrong_bundle = bundle.model_copy(
+        update={"documents": [document.model_copy(update={"content_sha256": "c" * 64})]}
+    )
+    with pytest.raises(ProfileEvidenceError, match="filing:one"):
+        validate_profile_v2_against_bundle(profile, wrong_bundle)
+
+
+def test_ixbrl_numeric_fact_retains_real_context_and_locator():
+    document = IxbrlDocument.parse(
+        b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+        xmlns:xbrli='http://www.xbrl.org/2003/instance'>
+        <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+        <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
+        </html>"""
+    )
+
+    fact = document.facts("us-gaap:Revenues")[0]
+    assert fact.context_ref == "ctx"
+    assert fact.locator.startswith("/")
+
+
+def test_segment_config_is_derived_from_reviewed_profile_v2():
+    raw = valid_profile_v2()
+    raw["segments"] = {
+        "parser": "ixbrl_segments_v1",
+        "axes": [
+            {
+                "name": "StatementBusinessSegmentsAxis",
+                "kind": "segment",
+                "label": "Business segments",
+                "members": {"ComputeMember": {"label": "Compute", "aggregate": False}},
+                "evidence": ["filing-evidence"],
+            }
+        ],
+        "reconciliation": "explicit_eliminations",
+        "revenue_concept": "us-gaap:Revenues",
+        "profit_concept": None,
+        "evidence": ["filing-evidence"],
+    }
+    raw["applicability"]["SEGMENTS"] = "required"
+    raw["applicability_evidence"] = {}
+    profile = IssuerProfileV2.model_validate(raw)
+
+    config = segment_config_from_profile(profile)
+    assert config.axes[0].members["ComputeMember"]["label"] == "Compute"
+    assert config.revenue_concept == "us-gaap:Revenues"
+
+
+def test_profiled_ixbrl_normalization_preserves_context_and_locator():
+    profile = IssuerProfileV2.model_validate(valid_profile_v2())
+    document = IxbrlDocument.parse(
+        b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+        xmlns:xbrli='http://www.xbrl.org/2003/instance'>
+        <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+        <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
+        </html>"""
+    )
+    raw, canonical, _ = normalize_profiled_ixbrl(
+        document,
+        profile=profile,
+        mappings=ProfileMappingRegistry(profile),
+        calendar=FiscalCalendar({}, {}, fallback_mm_dd="12-31"),
+        source_document_id="filing:one",
+        company_id="0000000001",
+        accession_number="one",
+        form_type="10-K",
+        filed_at="2026-02-01",
+    )
+
+    assert raw[0]["context_id"] == "ctx"
+    assert raw[0]["locator"].startswith("/")
+    assert canonical[0]["source_document_id"] == "filing:one"
