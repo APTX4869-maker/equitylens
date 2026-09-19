@@ -7,14 +7,16 @@ import binascii
 import json
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+import yaml
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from equitylens.api.company_schemas import (
     CreateOnboardingRequest,
     DiscoverRequest,
     ProfileImportRequest,
+    ProfileYamlImportRequest,
     ReviewRequest,
     RevisionRequest,
     ValuationProfileRequest,
@@ -41,8 +43,42 @@ def _store():
     return routes_store()
 
 
-def _detail(code: str, message: str) -> dict[str, str]:
-    return {"code": code, "message": message}
+def _detail(
+    code: str,
+    message: str,
+    *,
+    remediation: str = "NONE",
+    field_errors: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "message": message,
+        "remediation": remediation,
+        "field_errors": field_errors or [],
+    }
+
+
+def _wake(request: Request) -> None:
+    executor = getattr(request.app.state, "onboarding_executor", None)
+    if executor is not None:
+        executor.wake()
+
+
+def _candidate_payload(candidate, *, current: bool) -> dict[str, Any]:
+    return {
+        "profile_candidate_id": candidate.profile_candidate_id,
+        "onboarding_id": candidate.onboarding_id,
+        "task_revision": candidate.task_revision,
+        "fetch_bundle_id": candidate.fetch_bundle_id,
+        "input_sha256": candidate.input_sha256,
+        "content_sha256": candidate.content_sha256,
+        "snapshot_manifest": candidate.snapshot_manifest,
+        "profile": candidate.profile,
+        "unresolved_fields": [item.model_dump(mode="json") for item in candidate.unresolved_fields],
+        "review_status": candidate.review_status,
+        "created_at": candidate.created_at.isoformat(),
+        "current": current,
+    }
 
 
 def _raise_service_error(exc: Exception) -> None:
@@ -54,9 +90,17 @@ def _raise_service_error(exc: Exception) -> None:
             status_code = 422 if code in {"INVALID_TICKER", "UNSUPPORTED_INSTRUMENT"} else 409
     elif isinstance(exc, KeyError):
         status_code = 404
+    elif code in {"PROFILE_CANDIDATE_NOT_FOUND", "PROFILE_NOT_IMPORTED"}:
+        status_code = 404
     else:
         status_code = 409
-    raise HTTPException(status_code, _detail(code, str(exc))) from exc
+    remediation = getattr(exc, "remediation", None)
+    if remediation is None and code in {"FETCH_BUNDLE_INCOMPLETE", "FETCH_BUNDLE_CORRUPTED"}:
+        remediation = "REFETCH"
+    raise HTTPException(
+        status_code,
+        _detail(code, str(exc), remediation=remediation or "NONE"),
+    ) from exc
 
 
 def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
@@ -282,6 +326,99 @@ def cancel_onboarding(task_id: str, body: RevisionRequest):
         _raise_service_error(exc)
 
 
+@router.post("/company-onboardings/{task_id}/profile-candidate")
+def generate_profile_candidate(task_id: str, body: RevisionRequest):
+    store = _store()
+    try:
+        task, candidate = OnboardingService(
+            CompanyDiscovery(store), CompanyRegistry(store), OnboardingRepository(store)
+        ).generate_profile_candidate(task_id, body.expected_revision)
+        return {
+            "task": _task_payload(task, store=store),
+            "candidate": _candidate_payload(candidate, current=True),
+        }
+    except (KeyError, OnboardingConflict, RuntimeError) as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/company-onboardings/{task_id}/profile-candidate")
+def profile_candidate(task_id: str):
+    store = _store()
+    repository = OnboardingRepository(store)
+    try:
+        task = repository.get(task_id)
+        if not task.profile_candidate_id:
+            raise OnboardingConflict("PROFILE_CANDIDATE_NOT_FOUND", "profile candidate is not available")
+        candidate = repository.get_profile_candidate(task.profile_candidate_id)
+        refetching = task.state.value == "FETCHING" or (task.error or {}).get("remediation") == "REFETCH"
+        current = task.fetch_bundle_id == candidate.fetch_bundle_id and not refetching
+        return _candidate_payload(candidate, current=current)
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/company-onboardings/{task_id}/profile-candidate.yaml")
+def profile_candidate_yaml(task_id: str):
+    store = _store()
+    repository = OnboardingRepository(store)
+    try:
+        task = repository.get(task_id)
+        if not task.profile_candidate_id:
+            raise OnboardingConflict("PROFILE_CANDIDATE_NOT_FOUND", "profile candidate is not available")
+        candidate = repository.get_profile_candidate(task.profile_candidate_id)
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+    return Response(
+        candidate.yaml_text,
+        media_type="application/yaml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{task.company_id}-profile-candidate.yaml"',
+            "ETag": f'"{candidate.yaml_sha256}"',
+            "X-Content-SHA256": candidate.content_sha256,
+        },
+    )
+
+
+@router.get("/company-onboardings/{task_id}/profile-current.yaml")
+def profile_current_yaml(task_id: str):
+    store = _store()
+    try:
+        task = OnboardingRepository(store).get(task_id)
+        if not task.profile_id:
+            raise OnboardingConflict("PROFILE_NOT_IMPORTED", "reviewed profile is not available")
+        row = store.query_one(
+            "SELECT version, content_json, content_sha256 FROM issuer_profile_version WHERE profile_id=?",
+            [task.profile_id],
+        )
+        if row is None:
+            raise OnboardingConflict("PROFILE_NOT_IMPORTED", "reviewed profile is not available")
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+    content = json.loads(row["content_json"]) if isinstance(row["content_json"], str) else row["content_json"]
+    return Response(
+        yaml.safe_dump(content, allow_unicode=True, sort_keys=False),
+        media_type="application/yaml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{task.company_id}-profile-v{row["version"]}.yaml"',
+            "X-Profile-Version": str(row["version"]),
+            "X-Content-SHA256": row["content_sha256"],
+        },
+    )
+
+
+@router.post("/company-onboardings/{task_id}/refetch")
+def refetch_onboarding(task_id: str, body: RevisionRequest, request: Request):
+    store = _store()
+    try:
+        task = OnboardingService(
+            CompanyDiscovery(store), CompanyRegistry(store), OnboardingRepository(store),
+            wake=lambda: _wake(request),
+        ).refetch(task_id, body.expected_revision)
+        return _task_payload(task, store=store)
+    except (KeyError, OnboardingConflict) as exc:
+        _raise_service_error(exc)
+
+
 @router.get("/company-onboardings/{task_id}/review-package")
 def review_package(task_id: str):
     store = _store()
@@ -294,12 +431,21 @@ def review_package(task_id: str):
 
 
 @router.post("/company-onboardings/{task_id}/profile")
-def import_profile(task_id: str, body: ProfileImportRequest):
+def import_profile(
+    task_id: str,
+    body: ProfileImportRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1),
+):
     store = _store()
     try:
         task = IssuerProfileService(
-            PublicationRepository(store), OnboardingRepository(store)
-        ).import_profile(task_id, body.expected_revision, body.profile)
+            PublicationRepository(store), OnboardingRepository(store),
+            wake=lambda: _wake(request),
+        ).import_profile(
+            task_id, body.expected_revision, body.profile,
+            idempotency_key=idempotency_key,
+        )
         return _task_payload(task, store=store)
     except KeyError as exc:
         _raise_service_error(exc)
@@ -307,6 +453,49 @@ def import_profile(task_id: str, body: ProfileImportRequest):
         _raise_service_error(exc)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(422, _detail("INVALID_PROFILE", str(exc))) from exc
+
+
+@router.post("/company-onboardings/{task_id}/profile-yaml")
+def import_profile_yaml(
+    task_id: str,
+    body: ProfileYamlImportRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1),
+):
+    store = _store()
+    try:
+        task = IssuerProfileService(
+            PublicationRepository(store), OnboardingRepository(store),
+            wake=lambda: _wake(request),
+        ).import_profile_yaml(
+            task_id, body.expected_revision, idempotency_key, body.yaml_text
+        )
+        return _task_payload(task, store=store)
+    except KeyError as exc:
+        _raise_service_error(exc)
+    except OnboardingConflict as exc:
+        _raise_service_error(exc)
+    except ValidationError as exc:
+        fields = [
+            {"path": ".".join(str(part) for part in item["loc"]), "message": item["msg"]}
+            for item in exc.errors()
+        ]
+        raise HTTPException(
+            422,
+            _detail(
+                "INVALID_PROFILE_YAML",
+                f"reviewed profile has {len(fields)} invalid fields",
+                remediation="PROFILE_IMPORT",
+                field_errors=fields,
+            ),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            422,
+            _detail(
+                "INVALID_PROFILE_YAML", str(exc), remediation="PROFILE_IMPORT"
+            ),
+        ) from exc
 
 
 @router.post("/company-onboardings/{task_id}/review")

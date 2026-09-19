@@ -3,6 +3,46 @@ info:
   title: EquityLens API
   version: 0.1.0
 paths:
+  /api/v1/company-onboardings/{task_id}/profile-candidate:
+    get:
+      summary: Read the current immutable issuer-profile candidate
+      responses:
+        '200': {description: Candidate and unresolved fields}
+        '404': {description: Candidate not available}
+    post:
+      summary: Generate or reuse a deterministic candidate for the current fetch bundle
+      responses:
+        '200': {description: Current task and candidate summary}
+        '409': {description: Task revision or fixed-input conflict}
+  /api/v1/company-onboardings/{task_id}/profile-candidate.yaml:
+    get:
+      summary: Download the current candidate Profile v2 YAML
+      responses:
+        '200': {description: YAML attachment}
+  /api/v1/company-onboardings/{task_id}/profile-current.yaml:
+    get:
+      summary: Download the current reviewed immutable Profile YAML
+      responses:
+        '200': {description: YAML attachment with version and content hash headers}
+        '404': {description: Reviewed profile not imported}
+  /api/v1/company-onboardings/{task_id}/profile-yaml:
+    post:
+      summary: Atomically import reviewed Profile v2 YAML and resume BUILD
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Resumed task}
+        '409': {description: Revision, idempotency, version, identity, or evidence conflict}
+        '422': {description: Strict YAML or Profile v2 validation error}
+  /api/v1/company-onboardings/{task_id}/refetch:
+    post:
+      summary: Request a new fixed SEC input bundle for a refetch-remediable task
+      responses:
+        '200': {description: Task queued at FETCH with historical pointers retained}
+        '409': {description: Refetch action is not allowed}
   /api/v1/companies/{ticker}:
     get:
       summary: Company identity and source freshness

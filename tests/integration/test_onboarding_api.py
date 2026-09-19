@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 
+import yaml
 from fastapi.testclient import TestClient
 
 from equitylens.api import company_routes
@@ -13,6 +15,9 @@ from equitylens.companies.registry import CompanyRegistry
 from equitylens.onboarding.pipeline import OnboardingPipeline
 from equitylens.onboarding.repository import OnboardingRepository
 from equitylens.onboarding.runner import OnboardingRunner
+from equitylens.issuers.candidate import build_candidate_artifact
+from equitylens.issuers.profile import IssuerProfileV2
+from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 
@@ -137,6 +142,8 @@ def test_discovery_upstream_failure_returns_service_unavailable(db, monkeypatch)
     assert response.json()["detail"] == {
         "code": "SEC_UNAVAILABLE",
         "message": "SEC access denied",
+        "remediation": "NONE",
+        "field_errors": [],
     }
 
 
@@ -334,13 +341,15 @@ def _publish_revenue(db, *, company_id: str, version: int, value: float):
     )
 
 
-def _strict_profile(company_id: str, version: int):
+def _strict_profile(company_id: str, version: int, document_id: str, digest: str):
+    evidence = ["filing-evidence"]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "company_id": company_id,
         "version": version,
         "template": "us_gaap_operating_v1",
-        "fiscal_calendar": {"year_end": "12-31", "week_based": False},
+        "template_evidence": evidence,
+        "fiscal_calendar": {"year_end": "12-31", "week_based": False, "evidence": evidence},
         "metrics": {
             "REVENUE": {
                 "concepts": ["us-gaap:Revenues"],
@@ -348,45 +357,222 @@ def _strict_profile(company_id: str, version: int):
                 "context": "consolidated",
                 "period": "duration",
                 "selection": "latest_filed_same_basis",
+                "evidence": evidence,
             }
         },
-        "segments": {"axes": [], "reconciliation": "explicit_eliminations"},
+        "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": evidence},
         "cash_debt": {
             "cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"],
             "debt_components": ["us-gaap:LongTermDebtNoncurrent"],
             "restricted_cash_policy": "separate",
+            "evidence": evidence,
         },
         "eps_method": "reported_diluted",
+        "eps_method_evidence": evidence,
         "securities": [
             {
                 "ticker": "EXAMPLE",
                 "exchange": "NYSE",
                 "currency": "USD",
                 "instrument_type": "COMMON_STOCK",
-                "evidence": ["security-evidence"],
+                "evidence": evidence,
             }
         ],
-        "applicability": {},
+        "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
+        "applicability_evidence": {"SEGMENTS": evidence},
         "evidence": [
             {
-                "evidence_id": "security-evidence",
-                "source_document_id": "doc-1",
-                "content_sha256": "a" * 64,
-                "locator": "SEC submissions tickers[0]",
+                "evidence_id": "filing-evidence",
+                "source_document_id": document_id,
+                "content_sha256": digest,
+                "locator": "/html/body",
             }
         ],
     }
+
+
+def _prepare_bundle(db, task):
+    repository = OnboardingRepository(db)
+    digest = "c" * 64
+    bundle = repository.create_fetch_bundle(
+        task["onboarding_id"], expected_revision=task["revision"],
+        fetcher_version="fixture", parser_version="fixture",
+        documents=[{
+            "document_id": "filing:api", "document_type": "FILING_DOCUMENT",
+            "accession_number": "api", "form_type": "10-K",
+            "filed_at": "2026-01-01", "report_date": "2025-12-31",
+            "fetched_at": "2026-01-01T00:00:00Z", "source_url": "https://www.sec.gov/api",
+            "content_sha256": digest, "raw_locator": "sec/api/primary.html",
+        }],
+    )
+    db._conn.execute(
+        """UPDATE company_onboarding SET state='NEEDS_ADAPTATION', current_step='BUILD',
+           error_json=? WHERE onboarding_id=?""",
+        [json.dumps({"code": "ADAPTATION_REQUIRED", "remediation": "PROFILE_IMPORT"}), task["onboarding_id"]],
+    )
+    return repository.get(task["onboarding_id"]), bundle
+
+
+def test_candidate_and_yaml_endpoints_are_deterministic_and_side_effect_free(
+    db, monkeypatch
+):
+    client, discovery = _client(db, monkeypatch)
+    created, _ = _create(client, discovery, key="candidate-api")
+    task, bundle = _prepare_bundle(db, created.json())
+    artifact = build_candidate_artifact(
+        onboarding_id=task.onboarding_id,
+        task_revision=task.revision,
+        company_id=task.company_id,
+        bundle=bundle,
+        mapping=MappingRegistry(),
+        fact_catalogs={bundle.documents[0].document_id: [{
+            "concept": "us-gaap:Revenues", "context_ref": "ctx",
+            "unit_ref": "USD", "locator": "/html/body/fact",
+        }]},
+        securities=[{"ticker": "EXAMPLE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK"}],
+        fiscal_year_end="12-31",
+    )
+    monkeypatch.setattr(OnboardingPipeline, "candidate_artifact", lambda self, current: artifact)
+
+    generated = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/profile-candidate",
+        json={"expected_revision": task.revision},
+    )
+    assert generated.status_code == 200
+    body = generated.json()
+    candidate_id = body["candidate"]["profile_candidate_id"]
+    assert body["candidate"]["review_status"] == "NEEDS_ADAPTATION"
+    assert all(not item["raw_locator"].startswith("/") for item in body["candidate"]["snapshot_manifest"])
+
+    revision = body["task"]["revision"]
+    repeated = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/profile-candidate",
+        json={"expected_revision": revision},
+    )
+    assert repeated.json()["candidate"]["profile_candidate_id"] == candidate_id
+    assert repeated.json()["task"]["revision"] == revision
+
+    before = OnboardingRepository(db).get(task.onboarding_id)
+    fetched = client.get(f"/api/v1/company-onboardings/{task.onboarding_id}/profile-candidate")
+    downloaded = client.get(f"/api/v1/company-onboardings/{task.onboarding_id}/profile-candidate.yaml")
+    after = OnboardingRepository(db).get(task.onboarding_id)
+    assert fetched.status_code == downloaded.status_code == 200
+    assert before.revision == after.revision
+    assert yaml.safe_load(downloaded.text) == fetched.json()["profile"]
+    assert downloaded.headers["content-disposition"].endswith('profile-candidate.yaml"')
+    assert "yaml_text" not in fetched.json()
+
+
+def test_yaml_import_api_returns_stable_errors_and_current_profile_download(db, monkeypatch):
+    client, discovery = _client(db, monkeypatch)
+    created, _ = _create(client, discovery, key="yaml-api")
+    task, bundle = _prepare_bundle(db, created.json())
+    document = bundle.documents[0]
+
+    invalid = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/profile-yaml",
+        headers={"Idempotency-Key": "invalid-yaml"},
+        json={"expected_revision": task.revision, "yaml_text": "schema_version: 2\nschema_version: 2\n"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == {
+        "code": "INVALID_PROFILE_YAML",
+        "message": "duplicate YAML key: schema_version",
+        "remediation": "PROFILE_IMPORT",
+        "field_errors": [],
+    }
+
+    profile = _strict_profile(task.company_id, 401, document.document_id, document.content_sha256)
+    imported = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/profile-yaml",
+        headers={"Idempotency-Key": "valid-yaml"},
+        json={"expected_revision": task.revision, "yaml_text": json.dumps(profile)},
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["state"] == "BUILDING"
+    current = client.get(f"/api/v1/company-onboardings/{task.onboarding_id}/profile-current.yaml")
+    assert current.status_code == 200
+    assert current.headers["x-profile-version"] == "401"
+    assert yaml.safe_load(current.text) == IssuerProfileV2.model_validate(profile).model_dump(
+        mode="json", exclude={"content_sha256"}
+    )
+
+
+def test_refetch_preserves_history_until_new_bundle_activation_and_wakes_executor(db, monkeypatch):
+    client, discovery = _client(db, monkeypatch)
+    created, _ = _create(client, discovery, key="refetch-api")
+    task, old_bundle = _prepare_bundle(db, created.json())
+    artifact = build_candidate_artifact(
+        onboarding_id=task.onboarding_id, task_revision=task.revision,
+        company_id=task.company_id, bundle=old_bundle, mapping=MappingRegistry(),
+        fact_catalogs={},
+        securities=[{"ticker": "EXAMPLE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK"}],
+        fiscal_year_end="12-31",
+    )
+    task, candidate = OnboardingRepository(db).activate_profile_candidate(
+        task.onboarding_id, expected_revision=task.revision, artifact=artifact
+    )
+    rejected = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/refetch",
+        json={"expected_revision": task.revision},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "TASK_CONFLICT"
+    db._conn.execute(
+        """UPDATE company_onboarding SET error_json=? WHERE onboarding_id=?""",
+        [json.dumps({"code": "FETCH_BUNDLE_CORRUPTED", "remediation": "REFETCH"}), task.onboarding_id],
+    )
+    task = OnboardingRepository(db).get(task.onboarding_id)
+
+    class WakeRecorder:
+        calls = 0
+        def wake(self):
+            self.calls += 1
+
+    recorder = WakeRecorder()
+    monkeypatch.setattr(app.state, "onboarding_executor", recorder, raising=False)
+    response = client.post(
+        f"/api/v1/company-onboardings/{task.onboarding_id}/refetch",
+        json={"expected_revision": task.revision},
+    )
+    assert response.status_code == 200
+    refetching = response.json()
+    assert refetching["state"] == "FETCHING"
+    assert refetching["fetch_bundle_id"] == old_bundle.fetch_bundle_id
+    assert refetching["profile_candidate_id"] == candidate.profile_candidate_id
+    assert recorder.calls == 1
+
+    repository = OnboardingRepository(db)
+    repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=refetching["revision"],
+        fetcher_version="fixture-2", parser_version="fixture",
+        documents=[{
+            "document_id": "filing:api-new", "document_type": "FILING_DOCUMENT",
+            "accession_number": "api-new", "form_type": "10-K",
+            "filed_at": "2026-02-01", "report_date": "2025-12-31",
+            "fetched_at": "2026-02-01T00:00:00Z", "source_url": "https://www.sec.gov/api-new",
+            "content_sha256": "d" * 64, "raw_locator": "sec/api-new/primary.html",
+        }],
+    )
+    activated = repository.get(task.onboarding_id)
+    assert activated.fetch_bundle_id != old_bundle.fetch_bundle_id
+    assert activated.profile_candidate_id is None
+    assert activated.profile_id is None
 
 
 def test_profile_review_and_quality_report_endpoints_complete_the_workflow(db, monkeypatch):
     client, discovery = _client(db, monkeypatch)
     created, _ = _create(client, discovery, key="review-workflow")
     task = created.json()
+    prepared, bundle = _prepare_bundle(db, task)
+    document = bundle.documents[0]
     imported = client.post(
         f"/api/v1/company-onboardings/{task['onboarding_id']}/profile",
+        headers={"Idempotency-Key": "profile-review-workflow"},
         json={
-            "expected_revision": task["revision"],
-            "profile": _strict_profile(task["company_id"], 301),
+            "expected_revision": prepared.revision,
+            "profile": _strict_profile(task["company_id"], 301, document.document_id, document.content_sha256),
         },
     )
     assert imported.status_code == 200

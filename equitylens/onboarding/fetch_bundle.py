@@ -15,9 +15,15 @@ from equitylens.onboarding.models import FetchDocument
 class FetchBundleIncomplete(ValueError):
     """A required filing input cannot be fixed safely."""
 
+    code = "FETCH_BUNDLE_INCOMPLETE"
+    remediation = "REFETCH"
+
 
 class FetchBundleCorrupted(ValueError):
     """A fixed bundle locator no longer contains the recorded bytes."""
+
+    code = "FETCH_BUNDLE_CORRUPTED"
+    remediation = "REFETCH"
 
 
 def load_bundle_document(raw_dir: Path, document: FetchDocument) -> bytes:

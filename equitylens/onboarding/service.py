@@ -18,11 +18,14 @@ class OnboardingService:
         discovery: CompanyDiscovery,
         registry: CompanyRegistry,
         tasks: OnboardingRepository,
+        *,
+        wake=None,
     ) -> None:
         self.discovery = discovery
         self.registry = registry
         self.tasks = tasks
         self.store = tasks.store
+        self.wake = wake
 
     def create(
         self,
@@ -154,3 +157,20 @@ class OnboardingService:
 
     def cancel(self, task_id: str, expected_revision: int):
         return self.tasks.cancel(task_id, expected_revision=expected_revision)
+
+    def generate_profile_candidate(self, task_id: str, expected_revision: int):
+        from equitylens.onboarding.pipeline import OnboardingPipeline
+
+        pipeline = OnboardingPipeline(self.store, self.tasks)
+        try:
+            return pipeline.generate_profile_candidate(
+                task_id, expected_revision=expected_revision
+            )
+        finally:
+            pipeline.close()
+
+    def refetch(self, task_id: str, expected_revision: int):
+        task = self.tasks.request_refetch(task_id, expected_revision=expected_revision)
+        if self.wake is not None:
+            self.wake()
+        return task

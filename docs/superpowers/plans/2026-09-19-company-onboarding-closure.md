@@ -224,20 +224,20 @@ Inside the existing writer transaction: replay a prior successful idempotency ro
 - Produces the spec section 6 endpoints for candidate create/read/download, current Profile download, YAML import, and refetch.
 - Keeps existing JSON `/profile` but routes it through the same v2 validation and atomic import service.
 
-- [ ] **Step 1: Add failing API tests** for response fields/headers, relative locators only, GET side-effect freedom, stable error bodies, legal state/actions, refetch pointer rules, and idempotency header behavior.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing API tests** for response fields/headers, relative locators only, GET side-effect freedom, stable error bodies, legal state/actions, refetch pointer rules, and idempotency header behavior.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/integration/test_onboarding_api.py -q`
 
-- [ ] **Step 3: Implement routes and error translation**
+- [x] **Step 3: Implement routes and error translation**
 
 Return `{detail: {code, message, remediation, field_errors}}`; never echo YAML, absolute paths, or secrets. Accept refetch only when `actions` contains `REFETCH`, write `REFETCH_REQUESTED`, set `FETCHING/FETCH`, and wake the executor after commit. New bundle activation clears current candidate/profile/downstream pointers and stales old attempts atomically.
 
-- [ ] **Step 4: Run GREEN and OpenAPI consistency check**
+- [x] **Step 4: Run GREEN and OpenAPI consistency check**
 
 Run: `uv run pytest tests/integration/test_onboarding_api.py -q`
 
-- [ ] **Step 5: Update progress and commit** with message `feat: expose onboarding adaptation APIs`.
+- [x] **Step 5: Update progress and commit** with message `feat: expose onboarding adaptation APIs`.
 
 ### C07: Unified Progress, Heartbeats, and Attention Count
 

@@ -47,6 +47,8 @@ def _step_input_hash(task: TaskView) -> str:
     payload = {
         "request": task.input_fingerprint,
         "step": task.current_step.value if task.current_step else None,
+        "fetch_bundle_id": task.fetch_bundle_id,
+        "profile_candidate_id": task.profile_candidate_id,
         "profile_id": task.profile_id,
         "dataset_id": task.dataset_id,
         "quality_report_id": task.quality_report_id,
@@ -109,14 +111,23 @@ class OnboardingRepository:
             error = json.loads(error)
         state = TaskState(row["state"])
         actions = []
+        remediation = (error or {}).get("remediation")
         if state == TaskState.FAILED:
-            actions.append("RETRY")
+            if remediation == "PROFILE_IMPORT":
+                actions.append("PROFILE_IMPORT")
+            elif remediation == "REFETCH":
+                actions.append("REFETCH")
+            else:
+                actions.append("RETRY")
         if state not in (TaskState.PUBLISHED, TaskState.CANCELLED):
             actions.append("CANCEL")
         if state == TaskState.NEEDS_REVIEW:
             actions.extend(["REVIEW", "EXPORT_REVIEW_PACKAGE"])
         if state == TaskState.NEEDS_ADAPTATION:
-            actions.append("PROFILE_IMPORT")
+            if remediation == "REFETCH":
+                actions.append("REFETCH")
+            else:
+                actions.append("PROFILE_IMPORT")
         return TaskView(
             onboarding_id=row["onboarding_id"],
             company_id=row["company_id"],
@@ -218,10 +229,20 @@ class OnboardingRepository:
                 new_revision = task[0] + 1
                 self.store._conn.execute(
                     """
-                    UPDATE company_onboarding SET fetch_bundle_id=?, revision=?, updated_at=now()
+                    UPDATE company_onboarding SET fetch_bundle_id=?, profile_candidate_id=NULL,
+                      profile_id=NULL, dataset_id=NULL, quality_report_id=NULL,
+                      review_id=NULL, publication_id=NULL, revision=?, updated_at=now()
                     WHERE onboarding_id=?
                     """,
                     [bundle_id, new_revision, task_id],
+                )
+                self.store._conn.execute(
+                    """
+                    UPDATE onboarding_step_attempt SET state='STALE'
+                    WHERE onboarding_id=? AND step IN ('BUILD','VALIDATE','PUBLISH')
+                      AND state <> 'RUNNING'
+                    """,
+                    [task_id],
                 )
                 self._append_event_locked(
                     task_id,
@@ -316,6 +337,69 @@ class OnboardingRepository:
             row[target] = json.loads(value) if isinstance(value, str) else value
         return ProfileCandidate.model_validate({**row, "review_status": "NEEDS_ADAPTATION"})
 
+    def activate_profile_candidate(
+        self, task_id: str, *, expected_revision: int, artifact: CandidateArtifact
+    ) -> tuple[TaskView, ProfileCandidate]:
+        """Create/reuse and bind a candidate without changing the task phase."""
+        with self.writer.transaction(self.store):
+            row = self.store._conn.execute(
+                """SELECT revision, cancel_requested, fetch_bundle_id, profile_candidate_id
+                   FROM company_onboarding WHERE onboarding_id=?""",
+                [task_id],
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if row[0] != expected_revision or row[1] or row[2] != artifact.fetch_bundle_id:
+                raise OnboardingConflict("TASK_CONFLICT", "task inputs changed or were cancelled")
+            existing = self.store._conn.execute(
+                """SELECT profile_candidate_id FROM issuer_profile_candidate
+                   WHERE onboarding_id=? AND input_sha256=?""",
+                [task_id, artifact.input_sha256],
+            ).fetchone()
+            candidate_id = existing[0] if existing else str(uuid.uuid4())
+            if not existing:
+                self._insert_profile_candidate_locked(candidate_id, artifact)
+            if row[3] != candidate_id:
+                new_revision = row[0] + 1
+                self.store._conn.execute(
+                    """UPDATE company_onboarding SET profile_candidate_id=?, revision=?,
+                       updated_at=now() WHERE onboarding_id=?""",
+                    [candidate_id, new_revision, task_id],
+                )
+                self._append_event_locked(
+                    task_id, event_type="PROFILE_CANDIDATE_CREATED", actor_type="SYSTEM",
+                    task_revision=new_revision,
+                    payload={"profile_candidate_id": candidate_id,
+                             "input_sha256": artifact.input_sha256,
+                             "content_sha256": artifact.content_sha256,
+                             "unresolved_count": len(artifact.unresolved_fields),
+                             "reused": bool(existing)},
+                )
+        return self.get(task_id), self.get_profile_candidate(candidate_id)
+
+    def _insert_profile_candidate_locked(
+        self, candidate_id: str, artifact: CandidateArtifact
+    ) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO issuer_profile_candidate (
+              profile_candidate_id, onboarding_id, task_revision, company_id,
+              fetch_bundle_id, input_sha256, generator_version, mapping_version,
+              mapping_sha256, snapshot_manifest_json, profile_json, unresolved_json,
+              yaml_text, content_sha256, yaml_sha256, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+            """,
+            [
+                candidate_id, artifact.onboarding_id, artifact.task_revision,
+                artifact.company_id, artifact.fetch_bundle_id, artifact.input_sha256,
+                artifact.generator_version, artifact.mapping_version,
+                artifact.mapping_sha256, _json(artifact.snapshot_manifest),
+                _json(artifact.profile),
+                _json([item.model_dump(mode="json") for item in artifact.unresolved_fields]),
+                artifact.yaml_text, artifact.content_sha256, artifact.yaml_sha256,
+            ],
+        )
+
     def bind_profile_candidate(
         self,
         task: TaskView,
@@ -346,25 +430,7 @@ class OnboardingRepository:
             ).fetchone()
             candidate_id = existing[0] if existing else str(uuid.uuid4())
             if not existing:
-                self.store._conn.execute(
-                    """
-                    INSERT INTO issuer_profile_candidate (
-                      profile_candidate_id, onboarding_id, task_revision, company_id,
-                      fetch_bundle_id, input_sha256, generator_version, mapping_version,
-                      mapping_sha256, snapshot_manifest_json, profile_json, unresolved_json,
-                      yaml_text, content_sha256, yaml_sha256, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
-                    """,
-                    [
-                        candidate_id, artifact.onboarding_id, artifact.task_revision,
-                        artifact.company_id, artifact.fetch_bundle_id, artifact.input_sha256,
-                        artifact.generator_version, artifact.mapping_version,
-                        artifact.mapping_sha256, _json(artifact.snapshot_manifest),
-                        _json(artifact.profile),
-                        _json([item.model_dump(mode="json") for item in artifact.unresolved_fields]),
-                        artifact.yaml_text, artifact.content_sha256, artifact.yaml_sha256,
-                    ],
-                )
+                self._insert_profile_candidate_locked(candidate_id, artifact)
             new_revision = task.revision + 1
             self.store._conn.execute(
                 """
@@ -643,6 +709,37 @@ class OnboardingRepository:
                 WHERE onboarding_id=?
                 """,
                 [self._state_for_step(self.get(task_id).current_step).value, task_id],
+            )
+        return self.get(task_id)
+
+    def request_refetch(self, task_id: str, *, expected_revision: int) -> TaskView:
+        with self.writer.transaction(self.store):
+            task = self.get(task_id)
+            if task.revision != expected_revision or "REFETCH" not in task.actions:
+                raise OnboardingConflict("TASK_CONFLICT", "task does not allow refetch")
+            new_revision = task.revision + 1
+            self._append_event_locked(
+                task_id,
+                event_type="REFETCH_REQUESTED",
+                actor_type="MAINTAINER",
+                task_revision=new_revision,
+                payload={
+                    "fetch_bundle_id": task.fetch_bundle_id,
+                    "profile_candidate_id": task.profile_candidate_id,
+                    "profile_id": task.profile_id,
+                    "dataset_id": task.dataset_id,
+                    "quality_report_id": task.quality_report_id,
+                    "review_id": task.review_id,
+                    "publication_id": task.publication_id,
+                },
+            )
+            self.store._conn.execute(
+                """
+                UPDATE company_onboarding SET state='FETCHING', current_step='FETCH',
+                  revision=?, error_json=NULL, next_attempt_at=NULL, updated_at=now()
+                WHERE onboarding_id=?
+                """,
+                [new_revision, task_id],
             )
         return self.get(task_id)
 

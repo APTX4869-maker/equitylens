@@ -23,7 +23,7 @@
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
 | C04 确定性候选制品 | 已完成 | RED 缺候选构建接口；GREEN 聚焦 25 passed，兼容回归 13 passed | 已自检 | 候选、暂停、revision 与事件原子提交；永不自动批准 |
 | C05 严格 YAML 与原子恢复 | 已完成 | RED 覆盖严格解析/事务冲突；GREEN 44 passed，扩展流水线回归合计 55 passed | 已自检 | v2-only、证据绑定、版本单调、幂等重放与回滚均已验证 |
-| C06 候选/导入/refetch API | 未开始 | 未运行 | 待复核 | 依赖 C05 |
+| C06 候选/导入/refetch API | 已完成 | RED 旧接口缺新端点/严格约束；GREEN 14 passed，OpenAPI 5 路径核验通过 | 已自检 | GET 无副作用；YAML/JSON 同一原子导入；refetch 指针规则已覆盖 |
 | C07 统一进度与 attention | 未开始 | 未运行 | 待复核 | 依赖 C01、C06 |
 | C08 五阶段与适配工作台 | 未开始 | 未运行 | 待复核 | 依赖 C06—C07 |
 | C09 全局任务入口 | 未开始 | 未运行 | 待复核 | 依赖 C07—C08 |
@@ -113,6 +113,24 @@
 证据文件/报告：`equitylens/issuers/yaml_loader.py`、`equitylens/issuers/profile.py`、`equitylens/onboarding/repository.py`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_issuer_review.py`、`tests/integration/test_onboarding_runner.py`、`tests/integration/test_onboarding_pipeline.py`。
 
 遗留问题与下一步：底层事务已完成，网页尚无候选读取/下载、YAML 上传和显式 refetch 接口；C06 将统一接入 API、稳定错误体和提交后 executor wake。
+
+## C06 候选、导入与 refetch API
+
+阶段与提交号：C06；提交在本阶段记录更新后创建。
+
+实际改动：新增候选生成/读取/YAML 下载、当前审核 Profile YAML 下载、严格 YAML 导入和受控 refetch 端点；现有 JSON Profile 接口也要求 v2、幂等键并复用同一原子事务。候选 GET/下载不修改 revision，快照只返回相对 locator；重复生成相同输入复用候选且不递增 revision。错误体统一包含 `code/message/remediation/field_errors`，不回显 YAML、绝对路径或环境信息。refetch 仅在后端 `actions` 明确包含 `REFETCH` 时允许，提交后 wake executor；新 bundle 激活前保留历史诊断指针，成功激活后原子清空旧候选、Profile 和下游制品。步骤输入哈希加入 bundle/candidate 身份，防止 refetch 被旧完成 attempt 跳过。
+
+测试命令及结果：
+
+- RED：旧 API 缺少候选/YAML/refetch 路径，旧 JSON 导入也不满足 v2/幂等/固定证据要求。
+- GREEN：`uv run pytest tests/integration/test_onboarding_api.py -q`，`14 passed, 1 warning in 2.10s`。
+- 扩展回归：API、pipeline、runner 合计 `35 passed, 1 warning in 4.50s`。
+- OpenAPI 运行时检查：5 个新增路径均存在；`spec/openapi_stub.yaml` 同步。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`equitylens/api/company_routes.py`、`equitylens/api/company_schemas.py`、`equitylens/onboarding/service.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/pipeline.py`、`spec/openapi_stub.yaml`、`tests/integration/test_onboarding_api.py`。
+
+遗留问题与下一步：接口已具备工作台所需数据，但任务详情仍缺统一五阶段进度、心跳停滞判断和不受分页限制的待关注总数；C07 将补齐这些派生字段。
 
 ## 每阶段记录格式
 

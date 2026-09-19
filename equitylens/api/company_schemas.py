@@ -29,6 +29,10 @@ class ProfileImportRequest(RevisionRequest):
     profile: dict[str, Any]
 
 
+class ProfileYamlImportRequest(RevisionRequest):
+    yaml_text: str
+
+
 class ReviewRequest(RevisionRequest):
     fingerprint: str
     decision: Literal["APPROVE", "REJECT"]
