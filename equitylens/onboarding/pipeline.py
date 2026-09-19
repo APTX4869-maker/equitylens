@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+from datetime import timezone
 from pathlib import Path
 from typing import Callable
 
 import httpx
 
-from equitylens.config import CONFIG_DIR, RAW_DIR, SEC_COMPANYFACTS_URL, SEC_SUBMISSIONS_URL
+from equitylens.config import (
+    CONFIG_DIR,
+    PARSER_VERSION,
+    RAW_DIR,
+    SEC_ARCHIVES_URL,
+    SEC_COMPANYFACTS_URL,
+    SEC_SUBMISSIONS_URL,
+)
 from equitylens.ingestion.sec.client import SECClient
 from equitylens.issuers.profile import IssuerProfile, load_profile_yaml
 from equitylens.issuers.review import ReviewService
@@ -16,6 +24,7 @@ from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.onboarding.models import OnboardingStep, TaskState
+from equitylens.onboarding.fetch_bundle import collect_submission_rows, select_required_filings
 from equitylens.onboarding.repository import OnboardingRepository
 from equitylens.onboarding.runner import OnboardingPause
 from equitylens.publication.builder import DatasetBuilder
@@ -116,7 +125,8 @@ class OnboardingPipeline:
 
     def fetch(self, task) -> dict:
         directory = self.raw_dir / "sec" / task.company_id
-        fetched: dict[str, str] = {}
+        fixed_documents: list[dict] = []
+        payloads: dict[str, bytes] = {}
         for name, url in (
             ("submissions.json", SEC_SUBMISSIONS_URL + f"CIK{task.company_id}.json"),
             ("companyfacts.json", SEC_COMPANYFACTS_URL + f"CIK{task.company_id}.json"),
@@ -128,8 +138,96 @@ class OnboardingPipeline:
                 content,
                 metadata={"fetched_at": metadata["fetched_at"], "source_url": url},
             )
-            fetched[name] = f"{path.name}@{digest}"
-        return fetched
+            payloads[name] = content
+            fixed_documents.append(
+                {
+                    "document_id": f"{name}:{digest}",
+                    "document_type": "SUBMISSIONS" if name == "submissions.json" else "COMPANYFACTS",
+                    "fetched_at": metadata["fetched_at"],
+                    "source_url": url,
+                    "content_sha256": digest,
+                    "raw_locator": path.relative_to(self.raw_dir).as_posix(),
+                }
+            )
+
+        submissions = json.loads(payloads["submissions.json"])
+        history_payloads: dict[str, dict] = {}
+        for declared in (submissions.get("filings") or {}).get("files") or []:
+            name = str(declared.get("name") or "")
+            url = SEC_SUBMISSIONS_URL + name
+            content, metadata = self.fetcher(url)
+            path, digest = save_snapshot(
+                directory,
+                name,
+                content,
+                metadata={"fetched_at": metadata["fetched_at"], "source_url": url},
+            )
+            history_payloads[name] = json.loads(content)
+            fixed_documents.append(
+                {
+                    "document_id": f"history:{name}:{digest}",
+                    "document_type": "SUBMISSIONS_HISTORY",
+                    "fetched_at": metadata["fetched_at"],
+                    "source_url": url,
+                    "content_sha256": digest,
+                    "raw_locator": path.relative_to(self.raw_dir).as_posix(),
+                }
+            )
+
+        attempt = self.store.query_one(
+            """
+            SELECT started_at FROM onboarding_step_attempt
+            WHERE onboarding_id=? AND step='FETCH' AND state='RUNNING'
+            ORDER BY attempt_no DESC LIMIT 1
+            """,
+            [task.onboarding_id],
+        )
+        as_of = attempt["started_at"]
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=timezone.utc)
+        selected = select_required_filings(
+            collect_submission_rows(submissions, history_payloads), as_of=as_of
+        )
+        cik_without_padding = str(int(task.company_id))
+        for filing in selected:
+            accession_path = filing.accession_number.replace("-", "")
+            url = (
+                f"{SEC_ARCHIVES_URL}{cik_without_padding}/{accession_path}/"
+                f"{filing.primary_document}"
+            )
+            content, metadata = self.fetcher(url)
+            path, digest = save_snapshot(
+                directory / "filing_docs" / filing.accession_number,
+                "primary.html",
+                content,
+                metadata={"fetched_at": metadata["fetched_at"], "source_url": url},
+            )
+            fixed_documents.append(
+                {
+                    "document_id": f"filing:{filing.accession_number}:{digest}",
+                    "document_type": "FILING_DOCUMENT",
+                    "accession_number": filing.accession_number,
+                    "form_type": filing.form_type,
+                    "filed_at": filing.filing_date,
+                    "report_date": filing.report_date,
+                    "fetched_at": metadata["fetched_at"],
+                    "source_url": url,
+                    "content_sha256": digest,
+                    "raw_locator": path.relative_to(self.raw_dir).as_posix(),
+                }
+            )
+        bundle = self.repository.create_fetch_bundle(
+            task.onboarding_id,
+            expected_revision=task.revision,
+            fetcher_version="sec-onboarding.v2",
+            parser_version=PARSER_VERSION,
+            documents=fixed_documents,
+        )
+        return {
+            "fetch_bundle_id": bundle.fetch_bundle_id,
+            "content_sha256": bundle.content_sha256,
+            "document_count": len(bundle.documents),
+        }
 
     def _profile(self, task) -> tuple[IssuerProfile, str]:
         publications = PublicationRepository(self.store)

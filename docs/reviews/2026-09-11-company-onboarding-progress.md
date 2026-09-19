@@ -19,7 +19,7 @@
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
 | T10 真实接入及完整验收 | 可独立部分已完成 | 75 个聚焦测试、348 个全量后端测试、18 个浏览器测试通过；前端类型/lint/build 通过 | 三轮审查收口，无 Critical/Important 遗留 | KO/COST 缺官方 filing/iXBRL 行级 context 与分部证据，未批准、未发布；迁移演练和失败恢复通过 |
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
-| C02 固定 SEC 申报包 | 未开始 | 未运行 | 待复核 | 下一步 |
+| C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 未开始 | 未运行 | 待复核 | 依赖 C02 |
 | C04 确定性候选制品 | 未开始 | 未运行 | 待复核 | 依赖 C01—C03 |
 | C05 严格 YAML 与原子恢复 | 未开始 | 未运行 | 待复核 | 依赖 C04 |
@@ -45,6 +45,23 @@
 证据文件/报告：`tests/integration/test_onboarding_migration.py`、`tests/integration/test_onboarding_runner.py`。
 
 遗留问题与下一步：C01 仅建立持久化原语；C02 将实现确定性的 recent/history 合并、3 年/8 季/修订选择、主文档下载和完整 bundle 激活，流水线在 C02 前尚未调用新 bundle API。
+
+## C02 固定 SEC 申报包
+
+阶段与提交号：C02；提交在本阶段记录更新后创建。
+
+实际改动：新增 `fetch_bundle` 选择/读取模块，确定性合并 submissions recent 与全部声明 history；按 FETCH attempt 开始时间过滤未来申报，选择最近 3 个不同 10-K 年度 report date、8 个不同 10-Q 季度 report date和相同口径修订。FETCH 同时固定 submissions、Company Facts、history 和每份 primary document 的来源、日期、SHA 与 raw-store 相对 locator，全部成功后才原子绑定 bundle。固定文档读取拒绝目录逃逸、缺文件及 SHA 不匹配。
+
+测试命令及结果：
+
+- RED：先后确认选择模块缺失、history 合并接口缺失、流水线未绑定 bundle，以及固定文档 SHA 校验缺失。
+- GREEN：`uv run pytest tests/unit/test_onboarding_fetch_bundle.py tests/integration/test_onboarding_pipeline.py -q`，`14 passed in 1.38s`。
+- 测试证明更新 raw-store 的 latest submissions 指针后，任务 bundle ID、内容哈希与已固定文档身份保持不变。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`tests/unit/test_onboarding_fetch_bundle.py`、`tests/integration/test_onboarding_pipeline.py`。
+
+遗留问题与下一步：C02 固定了 iXBRL 主文档但 BUILD 尚未将其解析为正式 lineage/segment 证据；C03 将增加 Profile v2 严格模型，并把 required metrics 从 bundle 主文档解析而不是由 Company Facts 冒充来源。
 
 ## 每阶段记录格式
 

@@ -89,12 +89,12 @@ git commit -m "feat: persist immutable onboarding inputs"
 - Consumes: C01 `create_fetch_bundle` and `FetchDocument`.
 - Produces: `select_required_filings(submissions, history, as_of) -> list[SelectedFiling]` and `materialize_fetch_bundle(...) -> FetchBundle`.
 
-- [ ] **Step 1: Add failing selection tests** covering recent/history merge, `filingDate <= as_of`, three annual dates, eight quarterly dates, amendments, stable ordering, missing history, missing primary document, and hash mismatch.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing selection tests** covering recent/history merge, `filingDate <= as_of`, three annual dates, eight quarterly dates, amendments, stable ordering, missing history, missing primary document, and hash mismatch.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_onboarding_fetch_bundle.py tests/integration/test_onboarding_pipeline.py -q`
 
-- [ ] **Step 3: Implement deterministic selection and materialization**
+- [x] **Step 3: Implement deterministic selection and materialization**
 
 ```python
 def select_required_filings(rows: Iterable[SubmissionRow], *, as_of: datetime) -> list[SelectedFiling]:
@@ -106,13 +106,13 @@ def select_required_filings(rows: Iterable[SubmissionRow], *, as_of: datetime) -
 
 Download by accession/primaryDocument, persist raw relative locators and SHA-256 values, then activate the bundle only after all required documents validate. Make FETCH read its `as_of` from attempt `started_at`.
 
-- [ ] **Step 4: Run GREEN and prove latest-pointer independence**
+- [x] **Step 4: Run GREEN and prove latest-pointer independence**
 
 Run: `uv run pytest tests/unit/test_onboarding_fetch_bundle.py tests/integration/test_onboarding_pipeline.py -q`
 
 Expected: changing a mutable raw `submissions.json` after activation does not change bundle reads.
 
-- [ ] **Step 5: Update progress and commit** with message `feat: fix onboarding SEC filing inputs`.
+- [x] **Step 5: Update progress and commit** with message `feat: fix onboarding SEC filing inputs`.
 
 ### C03: Profile v2 and Filing Evidence
 

@@ -15,6 +15,7 @@ from equitylens.onboarding.repository import OnboardingRepository
 from equitylens.onboarding.runner import OnboardingRunner
 from equitylens.issuers.profile import IssuerProfileService
 from equitylens.publication.repository import PublicationRepository
+from equitylens.storage.raw_store import save_snapshot
 
 
 CIK = "0000000001"
@@ -65,19 +66,7 @@ def _profile() -> dict:
 
 
 def _payloads():
-    submissions = {
-        "cik": CIK,
-        "name": "ONE CORP",
-        "tickers": ["ONE"],
-        "exchanges": ["NYSE"],
-        "filings": {
-            "recent": {
-                "form": ["10-K"],
-                "reportDate": ["2025-12-31"],
-                "accessionNumber": ["one-2025"],
-            }
-        },
-    }
+    submissions = _quality_window_submissions()
     companyfacts = {
         "cik": int(CIK),
         "entityName": "ONE CORP",
@@ -130,6 +119,85 @@ def _register(db, cik=CIK, ticker="ONE"):
         )
     )
     return security_id
+
+
+def _quality_window_submissions() -> dict:
+    rows = []
+    for year in (2023, 2024, 2025):
+        rows.append(
+            {
+                "form": "10-K",
+                "reportDate": f"{year}-01-31",
+                "filingDate": f"{year}-03-01",
+                "accessionNumber": f"0000000001-{year % 100:02d}-000001",
+                "primaryDocument": f"annual-{year}.htm",
+            }
+        )
+    for index in range(8):
+        year = 2024 + index // 4
+        month = (index % 4 + 1) * 2
+        rows.append(
+            {
+                "form": "10-Q",
+                "reportDate": f"{year}-{month:02d}-01",
+                "filingDate": f"{year}-{month:02d}-15",
+                "accessionNumber": f"0000000001-{year % 100:02d}-{index + 10:06d}",
+                "primaryDocument": f"quarter-{year}-{month}.htm",
+            }
+        )
+    recent = {key: [row[key] for row in rows] for key in rows[0]}
+    return {
+        "cik": CIK,
+        "name": "ONE CORP",
+        "tickers": ["ONE"],
+        "exchanges": ["NYSE"],
+        "filings": {"recent": recent, "files": []},
+    }
+
+
+def test_fetch_atomically_binds_fixed_filing_bundle(db, tmp_path):
+    submissions = _quality_window_submissions()
+    companyfacts = {"cik": int(CIK), "entityName": "ONE CORP", "facts": {}}
+
+    def fetch(url: str):
+        if "submissions" in url:
+            payload = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            payload = json.dumps(companyfacts).encode()
+        else:
+            payload = f"<html data-source='{url}'></html>".encode()
+        return payload, {"fetched_at": "2026-09-19T00:00:00+00:00"}
+
+    security_id = _register(db)
+    repository = OnboardingRepository(db)
+    task = repository.create_task(
+        company_id=CIK,
+        security_id=security_id,
+        input_fingerprint="fixed-fetch-bundle",
+    )
+    pipeline = OnboardingPipeline(db, repository, raw_dir=tmp_path / "raw", fetcher=fetch)
+
+    assert OnboardingRunner(db, repository, handlers=pipeline.handlers()).run_once()
+    current = repository.get(task.onboarding_id)
+    bundle = repository.get_fetch_bundle(current.fetch_bundle_id)
+
+    assert current.state == TaskState.BUILDING
+    assert len(bundle.documents) == 13
+    assert {document.document_type for document in bundle.documents} == {
+        "SUBMISSIONS",
+        "COMPANYFACTS",
+        "FILING_DOCUMENT",
+    }
+    assert all(not document.raw_locator.startswith("/") for document in bundle.documents)
+
+    original_sha = bundle.content_sha256
+    save_snapshot(
+        tmp_path / "raw" / "sec" / CIK,
+        "submissions.json",
+        b'{"changed":true}',
+        metadata={"fetched_at": "2026-09-20T00:00:00+00:00"},
+    )
+    assert repository.get_fetch_bundle(current.fetch_bundle_id).content_sha256 == original_sha
 
 
 def test_configured_pipeline_fetches_builds_and_validates(db, tmp_path):
