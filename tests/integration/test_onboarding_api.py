@@ -108,6 +108,34 @@ def test_repeated_request_returns_same_task(db, monkeypatch):
     assert second.json()["existing"] is True
 
 
+def test_attention_count_is_exact_beyond_current_page_and_progress_is_shared(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    for index in range(3):
+        db._conn.execute(
+            """
+            INSERT INTO company_onboarding (
+              onboarding_id, company_id, state, current_step, revision,
+              cancel_requested, input_fingerprint, created_at, updated_at
+            ) VALUES (?, '0000320193', 'NEEDS_ADAPTATION', 'BUILD', 1, false, ?, now(), now())
+            """,
+            [f"attention-{index}", f"attention-{index}"],
+        )
+
+    page = client.get(
+        "/api/v1/company-onboardings?attention_only=true&limit=1"
+    )
+    detail = client.get(
+        f"/api/v1/company-onboardings/{page.json()['items'][0]['onboarding_id']}"
+    )
+
+    assert page.status_code == 200
+    assert page.json()["attention_count"] == 3
+    assert len(page.json()["items"]) == 1
+    assert page.json()["next_cursor"]
+    assert page.json()["items"][0]["progress"] == detail.json()["progress"]
+    assert detail.json()["progress"]["percent"] == 40
+
+
 def test_same_idempotency_key_with_other_input_conflicts(db, monkeypatch):
     client, discovery = _client(db, monkeypatch)
     first, _ = _create(client, discovery)

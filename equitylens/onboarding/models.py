@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -95,6 +95,34 @@ class OnboardingEvent(BaseModel):
     task_revision: int
     payload: dict[str, Any]
     created_at: datetime
+
+
+class ProgressStage(BaseModel):
+    id: Literal["IDENTITY", "FETCH", "ADAPTATION", "BUILD_VALIDATE", "REVIEW_PUBLISH"]
+    label: str
+    status: Literal["COMPLETED", "CURRENT", "UPCOMING"]
+    activity: Literal[
+        "QUEUED", "RUNNING", "WAITING_FOR_MAINTAINER", "FAILED",
+        "CANCELLED", "COMPLETED"
+    ] | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class OnboardingProgress(BaseModel):
+    completed: int = Field(ge=0, le=5)
+    total: Literal[5] = 5
+    percent: int = Field(ge=0, le=100)
+    current_stage: Literal["IDENTITY", "FETCH", "ADAPTATION", "BUILD_VALIDATE", "REVIEW_PUBLISH"]
+    activity: Literal[
+        "QUEUED", "RUNNING", "WAITING_FOR_MAINTAINER", "FAILED",
+        "CANCELLED", "COMPLETED"
+    ]
+    actor: Literal["SYSTEM", "MAINTAINER", "NONE"]
+    updated_at: datetime
+    stalled: bool
+    stages: list[ProgressStage]
+    fingerprint: str
 
 
 class TaskView(BaseModel):

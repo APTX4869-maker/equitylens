@@ -105,6 +105,7 @@ def _raise_service_error(exc: Exception) -> None:
 
 def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
     identity: dict[str, Any] = {}
+    progress: dict[str, Any] = {}
     if store is not None:
         row = store.query_one(
             """
@@ -120,7 +121,10 @@ def _task_payload(task, *, store=None, **extra) -> dict[str, Any]:
         )
         if row:
             identity = {"ticker": row.get("ticker"), "company_name": row.get("company_name")}
-    return {**task.model_dump(mode="json"), **identity, **extra}
+        progress = {
+            "progress": OnboardingRepository(store).progress(task).model_dump(mode="json")
+        }
+    return {**task.model_dump(mode="json"), **identity, **progress, **extra}
 
 
 def _decode_company_cursor(cursor: str | None) -> tuple[str | None, str | None, str | None]:
@@ -260,21 +264,28 @@ def create_onboarding(
 def onboarding_list(
     cursor: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    attention_only: bool = False,
 ):
     store = _store()
     rows = store.query(
         """
         SELECT onboarding_id FROM company_onboarding
         WHERE (? IS NULL OR onboarding_id > ?)
+          AND (NOT ? OR state NOT IN ('PUBLISHED','CANCELLED'))
         ORDER BY onboarding_id LIMIT ?
         """,
-        [cursor, cursor, limit + 1],
+        [cursor, cursor, attention_only, limit + 1],
     )
+    attention_count = store.query_one(
+        """SELECT count(*) AS n FROM company_onboarding
+           WHERE state NOT IN ('PUBLISHED','CANCELLED')"""
+    )["n"]
     repository = OnboardingRepository(store)
     items = [repository.get(row["onboarding_id"]) for row in rows[:limit]]
     return {
         "items": [_task_payload(item, store=store) for item in items],
         "next_cursor": items[-1].onboarding_id if len(rows) > limit else None,
+        "attention_count": attention_count,
     }
 
 

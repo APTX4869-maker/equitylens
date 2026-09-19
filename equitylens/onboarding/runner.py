@@ -23,10 +23,14 @@ class OnboardingPause(RuntimeError):
 
 
 class OnboardingRunner:
-    def __init__(self, store, repository: OnboardingRepository, handlers=None) -> None:
+    def __init__(
+        self, store, repository: OnboardingRepository, handlers=None,
+        *, heartbeat_seconds: float = 10.0,
+    ) -> None:
         self.store = store
         self.repository = repository
         self.handlers: dict[OnboardingStep, Callable] = handlers or {}
+        self.heartbeat_seconds = heartbeat_seconds
 
     def recover_interrupted(self) -> int:
         return self.repository.recover_interrupted()
@@ -45,8 +49,25 @@ class OnboardingRunner:
         if handler is None:
             return False
         attempt_id = self.repository.begin_attempt(task)
+        stop_heartbeat = threading.Event()
+
+        def heartbeat_loop():
+            while not stop_heartbeat.wait(self.heartbeat_seconds):
+                try:
+                    self.repository.heartbeat_attempt(attempt_id)
+                except Exception:
+                    return
+
+        heartbeat = threading.Thread(target=heartbeat_loop, daemon=True)
+        heartbeat.start()
+
+        def stop_heartbeat_loop():
+            stop_heartbeat.set()
+            heartbeat.join(timeout=max(1.0, self.heartbeat_seconds * 2))
+
         try:
             output = handler(task)
+            stop_heartbeat_loop()
             output_hash = hashlib.sha256(
                 json.dumps(output, sort_keys=True, default=str).encode()
             ).hexdigest()
@@ -56,6 +77,7 @@ class OnboardingRunner:
                 return True
             self.repository.complete_attempt(task, attempt_id, output_hash)
         except OnboardingPause as pause:
+            stop_heartbeat_loop()
             self.repository.pause_attempt(
                 task,
                 attempt_id,
@@ -65,6 +87,7 @@ class OnboardingRunner:
                 candidate_artifact=pause.candidate_artifact,
             )
         except Exception as exc:
+            stop_heartbeat_loop()
             retryable = bool(getattr(exc, "retryable", False))
             self.repository.fail_attempt(
                 task,
@@ -76,6 +99,8 @@ class OnboardingRunner:
                 },
                 retryable=retryable,
             )
+        finally:
+            stop_heartbeat_loop()
         return True
 
 

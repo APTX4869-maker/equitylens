@@ -95,6 +95,60 @@ def test_expected_revision_rejects_stale_cancel(db):
     assert exc.value.code == "TASK_CONFLICT"
 
 
+def test_cancel_records_pre_cancel_progress_snapshot(db):
+    repository = OnboardingRepository(db)
+    security_id = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    task = repository.create_task(
+        company_id="0000320193", security_id=security_id,
+        input_fingerprint="cancel-progress",
+    )
+    cancelled = repository.cancel(task.onboarding_id, expected_revision=task.revision)
+    event = repository.list_events(task.onboarding_id)[-1]
+    progress = repository.progress(cancelled)
+
+    assert event.event_type == "TASK_CANCELLED"
+    assert event.payload["progress_snapshot"]["current_stage"] == "FETCH"
+    assert progress.activity == "CANCELLED"
+    assert progress.completed == event.payload["progress_snapshot"]["completed"]
+
+
+def test_runner_updates_heartbeat_while_handler_is_running(db):
+    repository = OnboardingRepository(db)
+    security_id = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    task = repository.create_task(
+        company_id="0000320193", security_id=security_id,
+        input_fingerprint="heartbeat-fixture",
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_fetch(_task):
+        entered.set()
+        assert release.wait(2)
+        return {"ok": True}
+
+    runner = OnboardingRunner(
+        db, repository, {OnboardingStep.FETCH: slow_fetch}, heartbeat_seconds=0.01
+    )
+    thread = threading.Thread(target=runner.run_once)
+    thread.start()
+    assert entered.wait(1)
+    time.sleep(0.04)
+    attempt = db.query_one(
+        "SELECT started_at, heartbeat_at FROM onboarding_step_attempt WHERE onboarding_id=?",
+        [task.onboarding_id],
+    )
+    release.set()
+    thread.join(2)
+
+    assert attempt["heartbeat_at"] > attempt["started_at"]
+    assert not thread.is_alive()
+
+
 def test_same_issuer_reuses_active_task(db):
     repository = OnboardingRepository(db)
     security_id = db.query_one(

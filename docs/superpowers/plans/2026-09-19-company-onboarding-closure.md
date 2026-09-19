@@ -256,17 +256,17 @@ Run: `uv run pytest tests/integration/test_onboarding_api.py -q`
 **Interfaces:**
 - Produces: `derive_progress(task, attempts, events, now, stalled_after=45s) -> OnboardingProgress` and paged `{items, next_cursor, attention_count}`.
 
-- [ ] **Step 1: Add table-driven failing tests** for every state, FAILED mapping, cancellation snapshots, actor/activity, timestamps, heartbeat fingerprint changes, exact count beyond page limit, retry/restart, and illegal transitions.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add table-driven failing tests** for every state, FAILED mapping, cancellation snapshots, actor/activity, timestamps, heartbeat fingerprint changes, exact count beyond page limit, retry/restart, and illegal transitions.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_onboarding_progress.py tests/integration/test_onboarding_runner.py tests/integration/test_onboarding_api.py -q`
 
-- [ ] **Step 3: Implement server-derived progress and heartbeat updates**
+- [x] **Step 3: Implement server-derived progress and heartbeat updates**
 
 Use fixed stage IDs `IDENTITY`, `FETCH`, `ADAPTATION`, `BUILD_VALIDATE`, `REVIEW_PUBLISH`. Include task revision, latest heartbeat, and event watermark in the fingerprint. Save full progress JSON in `TASK_CANCELLED`; query attention count with database `COUNT(*)` excluding PUBLISHED/CANCELLED.
 
-- [ ] **Step 4: Run GREEN** using the Step 2 command.
-- [ ] **Step 5: Update progress and commit** with message `feat: report durable onboarding progress`.
+- [x] **Step 4: Run GREEN** using the Step 2 command.
+- [x] **Step 5: Update progress and commit** with message `feat: report durable onboarding progress`.
 
 ### C08: Onboarding Workbench and Five-Stage UI
 

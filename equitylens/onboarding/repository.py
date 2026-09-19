@@ -321,6 +321,22 @@ class OnboardingRepository:
         )
         return [self._get_event(row["event_id"]) for row in rows]
 
+    def progress(self, task: TaskView | str, *, now: datetime | None = None):
+        from equitylens.onboarding.progress import derive_progress
+
+        task = self.get(task) if isinstance(task, str) else task
+        attempts = self.store.query(
+            """SELECT step, state, started_at, finished_at, heartbeat_at
+               FROM onboarding_step_attempt WHERE onboarding_id=? ORDER BY started_at""",
+            [task.onboarding_id],
+        )
+        return derive_progress(
+            task,
+            attempts,
+            self.list_events(task.onboarding_id),
+            now=now or datetime.now(timezone.utc),
+        )
+
     def get_profile_candidate(self, candidate_id: str) -> ProfileCandidate:
         row = self.store.query_one(
             "SELECT * FROM issuer_profile_candidate WHERE profile_candidate_id=?",
@@ -682,13 +698,23 @@ class OnboardingRepository:
             if row[1] != expected_revision or row[0] in ("PUBLISHED", "CANCELLED"):
                 raise OnboardingConflict("TASK_CONFLICT", "task revision or state changed")
             running = row[0] in ("FETCHING", "BUILDING", "VALIDATING", "PUBLISHING")
+            progress_snapshot = self.progress(task_id).model_dump(mode="json")
+            new_revision = row[1] + 1
             self.store._conn.execute(
                 """
-                UPDATE company_onboarding
-                SET cancel_requested=true, state=?, revision=revision+1, updated_at=now()
+                UPDATE company_onboarding SET cancel_requested=true, state=?, current_step=?,
+                  revision=?, updated_at=now()
                 WHERE onboarding_id=?
                 """,
-                [row[0] if running else "CANCELLED", task_id],
+                [row[0] if running else "CANCELLED", self.get(task_id).current_step.value if running else None,
+                 new_revision, task_id],
+            )
+            self._append_event_locked(
+                task_id,
+                event_type="TASK_CANCELLED",
+                actor_type="MAINTAINER",
+                task_revision=new_revision,
+                payload={"progress_snapshot": progress_snapshot},
             )
         return self.get(task_id)
 
@@ -813,6 +839,14 @@ class OnboardingRepository:
                 [self._state_for_step(task.current_step).value, task.onboarding_id],
             )
         return attempt_id
+
+    def heartbeat_attempt(self, attempt_id: str) -> None:
+        with self.writer.transaction(self.store):
+            self.store._conn.execute(
+                """UPDATE onboarding_step_attempt SET heartbeat_at=now()
+                   WHERE attempt_id=? AND state='RUNNING'""",
+                [attempt_id],
+            )
 
     def complete_attempt(self, task: TaskView, attempt_id: str, output_hash: str) -> TaskView:
         with self.writer.transaction(self.store):

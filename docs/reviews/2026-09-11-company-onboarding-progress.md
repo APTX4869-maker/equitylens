@@ -24,7 +24,7 @@
 | C04 确定性候选制品 | 已完成 | RED 缺候选构建接口；GREEN 聚焦 25 passed，兼容回归 13 passed | 已自检 | 候选、暂停、revision 与事件原子提交；永不自动批准 |
 | C05 严格 YAML 与原子恢复 | 已完成 | RED 覆盖严格解析/事务冲突；GREEN 44 passed，扩展流水线回归合计 55 passed | 已自检 | v2-only、证据绑定、版本单调、幂等重放与回滚均已验证 |
 | C06 候选/导入/refetch API | 已完成 | RED 旧接口缺新端点/严格约束；GREEN 14 passed，OpenAPI 5 路径核验通过 | 已自检 | GET 无副作用；YAML/JSON 同一原子导入；refetch 指针规则已覆盖 |
-| C07 统一进度与 attention | 未开始 | 未运行 | 待复核 | 依赖 C01、C06 |
+| C07 统一进度与 attention | 已完成 | RED 缺 progress 模块；GREEN 41 passed | 已自检 | 五阶段、45 秒停滞、取消快照、数据库精确计数已覆盖 |
 | C08 五阶段与适配工作台 | 未开始 | 未运行 | 待复核 | 依赖 C06—C07 |
 | C09 全局任务入口 | 未开始 | 未运行 | 待复核 | 依赖 C07—C08 |
 | C10 NVDA 真实闭环 | 未开始 | 未运行 | 待复核 | 依赖 C01—C09 |
@@ -131,6 +131,23 @@
 证据文件/报告：`equitylens/api/company_routes.py`、`equitylens/api/company_schemas.py`、`equitylens/onboarding/service.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/pipeline.py`、`spec/openapi_stub.yaml`、`tests/integration/test_onboarding_api.py`。
 
 遗留问题与下一步：接口已具备工作台所需数据，但任务详情仍缺统一五阶段进度、心跳停滞判断和不受分页限制的待关注总数；C07 将补齐这些派生字段。
+
+## C07 统一进度、心跳与待关注计数
+
+阶段与提交号：C07；提交在本阶段记录更新后创建。
+
+实际改动：新增后端唯一五阶段进度模型 `IDENTITY/FETCH/ADAPTATION/BUILD_VALIDATE/REVIEW_PUBLISH`，统一派生 completed、percent、当前阶段、activity、actor、阶段时间戳、停滞和 fingerprint。`NEEDS_ADAPTATION` 固定为完成 2/5（40%）并显示等待维护者；FAILED 根据 current step 与是否已有 Profile 精确落段。runner 在 handler 执行期间按 10 秒更新 attempt heartbeat，连续 45 秒无心跳才标记 stalled。取消事务把取消前完整 progress 存入 `TASK_CANCELLED` 事件，终态从该快照恢复。列表/详情复用同一派生器；`attention_only` 返回分页 items，同时用独立 `COUNT(*)` 返回不受 limit 影响的 `attention_count`。
+
+测试命令及结果：
+
+- RED：`tests/unit/test_onboarding_progress.py` 因 progress 模块不存在而在收集阶段失败。
+- GREEN：`uv run pytest tests/unit/test_onboarding_progress.py tests/integration/test_onboarding_runner.py tests/integration/test_onboarding_api.py -q`，`41 passed, 1 warning in 3.39s`。
+- 表驱动覆盖正常态、全部 FAILED 映射、角色/activity、心跳 fingerprint、45 秒边界、取消快照和分页外精确计数。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`equitylens/onboarding/progress.py`、`equitylens/onboarding/models.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/runner.py`、`equitylens/api/company_routes.py`、`tests/unit/test_onboarding_progress.py`、`tests/integration/test_onboarding_runner.py`、`tests/integration/test_onboarding_api.py`。
+
+遗留问题与下一步：后端现已提供工作台所需的权威状态和制品接口；C08 将把它们接入五阶段进度条、候选审查、下载、上传错误与 refetch 操作。
 
 ## 每阶段记录格式
 
