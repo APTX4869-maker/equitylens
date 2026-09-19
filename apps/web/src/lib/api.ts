@@ -79,7 +79,7 @@ export const api = {
       headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ discovery_id: discovery.discovery_id, identity_hash: discovery.identity_hash, candidate_id: candidateId }),
     }),
-  onboardings: (signal?: AbortSignal) => getJson<{ items: OnboardingTask[]; next_cursor: string | null; attention_count: number }>("/api/v1/company-onboardings?limit=200", { signal }),
+  onboardings: (signal?: AbortSignal, attentionOnly = false) => getJson<{ items: OnboardingTask[]; next_cursor: string | null; attention_count: number }>(`/api/v1/company-onboardings?limit=200${attentionOnly ? "&attention_only=true" : ""}`, { signal }),
   onboarding: (id: string, signal?: AbortSignal) => getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}`, { signal }),
   profileCandidate: (id: string, signal?: AbortSignal) => getJson<ProfileCandidate>(`/api/v1/company-onboardings/${id}/profile-candidate`, { signal }),
   importProfileYaml: (id: string, revision: number, yamlText: string, idempotencyKey: string) =>

@@ -26,7 +26,7 @@
 | C06 候选/导入/refetch API | 已完成 | RED 旧接口缺新端点/严格约束；GREEN 14 passed，OpenAPI 5 路径核验通过 | 已自检 | GET 无副作用；YAML/JSON 同一原子导入；refetch 指针规则已覆盖 |
 | C07 统一进度与 attention | 已完成 | RED 缺 progress 模块；GREEN 41 passed | 已自检 | 五阶段、45 秒停滞、取消快照、数据库精确计数已覆盖 |
 | C08 五阶段与适配工作台 | 已完成 | RED 无进度条；GREEN 17 浏览器测试，type/lint 通过 | 已自检 | 候选审查、证据、下载、上传边界和无刷新恢复已覆盖 |
-| C09 全局任务入口 | 未开始 | 未运行 | 待复核 | 依赖 C07—C08 |
+| C09 全局任务入口 | 已完成 | 21 个全量浏览器路径、类型/lint/build 通过 | 已自检 | 精确计数、刷新恢复、终态消失与最近任务恢复均已覆盖 |
 | C10 NVDA 真实闭环 | 未开始 | 未运行 | 待复核 | 依赖 C01—C09 |
 
 ## C01 不可变 FETCH 持久化
@@ -165,6 +165,23 @@
 证据文件/报告：`apps/web/src/components/companies/OnboardingProgress.tsx`、`apps/web/src/components/companies/ProfileWorkbench.tsx`、`apps/web/src/components/companies/OnboardingDetail.tsx`、`apps/web/src/lib/types.ts`、`apps/web/src/lib/api.ts`、`apps/web/e2e/company-onboarding.spec.ts`。
 
 遗留问题与下一步：建档中心内部已完整可用，但关闭弹窗后仍缺持续可见的全局待关注入口；C09 将在页面右下角增加最上层感叹号入口，并验证刷新恢复与精确计数。
+
+## C09 全局任务入口与刷新恢复
+
+阶段与提交号：C09；提交在本阶段记录更新后创建。
+
+实际改动：页面右下角新增固定于最上层的红色感叹号入口，数字严格使用后端不受分页限制的 `attention_count`。入口在首次加载、窗口重新获得焦点及建档任务发生变更时刷新；仅当任务 activity 为 `QUEUED` 或 `RUNNING` 时快速轮询，等待维护者、失败、取消和完成状态不伪装为后台仍在工作。最近打开的任务 ID 写入 localStorage，刷新页面或重新打开建档中心时直接恢复该任务；任务全部进入终态后入口自动消失。全局入口加载失败保持静默，建档中心仍保留详细错误与重试能力。
+
+测试命令及结果：
+
+- RED：新增全局入口用例在组件不存在时失败。
+- GREEN：隔离端口 3011、单 worker 运行 `company-onboarding.spec.ts` 与 `research-boundaries.spec.ts`，`21 passed in 22.8s`。
+- 浏览器用例明确验证后端仅返回 2 个 item、但 `attention_count=7` 时仍显示精确数字；验证 localStorage 恢复指定任务、整页刷新后保持选择、focus 刷新及终态计数归零后入口消失。
+- `pnpm --dir apps/web exec tsc --noEmit`、`pnpm --dir apps/web lint` 与 `pnpm --dir apps/web build` 全部通过。
+
+证据文件/报告：`apps/web/src/components/companies/OnboardingAttentionButton.tsx`、`apps/web/src/components/companies/OnboardingCenter.tsx`、`apps/web/src/app/page.tsx`、`apps/web/src/lib/api.ts`、`apps/web/e2e/company-onboarding.spec.ts`。
+
+遗留问题与下一步：C01—C09 的产品闭环与恢复入口均已完成；C10 将使用真实 NVDA SEC 字节执行候选、审核 Profile、构建、验证、批准、发布和强制刷新验收，并把固定字节纳入 golden 回归。
 
 ## 每阶段记录格式
 

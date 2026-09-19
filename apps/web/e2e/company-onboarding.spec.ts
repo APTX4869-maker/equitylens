@@ -92,6 +92,41 @@ test("company appears only after publication and duplicate submit is prevented",
   await expect(page.getByTestId("company-list").getByText("KO", { exact: true })).toBeVisible();
 });
 
+test("global attention entry restores the last task and disappears when work is terminal", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  let terminal = false;
+  const base = {
+    company_id: "0001045810", state: "NEEDS_ADAPTATION", current_step: "BUILD", revision: 3,
+    cancel_requested: false, input_fingerprint: "attention", profile_id: null, dataset_id: null,
+    quality_report_id: null, review_id: null, publication_id: null, error: null,
+    created_at: "2026-09-19T09:00:00Z", updated_at: "2026-09-19T10:00:00Z",
+    actions: ["CANCEL", "PROFILE_IMPORT"],
+  };
+  const first = { ...base, onboarding_id: "attention-a", ticker: "AAA", company_name: "Alpha Corp" };
+  const second = { ...base, onboarding_id: "attention-b", ticker: "BBB", company_name: "Beta Corp" };
+  await page.route("**/api/v1/company-onboardings?**", (route) => route.fulfill({ json: {
+    items: terminal ? [] : [first, second], next_cursor: null, attention_count: terminal ? 0 : 7,
+  } }));
+  await page.route("**/api/v1/company-onboardings/attention-a", (route) => route.fulfill({ json: { ...first, steps: [], checks: [] } }));
+  await page.route("**/api/v1/company-onboardings/attention-b", (route) => route.fulfill({ json: { ...second, steps: [], checks: [] } }));
+  await page.addInitScript(() => localStorage.setItem("equitylens:last-onboarding-task", "attention-b"));
+
+  await page.goto("/");
+  const indicator = page.getByRole("button", { name: "有 7 个建档任务需要关注" });
+  await expect(indicator).toBeVisible();
+  await indicator.click();
+  await expect(page.getByRole("heading", { name: "Beta Corp" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭建档中心" }).click();
+
+  await page.reload();
+  await page.getByRole("button", { name: "有 7 个建档任务需要关注" }).click();
+  await expect(page.getByRole("heading", { name: "Beta Corp" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭建档中心" }).click();
+  terminal = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(indicator).toBeHidden();
+});
+
 test("unpublished directory entries are ignored instead of becoming the active company", async ({ page }) => {
   await installOnboardingApiFixture(page);
   const unpublishedNvidia = {
@@ -391,6 +426,9 @@ test("onboarding task list failure can be retried without closing the center", a
   await installOnboardingApiFixture(page);
   let attempts = 0;
   await page.route("**/api/v1/company-onboardings?**", (route) => {
+    if (new URL(route.request().url()).searchParams.get("attention_only") === "true") {
+      return route.fulfill({ json: { items: [], next_cursor: null, attention_count: 0 } });
+    }
     attempts += 1;
     if (attempts === 1) return route.fulfill({ status: 503, json: { detail: { message: "temporarily unavailable" } } });
     return route.fulfill({ json: { items: [], next_cursor: null } });

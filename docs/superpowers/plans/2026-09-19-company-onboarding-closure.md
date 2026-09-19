@@ -316,22 +316,22 @@ Run: the Playwright command from Step 2.
 - Consumes C07 exact `attention_count` and task progress.
 - Produces a fixed top-layer red exclamation button, persisted last task selection, focus refresh, and duplicate-add navigation to the existing task.
 
-- [ ] **Step 1: Add failing browser tests** for hidden/visible badge, counts above page size, reload restoration, one/many task selection, localStorage fallback, focus refresh, terminal disappearance, and duplicate add.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing browser tests** for hidden/visible badge, counts above page size, reload restoration, one/many task selection, localStorage fallback, focus refresh, terminal disappearance, and duplicate add.
+- [x] **Step 2: Run RED**
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts e2e/research-boundaries.spec.ts --project=chromium`
 
-- [ ] **Step 3: Implement global indicator and recovery behavior**
+- [x] **Step 3: Implement global indicator and recovery behavior**
 
 Refresh summaries at initial load, focus, onboarding mutation, and progress fingerprint change. Poll rapidly only for `QUEUED`/`RUNNING`; waiting, failed, cancelled, and completed states refresh on focus/mutation rather than implying active work.
 
-- [ ] **Step 4: Run GREEN, typecheck, lint, and production build**
+- [x] **Step 4: Run GREEN, typecheck, lint, and production build**
 
 Run: `pnpm --dir apps/web exec tsc --noEmit && pnpm --dir apps/web lint && pnpm --dir apps/web build`
 
 Run: the Playwright command from Step 2.
 
-- [ ] **Step 5: Update progress and commit** with message `feat: keep onboarding tasks globally visible`.
+- [x] **Step 5: Update progress and commit** with message `feat: keep onboarding tasks globally visible`.
 
 ### C10: NVDA Real Closure and Full Verification
 

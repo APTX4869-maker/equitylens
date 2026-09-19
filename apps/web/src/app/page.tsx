@@ -16,6 +16,7 @@ import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 import { AddCompanyDialog } from "@/components/companies/AddCompanyDialog";
 import { OnboardingCenter } from "@/components/companies/OnboardingCenter";
+import { OnboardingAttentionButton } from "@/components/companies/OnboardingAttentionButton";
 
 type Cached = { info: CompanyInfo; overview: OverviewResponse };
 type FreshnessModule = {
@@ -51,6 +52,7 @@ export default function Home() {
   const [addOpen, setAddOpen] = useState(false);
   const [centerOpen, setCenterOpen] = useState(false);
   const [createdTask, setCreatedTask] = useState<OnboardingTask | null>(null);
+  const [attentionRefresh, setAttentionRefresh] = useState(0);
   const [mode, setMode] = useState<"beginner" | "pro">("beginner");
   const [tab, setTab] = useState<TabKey>("overview");
   const [cache, setCache] = useState<Record<string, Cached>>({});
@@ -94,6 +96,9 @@ export default function Home() {
   const handlePublished = useCallback(() => {
     void loadCompanies();
   }, [loadCompanies]);
+  const handleOnboardingChanged = useCallback(() => {
+    setAttentionRefresh((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadCompanies(), 0);
@@ -388,8 +393,9 @@ export default function Home() {
         }}
       />
       <SourceDrawer entityId={sourceEntity} onClose={() => setSourceEntity(null)} />
-      <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setCenterOpen(true); }} />
-      <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={handlePublished} />
+      <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setAttentionRefresh((value) => value + 1); setCenterOpen(true); }} />
+      <OnboardingAttentionButton refreshToken={attentionRefresh} onOpen={(task) => { if (task) setCreatedTask(task); setCenterOpen(true); }} />
+      <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={handlePublished} onTaskChanged={handleOnboardingChanged} />
     </div>
   );
 }
