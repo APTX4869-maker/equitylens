@@ -25,6 +25,7 @@ from equitylens.issuers.profile import (
     parse_profile,
     validate_profile_v2_against_bundle,
 )
+from equitylens.issuers.candidate import build_candidate_artifact
 from equitylens.issuers.review import ReviewService
 from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixbrl
@@ -255,10 +256,48 @@ class OnboardingPipeline:
             key=lambda path: int(path.stem) if path.stem.isdigit() else -1,
         ) if directory.exists() else []
         if not paths:
+            if not task.fetch_bundle_id:
+                raise RuntimeError("fixed fetch bundle is required before candidate generation")
+            bundle = self.repository.get_fetch_bundle(task.fetch_bundle_id)
+            catalogs = {}
+            submissions = {}
+            for document in bundle.documents:
+                content = load_bundle_document(self.raw_dir, document)
+                if document.document_type == "FILING_DOCUMENT":
+                    try:
+                        catalogs[document.document_id] = IxbrlDocument.parse(content).fact_catalog()
+                    except Exception:
+                        catalogs[document.document_id] = []
+                elif document.document_type == "SUBMISSIONS":
+                    submissions = json.loads(content)
+            securities = self.store.query(
+                """
+                SELECT DISTINCT a.ticker, s.exchange, s.currency, s.instrument_type,
+                  s.class_label
+                FROM onboarding_security os
+                JOIN security s ON s.security_id=os.security_id
+                LEFT JOIN security_ticker_alias a ON a.security_id=s.security_id
+                  AND a.valid_to IS NULL
+                WHERE os.onboarding_id=?
+                ORDER BY a.ticker, s.exchange
+                """,
+                [task.onboarding_id],
+            )
+            artifact = build_candidate_artifact(
+                onboarding_id=task.onboarding_id,
+                task_revision=task.revision,
+                company_id=task.company_id,
+                bundle=bundle,
+                mapping=MappingRegistry(),
+                fact_catalogs=catalogs,
+                securities=securities,
+                fiscal_year_end=submissions.get("fiscalYearEnd"),
+            )
             raise OnboardingPause(
                 TaskState.NEEDS_ADAPTATION,
                 OnboardingStep.BUILD,
                 "no reviewed issuer profile is installed; import a versioned profile",
+                candidate_artifact=artifact,
             )
         profile = load_profile_yaml(paths[-1])
         if profile.company_id != task.company_id:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from equitylens.issuers.profile import (
@@ -11,10 +12,11 @@ from equitylens.issuers.profile import (
     load_profile_yaml,
     validate_profile_v2_against_bundle,
 )
-from equitylens.issuers.candidate import build_candidate_profile
+from equitylens.issuers.candidate import build_candidate_artifact, build_candidate_profile
 from equitylens.onboarding.models import FetchBundle, FetchDocument
 from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixbrl
 from equitylens.normalization.fiscal_periods import FiscalCalendar
+from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.onboarding.pipeline import ProfileMappingRegistry
 from equitylens.normalization.segments import segment_config_from_profile
 
@@ -184,6 +186,71 @@ def test_candidate_only_recommends_concepts_present_in_snapshot():
     }
     assert result["unresolved_metrics"] == ["NET_INCOME"]
     assert result["review_status"] == "NEEDS_ADAPTATION"
+
+
+def test_candidate_artifact_is_complete_review_only_and_deterministic():
+    document = FetchDocument(
+        document_id="filing:one",
+        document_type="FILING_DOCUMENT",
+        accession_number="one",
+        form_type="10-K",
+        filed_at="2025-03-01",
+        report_date="2024-12-31",
+        fetched_at="2025-03-01T00:00:00Z",
+        source_url="https://www.sec.gov/example",
+        content_sha256="a" * 64,
+        raw_locator="sec/one/primary.html",
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id="bundle-1",
+        onboarding_id="task-1",
+        fetcher_version="fetch.v2",
+        parser_version="parser.v2",
+        content_sha256="b" * 64,
+        documents=[document],
+        created_at="2025-03-01T00:00:00Z",
+    )
+    kwargs = {
+        "onboarding_id": "task-1",
+        "task_revision": 3,
+        "company_id": "0000000001",
+        "bundle": bundle,
+        "mapping": MappingRegistry(),
+        "fact_catalogs": {
+            "filing:one": [{
+                "concept": "us-gaap:Revenues", "context_ref": "ctx",
+                "unit_ref": "USD", "locator": "/html/body/ix:nonFraction[1]",
+            }],
+        },
+        "securities": [{
+            "ticker": "ONE", "exchange": "NYSE", "currency": "USD",
+            "instrument_type": "COMMON_STOCK",
+        }],
+        "fiscal_year_end": "12-31",
+    }
+    first = build_candidate_artifact(**kwargs)
+    second = build_candidate_artifact(**kwargs)
+
+    assert set(first.profile) == {
+        "schema_version", "company_id", "version", "template", "template_evidence",
+        "fiscal_calendar", "metrics", "segments", "cash_debt", "eps_method",
+        "eps_method_evidence", "securities", "applicability",
+        "applicability_evidence", "evidence",
+    }
+    assert first.profile["metrics"]["REVENUE"]["concepts"] == ["us-gaap:Revenues"]
+    assert first.profile["metrics"]["NET_INCOME"]["concepts"] == []
+    assert first.profile["segments"]["parser"] is None
+    assert {item.path for item in first.unresolved_fields} >= {
+        "metrics.NET_INCOME.concepts", "segments.parser"
+    }
+    assert all(item.reason and item.action for item in first.unresolved_fields)
+    assert yaml.safe_load(first.yaml_text) == first.profile
+    assert "# REVIEW REQUIRED:" in first.yaml_text
+    assert first.review_status == "NEEDS_ADAPTATION"
+    assert first.input_sha256 == second.input_sha256
+    assert first.content_sha256 == second.content_sha256
+    assert first.yaml_sha256 == second.yaml_sha256
+    assert first.yaml_text == second.yaml_text
 
 
 def test_profile_v2_enforces_segment_conditions_and_all_evidence_references():

@@ -171,17 +171,17 @@ Run: `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onb
 - Consumes: C01 candidate table, C02 bundle, C03 v2 model shape.
 - Produces: `build_candidate_artifact(...) -> CandidateArtifact`; `bind_profile_candidate(...) -> TaskView`.
 
-- [ ] **Step 1: Add failing tests** asserting complete v2 skeleton, null/empty unresolved values, sidecar paths/reasons/actions, deterministic YAML/comments/hashes, same-input reuse, and no automatic approval.
-- [ ] **Step 2: Run RED**
+- [x] **Step 1: Add failing tests** asserting complete v2 skeleton, null/empty unresolved values, sidecar paths/reasons/actions, deterministic YAML/comments/hashes, same-input reuse, and no automatic approval.
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onboarding_pipeline.py -q`
 
-- [ ] **Step 3: Implement candidate generation and atomic pause**
+- [x] **Step 3: Implement candidate generation and atomic pause**
 
 Candidate `input_sha256` hashes bundle SHA, generator version, mapping version/hash, and schema version. Persist immutable candidate first; atomically bind it, enter `NEEDS_ADAPTATION`, increment revision, and append `PROFILE_CANDIDATE_CREATED`. A generation failure leaves the previous current pointer unchanged.
 
-- [ ] **Step 4: Run GREEN** using the focused command from Step 2.
-- [ ] **Step 5: Update progress and commit** with message `feat: generate reviewable profile candidates`.
+- [x] **Step 4: Run GREEN** using the focused command from Step 2.
+- [x] **Step 5: Update progress and commit** with message `feat: generate reviewable profile candidates`.
 
 ### C05: Strict YAML Import and Atomic Resume
 

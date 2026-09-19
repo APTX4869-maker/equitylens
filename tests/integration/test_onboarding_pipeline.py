@@ -334,6 +334,17 @@ def test_unconfigured_issuer_pauses_for_adaptation(db, tmp_path):
     assert paused.state == TaskState.NEEDS_ADAPTATION
     assert paused.current_step.value == "BUILD"
     assert paused.actions == ["CANCEL", "PROFILE_IMPORT"]
+    assert paused.profile_candidate_id
+    candidate = repository.get_profile_candidate(paused.profile_candidate_id)
+    assert candidate.fetch_bundle_id == paused.fetch_bundle_id
+    assert candidate.profile["schema_version"] == 2
+    assert candidate.review_status == "NEEDS_ADAPTATION"
+    assert candidate.unresolved_fields
+    assert repository.list_events(task.onboarding_id)[-1].event_type == "PROFILE_CANDIDATE_CREATED"
+    assert db.query_one(
+        "SELECT count(*) AS n FROM issuer_profile_candidate WHERE onboarding_id=?",
+        [task.onboarding_id],
+    )["n"] == 1
 
 
 def test_profile_import_after_pause_rebuilds_instead_of_skipping_build(db, tmp_path):

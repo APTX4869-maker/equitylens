@@ -21,7 +21,7 @@
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
-| C04 确定性候选制品 | 未开始 | 未运行 | 待复核 | 依赖 C01—C03 |
+| C04 确定性候选制品 | 已完成 | RED 缺候选构建接口；GREEN 聚焦 25 passed，兼容回归 13 passed | 已自检 | 候选、暂停、revision 与事件原子提交；永不自动批准 |
 | C05 严格 YAML 与原子恢复 | 未开始 | 未运行 | 待复核 | 依赖 C04 |
 | C06 候选/导入/refetch API | 未开始 | 未运行 | 待复核 | 依赖 C05 |
 | C07 统一进度与 attention | 未开始 | 未运行 | 待复核 | 依赖 C01、C06 |
@@ -79,6 +79,23 @@
 证据文件/报告：`config/issuers/schema-v2.json`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_onboarding_pipeline.py`、`tests/golden/test_golden_segments.py`。
 
 遗留问题与下一步：Profile v2 当前只能由已有文件或低层 repository 绑定；C04 将生成完整、可审查但不可直接构建的候选制品，并在无审核 Profile 时原子绑定候选后暂停。
+
+## C04 确定性候选制品
+
+阶段与提交号：C04；提交在本阶段记录更新后创建。
+
+实际改动：候选生成器仅使用当前任务固定 bundle、版本化通用映射、任务证券身份与固定申报 iXBRL catalog，输出完整 Profile v2 字段骨架。无法确定的标量保留 `null`、集合保留空集合，并以 `unresolved_fields` 的字段路径、原因、建议操作和 YAML 注释同时呈现。候选输入哈希覆盖 bundle、生成器、映射版本/内容和 schema 版本；内容/YAML 哈希均确定。BUILD 缺审核 Profile 时，repository 在同一事务中插入或复用不可变候选、绑定指针、暂停 attempt、进入 `NEEDS_ADAPTATION`、递增 revision 并写入 `PROFILE_CANDIDATE_CREATED` 事件。候选始终标为待适配，不能自动进入构建或批准。
+
+测试命令及结果：
+
+- RED：候选构建接口不存在，目标测试在收集阶段失败。
+- GREEN：`uv run pytest tests/unit/test_issuer_profile.py tests/integration/test_onboarding_pipeline.py -q`，`25 passed in 1.72s`。
+- 兼容回归：`uv run pytest tests/integration/test_onboarding_runner.py tests/integration/test_onboarding_migration.py -q`，`13 passed in 1.09s`。
+- 静态核验：`uv run python -m compileall -q equitylens` 与 `git diff --check` 通过。
+
+证据文件/报告：`equitylens/issuers/candidate.py`、`equitylens/onboarding/repository.py`、`equitylens/onboarding/runner.py`、`equitylens/onboarding/pipeline.py`、`tests/unit/test_issuer_profile.py`、`tests/integration/test_onboarding_pipeline.py`。
+
+遗留问题与下一步：候选目前已经可追踪但尚无严格的网页 YAML 导入恢复事务；C05 将实现受限 YAML loader、幂等导入和单事务恢复 BUILD。
 
 ## 每阶段记录格式
 

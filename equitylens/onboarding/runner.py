@@ -15,10 +15,11 @@ from equitylens.onboarding.repository import OnboardingRepository
 class OnboardingPause(RuntimeError):
     """A successful step that intentionally waits for maintainer input."""
 
-    def __init__(self, state, current_step, message: str) -> None:
+    def __init__(self, state, current_step, message: str, *, candidate_artifact=None) -> None:
         super().__init__(message)
         self.state = state
         self.current_step = current_step
+        self.candidate_artifact = candidate_artifact
 
 
 class OnboardingRunner:
@@ -61,6 +62,7 @@ class OnboardingRunner:
                 state=pause.state,
                 current_step=pause.current_step,
                 message=str(pause),
+                candidate_artifact=pause.candidate_artifact,
             )
         except Exception as exc:
             retryable = bool(getattr(exc, "retryable", False))

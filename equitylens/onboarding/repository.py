@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from equitylens.issuers.candidate import CandidateArtifact, ProfileCandidate
 from equitylens.onboarding.models import (
     ACTIVE_STATES,
     FetchBundle,
@@ -299,6 +300,108 @@ class OnboardingRepository:
         )
         return [self._get_event(row["event_id"]) for row in rows]
 
+    def get_profile_candidate(self, candidate_id: str) -> ProfileCandidate:
+        row = self.store.query_one(
+            "SELECT * FROM issuer_profile_candidate WHERE profile_candidate_id=?",
+            [candidate_id],
+        )
+        if row is None:
+            raise KeyError(candidate_id)
+        for source, target in (
+            ("snapshot_manifest_json", "snapshot_manifest"),
+            ("profile_json", "profile"),
+            ("unresolved_json", "unresolved_fields"),
+        ):
+            value = row.pop(source)
+            row[target] = json.loads(value) if isinstance(value, str) else value
+        return ProfileCandidate.model_validate({**row, "review_status": "NEEDS_ADAPTATION"})
+
+    def bind_profile_candidate(
+        self,
+        task: TaskView,
+        attempt_id: str,
+        artifact: CandidateArtifact,
+        *,
+        message: str,
+    ) -> TaskView:
+        """Persist/reuse a candidate and pause the running BUILD attempt atomically."""
+        with self.writer.transaction(self.store):
+            row = self.store._conn.execute(
+                """
+                SELECT revision, cancel_requested, fetch_bundle_id
+                FROM company_onboarding WHERE onboarding_id=?
+                """,
+                [task.onboarding_id],
+            ).fetchone()
+            if row is None:
+                raise KeyError(task.onboarding_id)
+            if row[0] != task.revision or row[1] or row[2] != artifact.fetch_bundle_id:
+                raise OnboardingConflict("TASK_CONFLICT", "task inputs changed or were cancelled")
+            existing = self.store._conn.execute(
+                """
+                SELECT profile_candidate_id FROM issuer_profile_candidate
+                WHERE onboarding_id=? AND input_sha256=?
+                """,
+                [task.onboarding_id, artifact.input_sha256],
+            ).fetchone()
+            candidate_id = existing[0] if existing else str(uuid.uuid4())
+            if not existing:
+                self.store._conn.execute(
+                    """
+                    INSERT INTO issuer_profile_candidate (
+                      profile_candidate_id, onboarding_id, task_revision, company_id,
+                      fetch_bundle_id, input_sha256, generator_version, mapping_version,
+                      mapping_sha256, snapshot_manifest_json, profile_json, unresolved_json,
+                      yaml_text, content_sha256, yaml_sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                    """,
+                    [
+                        candidate_id, artifact.onboarding_id, artifact.task_revision,
+                        artifact.company_id, artifact.fetch_bundle_id, artifact.input_sha256,
+                        artifact.generator_version, artifact.mapping_version,
+                        artifact.mapping_sha256, _json(artifact.snapshot_manifest),
+                        _json(artifact.profile),
+                        _json([item.model_dump(mode="json") for item in artifact.unresolved_fields]),
+                        artifact.yaml_text, artifact.content_sha256, artifact.yaml_sha256,
+                    ],
+                )
+            new_revision = task.revision + 1
+            self.store._conn.execute(
+                """
+                UPDATE onboarding_step_attempt SET state='PAUSED', output_hash=?,
+                  finished_at=now(), heartbeat_at=now() WHERE attempt_id=?
+                """,
+                [artifact.content_sha256, attempt_id],
+            )
+            self.store._conn.execute(
+                """
+                UPDATE company_onboarding SET profile_candidate_id=?, state='NEEDS_ADAPTATION',
+                  current_step='BUILD', revision=?, error_json=?, next_attempt_at=NULL,
+                  updated_at=now() WHERE onboarding_id=?
+                """,
+                [
+                    candidate_id,
+                    new_revision,
+                    _json({"code": "ADAPTATION_REQUIRED", "message": message,
+                           "retryable": False, "remediation": "PROFILE_IMPORT"}),
+                    task.onboarding_id,
+                ],
+            )
+            self._append_event_locked(
+                task.onboarding_id,
+                event_type="PROFILE_CANDIDATE_CREATED",
+                actor_type="SYSTEM",
+                task_revision=new_revision,
+                payload={
+                    "profile_candidate_id": candidate_id,
+                    "input_sha256": artifact.input_sha256,
+                    "content_sha256": artifact.content_sha256,
+                    "unresolved_count": len(artifact.unresolved_fields),
+                    "reused": bool(existing),
+                },
+            )
+        return self.get(task.onboarding_id)
+
     def set_candidate(
         self,
         task_id: str,
@@ -490,7 +593,12 @@ class OnboardingRepository:
         state: TaskState,
         current_step: OnboardingStep,
         message: str,
+        candidate_artifact: CandidateArtifact | None = None,
     ) -> TaskView:
+        if candidate_artifact is not None:
+            return self.bind_profile_candidate(
+                task, attempt_id, candidate_artifact, message=message
+            )
         with self.writer.transaction(self.store):
             self.store._conn.execute(
                 """
