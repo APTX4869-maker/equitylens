@@ -420,7 +420,7 @@ test("retry after a refreshed default failure rebases before recalculating", asy
   await expect(page.getByRole("slider", { name: /首年收入增速/ })).toBeVisible();
   await page.getByRole("button", { name: "↻ 刷新数据" }).click();
 
-  await expect(page.getByText(/temporary default failure/)).toBeVisible();
+  await expect(page.getByText(/请求失败（500）/)).toBeVisible();
   await page.getByRole("button", { name: "重试", exact: true }).click();
 
   await expect.poll(() => refreshedDefaultAttempts).toBe(2);

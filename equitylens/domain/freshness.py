@@ -17,6 +17,7 @@ STALE_AFTER_DAYS = {
     "market_quote": 7,       # quotes should be refreshed at least weekly
     "valuation_runs": 400,
 }
+FINANCIAL_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
 
 
 def _days_ago(ts) -> int | None:
@@ -40,20 +41,59 @@ def _status(days: int | None, threshold: int, missing_hint: str) -> dict:
             "days_ago": days}
 
 
-def freshness(store, company_id: str, ticker: str) -> dict:
+def freshness(
+    store,
+    company_id: str,
+    ticker: str,
+    *,
+    source_documents: list[dict] | None = None,
+    canonical_facts: list[dict] | None = None,
+) -> dict:
     modules: list[dict] = []
 
     # ---- SEC financial facts: latest filing date + last ingest ----
-    filings = store.query(
-        """SELECT form_type, MAX(COALESCE(filed_at, published_at)) AS latest FROM source_document
-           WHERE company_id = ? AND form_type IN ('10-K', '10-Q')
-           GROUP BY form_type ORDER BY latest DESC""",
-        [company_id],
-    )
-    ingest = store.query_one(
-        "SELECT MAX(finished_at) AS at FROM ingestion_run WHERE company_id = ? AND status = 'ok'",
-        [company_id],
-    )
+    if source_documents is None:
+        filings = store.query(
+            """SELECT form_type, MAX(COALESCE(filed_at, published_at)) AS latest FROM source_document
+               WHERE company_id = ? AND form_type IN ('10-K', '10-Q', '10-K/A', '10-Q/A')
+               GROUP BY form_type ORDER BY latest DESC""",
+            [company_id],
+        )
+        ingest = store.query_one(
+            "SELECT MAX(finished_at) AS at FROM ingestion_run WHERE company_id = ? AND status = 'ok'",
+            [company_id],
+        )
+    else:
+        grouped: dict[str, str] = {}
+        for document in source_documents:
+            form_type = document.get("form_type")
+            disclosed_at = document.get("filed_at") or document.get("published_at")
+            if form_type in FINANCIAL_FORMS and disclosed_at:
+                latest = grouped.get(form_type)
+                grouped[form_type] = max(str(disclosed_at), latest or "")
+        filings = [
+            {"form_type": form_type, "latest": latest}
+            for form_type, latest in grouped.items()
+        ]
+        if not filings and canonical_facts:
+            disclosed_dates = [
+                str(fact.get("as_known_at"))
+                for fact in canonical_facts
+                if fact.get("as_known_at")
+                and _days_ago(fact.get("as_known_at")) is not None
+            ]
+            if disclosed_dates:
+                form_types = [
+                    str(document["form_type"])
+                    for document in source_documents
+                    if document.get("form_type") in FINANCIAL_FORMS
+                ]
+                filings.append({
+                    "form_type": form_types[-1] if form_types else "SEC filing",
+                    "latest": max(disclosed_dates),
+                })
+        filings.sort(key=lambda item: item["latest"], reverse=True)
+        ingest = None
     # SEC financial age is the latest applicable FILED/PUBLISHED disclosure, never
     # the ingestion completion time (D10): a fresh ingest must not refresh an old
     # filing.
@@ -69,12 +109,34 @@ def freshness(store, company_id: str, ticker: str) -> dict:
                     "detail": detail, "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- segments ----
-    seg_docs = store.query_one(
-        "SELECT MAX(COALESCE(filed_at, fetched_at)) AS at FROM source_document "
-        "WHERE company_id = ? AND document_type = 'FILING_DOCUMENT' AND form_type IN ('10-K','10-Q')",
-        [company_id],
-    )
-    seg_at = seg_docs["at"] if seg_docs and seg_docs.get("at") else None
+    if source_documents is None:
+        seg_docs = store.query_one(
+            "SELECT MAX(COALESCE(filed_at, published_at)) AS at FROM source_document "
+            "WHERE company_id = ? AND document_type = 'FILING_DOCUMENT' "
+            "AND form_type IN ('10-K','10-Q','10-K/A','10-Q/A')",
+            [company_id],
+        )
+        seg_at = seg_docs["at"] if seg_docs and seg_docs.get("at") else None
+    else:
+        fact_dates_by_document: dict[str, list[str]] = {}
+        for fact in canonical_facts or []:
+            document_id = fact.get("source_document_id")
+            disclosed_at = fact.get("as_known_at")
+            if document_id and disclosed_at and _days_ago(disclosed_at) is not None:
+                fact_dates_by_document.setdefault(str(document_id), []).append(str(disclosed_at))
+        segment_dates = [
+            str(disclosed_at)
+            for document in source_documents
+            if document.get("document_type") == "FILING_DOCUMENT"
+            and document.get("form_type") in FINANCIAL_FORMS
+            for disclosed_at in [
+                document.get("filed_at")
+                or document.get("published_at")
+                or max(fact_dates_by_document.get(str(document.get("source_document_id")), []), default=None)
+            ]
+            if disclosed_at
+        ]
+        seg_at = max(segment_dates) if segment_dates else None
     st = _status(_days_ago(seg_at), STALE_AFTER_DAYS["segments"],
                  "无分部 filing 文档（运行 equitylens sync-segments）")
     modules.append({"key": "segments", "label": "分部数据", "as_of": str(seg_at)[:10] if seg_at else None,

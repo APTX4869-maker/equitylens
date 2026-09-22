@@ -15,7 +15,7 @@ FIXTURES_DIR = ROOT / "tests" / "fixtures"
 
 # Versioned pipeline components (provenance metadata)
 PARSER_VERSION = "sec-companyfacts.v1"
-MAPPING_VERSION = "canonical-mappings.v3"
+MAPPING_VERSION = "canonical-mappings.v4"
 METRIC_ENGINE_VERSION = "metric-engine.v2"
 MARKET_SOURCES_VERSION = "market-sources.v1"
 

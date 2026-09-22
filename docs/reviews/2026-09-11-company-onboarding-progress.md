@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T10 已按顺序执行；T10 可独立完成的实现、迁移演练、教程、审查与全量验证已完成，真实发布因官方 iXBRL 证据不可取得而保持阻塞。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T10 已按顺序执行；当时 KO/COST 官方 iXBRL 证据不可取得，真实发布未冒进。扩展 C01—C10 已按顺序开发；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
 
 扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。
 
@@ -27,7 +27,7 @@
 | C07 统一进度与 attention | 已完成 | RED 缺 progress 模块；GREEN 41 passed | 已自检 | 五阶段、45 秒停滞、取消快照、数据库精确计数已覆盖 |
 | C08 五阶段与适配工作台 | 已完成 | RED 无进度条；GREEN 17 浏览器测试，type/lint 通过 | 已自检 | 候选审查、证据、下载、上传边界和无刷新恢复已覆盖 |
 | C09 全局任务入口 | 已完成 | 21 个全量浏览器路径、类型/lint/build 通过 | 已自检 | 精确计数、刷新恢复、终态消失与最近任务恢复均已覆盖 |
-| C10 NVDA 真实闭环 | 未开始 | 未运行 | 待复核 | 依赖 C01—C09 |
+| C10 NVDA 真实闭环 | 已完成（独立验收库及正式库） | 412 个全量后端、37 个浏览器测试通过；正式库真实浏览器与 SEC 溯源检查 | 独立代码审查发现均已修复，v3 证据补入 golden | `docs/reviews/2026-09-19-company-onboarding-closure-validation.md`；正式任务 5/5 已发布 |
 
 ## C01 不可变 FETCH 持久化
 
@@ -182,6 +182,24 @@
 证据文件/报告：`apps/web/src/components/companies/OnboardingAttentionButton.tsx`、`apps/web/src/components/companies/OnboardingCenter.tsx`、`apps/web/src/app/page.tsx`、`apps/web/src/lib/api.ts`、`apps/web/e2e/company-onboarding.spec.ts`。
 
 遗留问题与下一步：C01—C09 的产品闭环与恢复入口均已完成；C10 将使用真实 NVDA SEC 字节执行候选、审核 Profile、构建、验证、批准、发布和强制刷新验收，并把固定字节纳入 golden 回归。
+
+## C10 NVDA 真实闭环
+
+阶段与提交号：C10；提交在本阶段最终验证后创建。
+
+实际改动：有效 SEC 身份请求取得 NVDA 固定 10-K/10-Q 证据；候选 Profile 经版本审查，保留被质量门禁拒绝的旧版本，修正现金流符号和分部证据后封存数据、通过质量检查、批准并发布。官方 2026 10-K 原始字节、SHA、独立抄录数值、iXBRL context/locator 和分部对账进入 golden；正式库版本 v3 的两份 10-K 原始字节及 37 项证据另行固定并验证。补齐已发布财务、分部、公司来源新鲜度与溯源读取；旧不可变数据集缺 `filed_at` 时，从同一 filing 的规范化事实恢复披露时间，不把重抓日期冒充数据日期。已通过质量审核的公司目录显示 `VERIFIED`，旧发布记录也能正确读取。独立审查发现并修复新数据来源链接、旧封存分部重述选择、含 FX 净变动误判、历史 publication 溯源、旧任务缺抓取包恢复和旧配置证据不匹配安全暂停；现金规则后续版本升至 `v1.2`。
+
+测试命令及结果：
+
+- RED→GREEN：来源树曾 404、旧封存分部取旧值、现金桥误拒非零汇兑影响、已发布目录仍为 PENDING，均由新回归先复现后修复。
+- `uv run pytest tests/golden/test_onboarding_issuers.py tests/integration/test_onboarding_pipeline.py tests/integration/test_onboarding_api.py -q`：`51 passed, 1 warning in 70.66s`。
+- `uv run pytest -q`：最终 `412 passed, 1 warning in 132.16s`；唯一 warning 为 Starlette TestClient 上游弃用提示。
+- `PLAYWRIGHT_PORT=3000 PLAYWRIGHT_CHROME_PATH=... pnpm --dir apps/web e2e`：最终 `37 passed in 29.5s`。旧 mock 路径断言已适配带 publication 的溯源 API。
+- 冻结依赖、`compileall`、TypeScript、ESLint、Next build、`git diff --check` 通过；独立真实浏览器强制重载后 NVDA `VERIFIED`、FY2027 Q2、2026-08-26 财务/分部披露日期、两项报告分部与来源树均可见。
+
+证据文件/报告：`docs/reviews/2026-09-19-company-onboarding-closure-validation.md`、`tests/fixtures/onboarding/0001045810/`、`config/issuers/0001045810/`。独立发布任务 `85171c6c-42e9-4abf-8b85-a405ec315969`，publication `95c57f23-84fc-49f7-9f94-99d6d85eb241`；正式任务 `2dfbca4b-f4ea-423c-aaa9-06362cbce376`，publication `87ba7dd8-dce9-4767-9643-21b4001a8eee`。
+
+边界与下一步：独立验收库 `/tmp/equitylens-nvda-c10.XfGQKC` 和正式 `data/` 是分别审核发布的版本。管理层、行情、估值仍明确显示未同步/需配置，不能宣称整个研究面板全部完成。行情刷新与公司页面数据刷新体验优化保留为后续单独待办。
 
 ## 每阶段记录格式
 

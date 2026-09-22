@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 import yaml
+from yaml.tokens import AliasToken, AnchorToken
 from pydantic import ValidationError
 
 from equitylens.issuers.profile import (
@@ -227,7 +228,7 @@ def test_candidate_artifact_is_complete_review_only_and_deterministic():
             "ticker": "ONE", "exchange": "NYSE", "currency": "USD",
             "instrument_type": "COMMON_STOCK",
         }],
-        "fiscal_year_end": "12-31",
+        "fiscal_year_end": "1231",
     }
     first = build_candidate_artifact(**kwargs)
     second = build_candidate_artifact(**kwargs)
@@ -239,6 +240,7 @@ def test_candidate_artifact_is_complete_review_only_and_deterministic():
         "applicability_evidence", "evidence",
     }
     assert first.profile["metrics"]["REVENUE"]["concepts"] == ["us-gaap:Revenues"]
+    assert first.profile["fiscal_calendar"]["year_end"] == "12-31"
     assert first.profile["metrics"]["NET_INCOME"]["concepts"] == []
     assert first.profile["segments"]["parser"] is None
     assert {item.path for item in first.unresolved_fields} >= {
@@ -246,6 +248,10 @@ def test_candidate_artifact_is_complete_review_only_and_deterministic():
     }
     assert all(item.reason and item.action for item in first.unresolved_fields)
     assert yaml.safe_load(first.yaml_text) == first.profile
+    assert not any(
+        isinstance(token, (AliasToken, AnchorToken))
+        for token in yaml.scan(first.yaml_text)
+    )
     assert "# REVIEW REQUIRED:" in first.yaml_text
     assert first.review_status == "NEEDS_ADAPTATION"
     assert first.input_sha256 == second.input_sha256
@@ -354,13 +360,14 @@ def test_ixbrl_numeric_fact_retains_real_context_and_locator():
         xmlns:xbrli='http://www.xbrl.org/2003/instance'>
         <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
         <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
-        <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD' sign='-'>100</ix:nonFraction>
         </html>"""
     )
 
     fact = document.facts("us-gaap:Revenues")[0]
     assert fact.context_ref == "ctx"
     assert fact.locator.startswith("/")
+    assert fact.value == -100
 
 
 def test_segment_config_is_derived_from_reviewed_profile_v2():

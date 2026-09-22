@@ -48,7 +48,7 @@ test("risk evidence control uses a user-facing label while retaining provenance"
     checks: [{ key: "cash_flow", status: "OK", reason: null, evidence_ids: ["src_sec_000012345678"] }],
     coverage: { total: 1, completed: 1, complete: true, unavailable: [] },
   } }));
-  await page.route("**/api/v1/provenance/src_sec_000012345678", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/provenance/src_sec_000012345678*", (route) => route.fulfill({ json: {
     entity_id: "src_sec_000012345678", kind: "source", tree: {
       entity_id: "src_sec_000012345678", kind: "source", label: "SEC 10-Q", fields: {}, parents: [],
     },
@@ -65,7 +65,7 @@ test("risk evidence control uses a user-facing label while retaining provenance"
 
 test("research claims open resolvable evidence and unsupported questions stay in scope", async ({ page }) => {
   await stubShell(page);
-  await page.route("**/api/v1/provenance/fact-1", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/provenance/fact-1*", (route) => route.fulfill({ json: {
     entity_id: "fact-1", kind: "canonical_fact", tree: {
       entity_id: "fact-1", kind: "canonical_fact", label: "OPERATING_MARGIN",
       fields: { metric: "OPERATING_MARGIN", value: 0.3, unit: "ratio", status: "NORMALIZED" },

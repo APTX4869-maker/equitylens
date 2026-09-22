@@ -92,17 +92,20 @@ class PublicationRepository:
             )
         return PublicationContext.model_validate(row)
 
-    def facts(self, context: PublicationContext) -> list[dict[str, Any]]:
+    def entities(
+        self, context: PublicationContext, entity_type: str
+    ) -> list[dict[str, Any]]:
+        """Read and verify one entity type from an immutable dataset."""
         rows = self.store.query(
             """
             SELECT entity_type, row_id, payload_json, payload_sha256
             FROM dataset_row
-            WHERE dataset_id = ? AND entity_type = 'canonical_fact'
+            WHERE dataset_id = ? AND entity_type = ?
             ORDER BY row_id
             """,
-            [context.dataset_id],
+            [context.dataset_id, entity_type],
         )
-        facts: list[dict[str, Any]] = []
+        entities: list[dict[str, Any]] = []
         for row in rows:
             payload = row["payload_json"]
             if isinstance(payload, str):
@@ -112,8 +115,11 @@ class PublicationRepository:
                     "DATASET_HASH_MISMATCH",
                     f"dataset row hash mismatch: {row['row_id']}",
                 )
-            facts.append(validate_dataset_payload("canonical_fact", payload))
-        return facts
+            entities.append(validate_dataset_payload(entity_type, payload))
+        return entities
+
+    def facts(self, context: PublicationContext) -> list[dict[str, Any]]:
+        return self.entities(context, "canonical_fact")
 
     def publication_fingerprint(
         self,
@@ -339,8 +345,11 @@ class PublicationRepository:
                 [company_id, publication_id],
             )
             self.store._conn.execute(
-                "UPDATE company SET active_publication_id = ?, updated_at = now() WHERE company_id = ?",
-                [publication_id, company_id],
+                """UPDATE company SET active_publication_id = ?,
+                     quality_status = CASE WHEN ? IS NOT NULL AND ? IS NOT NULL
+                       THEN 'VERIFIED' ELSE quality_status END,
+                     updated_at = now() WHERE company_id = ?""",
+                [publication_id, quality_report_id, review_id, company_id],
             )
             if onboarding_id is not None:
                 self.store._conn.execute(

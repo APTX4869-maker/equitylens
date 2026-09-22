@@ -10,6 +10,7 @@ from equitylens.quality.models import CheckStatus
 from equitylens.quality.rules import (
     balance_equation,
     cash_bridge,
+    cash_bridge_with_disclosed_change,
     derive_standalone_quarter,
     eps_reconciliation,
     evidence_required,
@@ -18,7 +19,7 @@ from equitylens.quality.rules import (
 )
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
-from equitylens.quality.engine import QualityEngine
+from equitylens.quality.engine import QualityEngine, _segment_revenue_for_anchor
 from equitylens.normalization.fiscal_periods import FiscalCalendar, derive_standalone_quarters
 from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
@@ -53,6 +54,50 @@ def test_cash_bridge_uses_same_cash_definition(quality_case):
         closing=117,
         decimals=0,
     ).status == CheckStatus.FAIL
+
+
+def test_cash_bridge_accepts_a_disclosed_change_including_exchange_effect():
+    report = cash_bridge_with_disclosed_change(
+        opening=100,
+        operating=20,
+        investing=-5,
+        financing=-10,
+        disclosed_change=5,
+        closing=105,
+        decimals=0,
+    )
+
+    assert report.status == CheckStatus.PASS
+    assert report.actual["disclosed_change_including_fx"] == 5
+    assert report.check_id == "CASH.bridge"
+
+
+def test_cash_bridge_infers_nonzero_fx_without_mislabeling_it_a_mismatch():
+    report = cash_bridge_with_disclosed_change(
+        opening=100,
+        operating=20,
+        investing=-5,
+        financing=-10,
+        disclosed_change=15,
+        closing=115,
+        decimals=0,
+    )
+    assert report.status == CheckStatus.PASS
+    assert report.check_id == "CASH.rollforward"
+    assert report.severity.value == "WARNING"
+    assert report.reason == "FX_OR_OTHER_NOT_SEPARATELY_DISCLOSED"
+    assert report.actual["implied_fx_or_other"] == 10
+    invalid = cash_bridge_with_disclosed_change(
+        opening=100,
+        operating=20,
+        investing=-5,
+        financing=-10,
+        disclosed_change=15,
+        closing=120,
+        decimals=0,
+    )
+    assert invalid.status == CheckStatus.FAIL
+    assert invalid.severity.value == "BLOCKER"
 
 
 def test_rounding_intervals_can_reconcile_reported_millions():
@@ -149,6 +194,22 @@ def test_segment_reconciliation_requires_explicit_eliminations():
     assert passed.status == CheckStatus.PASS
     assert failed.status == CheckStatus.FAIL
     assert failed.reason == "SEGMENT_ELIMINATION_MISSING"
+
+
+def test_segment_reconciliation_uses_only_the_latest_annual_basis():
+    segments = [
+        {"metric_name": "REVENUE", "fiscal_year": 2025, "period_type": "FY", "period_end": "2025-01-26", "value": 116},
+        {"metric_name": "REVENUE", "fiscal_year": 2025, "period_type": "FY", "period_end": "2025-01-26", "value": 14},
+        {"metric_name": "REVENUE", "fiscal_year": 2024, "period_type": "FY", "period_end": "2024-01-28", "value": 47},
+        {"metric_name": "REVENUE", "fiscal_year": 2025, "period_type": "Q_STANDALONE", "period_end": "2024-04-28", "value": 22},
+    ]
+
+    selected = _segment_revenue_for_anchor(
+        segments,
+        {"fiscal_year": 2025, "period_end": "2025-01-26"},
+    )
+
+    assert [item["value"] for item in selected] == [116, 14]
 
 
 def test_required_period_coverage_reports_missing_quarter():

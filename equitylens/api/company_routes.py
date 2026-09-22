@@ -164,10 +164,14 @@ def companies(
         """
         SELECT c.company_id, s.security_id, a.ticker, c.legal_name AS name,
                s.exchange, c.active_publication_id AS publication_id,
-               c.quality_status, a.alias_id AS _cursor_alias_id
+               CASE WHEN p.review_id IS NOT NULL AND q.result='PASS'
+                    THEN 'VERIFIED' ELSE c.quality_status END AS quality_status,
+               a.alias_id AS _cursor_alias_id
         FROM security s
         JOIN company c ON c.company_id=s.company_id
         JOIN security_ticker_alias a ON a.security_id=s.security_id
+        LEFT JOIN publication p ON p.publication_id=c.active_publication_id
+        LEFT JOIN quality_report q ON q.report_id=p.quality_report_id
         WHERE s.status='ACTIVE' AND c.active_publication_id IS NOT NULL
           AND a.valid_from <= CURRENT_DATE
           AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)

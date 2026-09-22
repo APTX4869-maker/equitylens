@@ -112,9 +112,10 @@ def decode_derived_result_id(entity_id: str) -> dict | None:
 
 
 class MetricEngine:
-    def __init__(self, store):
+    def __init__(self, store, *, published_facts: list[dict] | None = None):
         self.store = store
         self.version = METRIC_ENGINE_VERSION
+        self.published_facts = published_facts
 
     # ---------------- fact loading ----------------
 
@@ -122,6 +123,12 @@ class MetricEngine:
         """latest-restated canonical facts per metric."""
         out: dict[str, list[dict]] = {m: [] for m in metrics}
         if not metrics:
+            return out
+        if self.published_facts is not None:
+            for fact in self.published_facts:
+                metric = fact.get("canonical_metric")
+                if metric in out:
+                    out[metric].append(dict(fact))
             return out
         placeholders = ", ".join("?" for _ in metrics)
         rows = self.store.query(
@@ -200,13 +207,24 @@ class MetricEngine:
         vals = [series[k]["value"] for k in window]
         if any(v is None for v in vals):
             return None
-        units = {series[k].get("unit") for k in window}
+        units = {str(series[k].get("unit") or "").upper() for k in window}
         if len(units) != 1:
             return None
+        input_ids: list[str] = []
+        for key in window:
+            fact = series[key]
+            candidates = (
+                [fact["canonical_fact_id"]]
+                if fact.get("canonical_fact_id")
+                else fact.get("input_ids") or []
+            )
+            for fact_id in candidates:
+                if fact_id and fact_id not in input_ids:
+                    input_ids.append(fact_id)
         return {
             "value": sum(vals),
             "window": window,
-            "input_ids": [series[k]["canonical_fact_id"] for k in window],
+            "input_ids": input_ids,
         }
 
     @staticmethod
@@ -284,7 +302,7 @@ class MetricEngine:
                     gaps.append(f"{name} null {label}")
                 unit = fact.get("unit")
                 if unit:
-                    window_units.add(str(unit))
+                    window_units.add(str(unit).upper())
                 period_end = fact.get("period_end")
                 if period_end:
                     period_ends[key].add(str(period_end)[:10])
@@ -616,7 +634,7 @@ class MetricEngine:
                     # TTM summing is only meaningful for additive currency
                     # metrics; per-share ratios (EPS) and share counts are NOT
                     # summed quarter-over-quarter (D06).
-                    if (f.get("unit") or "") != "USD":
+                    if str(f.get("unit") or "").upper() != "USD":
                         continue
                     t = self._ttm_window(series, key)
                     if t is None:
@@ -632,7 +650,8 @@ class MetricEngine:
                 )
                 raw_inputs = f.get("input_ids")
                 if not raw_inputs and f.get("source_raw_fact_ids"):
-                    raw_inputs = json.loads(f["source_raw_fact_ids"] or "[]")
+                    source_ids = f["source_raw_fact_ids"]
+                    raw_inputs = json.loads(source_ids) if isinstance(source_ids, str) else list(source_ids)
                 input_ids = raw_inputs or [f.get("canonical_fact_id")]
                 points.append(self._point(metric, float(f["value"]), f, formula_id, input_ids, freq,
                                           fact_id=f.get("canonical_fact_id")))

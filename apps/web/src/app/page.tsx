@@ -392,7 +392,11 @@ export default function Home() {
           openSource(id);
         }}
       />
-      <SourceDrawer entityId={sourceEntity} onClose={() => setSourceEntity(null)} />
+      <SourceDrawer
+        entityId={sourceEntity}
+        publicationId={companies.find((item) => item.ticker === company)?.publication_id}
+        onClose={() => setSourceEntity(null)}
+      />
       <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setAttentionRefresh((value) => value + 1); setCenterOpen(true); }} />
       <OnboardingAttentionButton refreshToken={attentionRefresh} onOpen={(task) => { if (task) setCreatedTask(task); setCenterOpen(true); }} />
       <OnboardingCenter open={centerOpen} seed={createdTask} onClose={() => setCenterOpen(false)} onPublished={handlePublished} onTaskChanged={handleOnboardingChanged} />

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from equitylens.config import RAW_DIR
 from equitylens.domain.companies import get_company
 from equitylens.metrics.engine import MetricEngine
+from equitylens.publication.models import sha256_json, validate_dataset_payload
 from equitylens.publication.repository import PublicationConflict, PublicationRepository
 from equitylens.storage.duckdb_store import DuckDBStore
 
@@ -81,6 +82,14 @@ def _version_fields(company, context) -> dict:
         "security_id": company.security_id,
         "publication_id": context.publication_id,
     }
+
+
+def _is_legacy_context(store, context) -> bool:
+    dataset = store.query_one(
+        "SELECT parser_version FROM dataset_version WHERE dataset_id=?",
+        [context.dataset_id],
+    )
+    return bool(dataset and dataset["parser_version"] == "legacy")
 
 
 def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
@@ -156,7 +165,51 @@ def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
     return out
 
 
-def _provenance_ref_for_fact(store, f: dict) -> dict:
+def _published_entity(
+    store, entity_type: str, entity_id: str | None, dataset_id: str | None = None
+) -> dict | None:
+    """Resolve only published dataset rows, preferring the active publication."""
+    row = store.query_one(
+        """SELECT dr.payload_json, dr.payload_sha256
+           FROM dataset_row dr
+           JOIN publication p ON p.dataset_id=dr.dataset_id
+           JOIN company c ON c.company_id=p.company_id
+           WHERE dr.entity_type=? AND dr.row_id=?
+             AND (? IS NULL OR dr.dataset_id=?)
+           ORDER BY (p.publication_id=c.active_publication_id) DESC,
+                    p.published_at DESC LIMIT 1""",
+        [entity_type, entity_id, dataset_id, dataset_id],
+    )
+    if row is None:
+        return None
+    payload = row["payload_json"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if sha256_json(payload) != row["payload_sha256"]:
+        raise PublicationConflict("DATASET_HASH_MISMATCH", f"dataset row hash mismatch: {entity_id}")
+    return validate_dataset_payload(entity_type, payload)
+
+
+def _entity_row(store, entity_type: str, entity_id: str | None, dataset_id: str | None = None) -> dict | None:
+    published = _published_entity(store, entity_type, entity_id, dataset_id)
+    if published is not None:
+        return published
+    if dataset_id is not None and not _is_legacy_dataset(store, dataset_id):
+        return None
+    table, key = {
+        "canonical_fact": ("canonical_fact", "canonical_fact_id"),
+        "raw_fact": ("raw_fact", "raw_fact_id"),
+        "source_document": ("source_document", "source_document_id"),
+    }[entity_type]
+    return store.query_one(f"SELECT * FROM {table} WHERE {key}=?", [entity_id])
+
+
+def _is_legacy_dataset(store, dataset_id: str) -> bool:
+    row = store.query_one("SELECT parser_version FROM dataset_version WHERE dataset_id=?", [dataset_id])
+    return bool(row and row["parser_version"] == "legacy")
+
+
+def _provenance_ref_for_fact(store, f: dict, dataset_id: str | None = None) -> dict:
     raw_value = f.get("source_raw_fact_ids") or []
     raw_ids = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
     prov = {
@@ -173,35 +226,34 @@ def _provenance_ref_for_fact(store, f: dict) -> dict:
         "status": f.get("status"),
     }
     if raw_ids:
-        rows = store.query(
-            f"SELECT raw_fact_id, concept, form_type, accession_number, filed_at, "
-            f"source_document_id FROM raw_fact WHERE raw_fact_id IN ({','.join(['?'] * len(raw_ids))})",
-            raw_ids,
-        )
+        rows = [
+            row for raw_id in raw_ids
+            if (row := _entity_row(store, "raw_fact", raw_id, dataset_id))
+        ]
         if rows:
             r = rows[0]
-            prov["concept"] = r["concept"]
-            prov["form_type"] = r["form_type"]
-            prov["accession_number"] = r["accession_number"]
+            prov["concept"] = r.get("concept")
+            prov["form_type"] = r.get("form_type")
+            prov["accession_number"] = r.get("accession_number")
             if r.get("filed_at"):
                 prov["filed_at"] = r["filed_at"]
             if r.get("source_document_id"):
-                src = store.query_one(
-                    "SELECT source_url, fetched_at FROM source_document WHERE source_document_id = ?",
-                    [r["source_document_id"]],
+                src = _entity_row(
+                    store, "source_document", r["source_document_id"], dataset_id
                 )
                 if src:
                     prov["source_url"] = src["source_url"]
                     prov["fetched_at"] = src["fetched_at"]
+                    prov["form_type"] = prov["form_type"] or src.get("form_type")
+                    prov["accession_number"] = prov["accession_number"] or src.get("accession_number")
+                    prov["filed_at"] = prov["filed_at"] or src.get("filed_at")
     return prov
 
 
 def _provenance_ref(store, company_id, metric, input_ids, period_end) -> dict:
     if not input_ids:
         return {"status": None}
-    f = store.query_one(
-        "SELECT * FROM canonical_fact WHERE canonical_fact_id = ?", [input_ids[0]]
-    )
+    f = _entity_row(store, "canonical_fact", input_ids[0])
     if not f:
         return {"status": None}
     return _provenance_ref_for_fact(store, f)
@@ -217,18 +269,42 @@ def company(ticker: str, security_id: str | None = None):
     store = _store()
     company = _resolve_company(ticker, store, security_id)
     cik = company.cik
-    docs = store.query(
-        "SELECT document_type, fetched_at, content_sha256, local_path, source_document_id "
-        "FROM source_document WHERE company_id = ? ORDER BY fetched_at DESC LIMIT 5",
-        [cik],
+    publication_row = store.query_one(
+        "SELECT active_publication_id FROM company WHERE company_id=?", [cik]
     )
+    publication_id = publication_row and publication_row["active_publication_id"]
+    if publication_id:
+        repository = PublicationRepository(store)
+        context = repository.context(cik, publication_id)
+        docs = [] if _is_legacy_context(store, context) else sorted(
+                repository.entities(context, "source_document"),
+                key=lambda item: str(item.get("fetched_at") or ""),
+                reverse=True,
+            )
+        if not docs and _is_legacy_context(store, context):
+            docs = store.query(
+                "SELECT document_type, fetched_at, content_sha256, local_path, source_document_id "
+                "FROM source_document WHERE company_id = ? ORDER BY fetched_at DESC LIMIT 5",
+                [cik],
+            )
+    else:
+        docs = store.query(
+            "SELECT document_type, fetched_at, content_sha256, local_path, source_document_id "
+            "FROM source_document WHERE company_id = ? ORDER BY fetched_at DESC LIMIT 5",
+            [cik],
+        )
     freshness = {}
     for d in docs:
-        freshness[d["document_type"]] = {
+        if d["document_type"] in freshness:
+            continue
+        item = {
             "fetched_at": d["fetched_at"],
             "sha256": d["content_sha256"][:16],
             "source_document_id": d["source_document_id"],
         }
+        freshness[d["document_type"]] = item
+        if d["document_type"] == "COMPANYFACTS":
+            freshness["COMPANYFACTS_SNAPSHOT"] = item
     # enrich from the cached submissions snapshot (identity metadata only)
     sic_description = website = None
     subs_path = RAW_DIR / "sec" / cik / "submissions.json"
@@ -246,9 +322,7 @@ def company(ticker: str, security_id: str | None = None):
         "exchange": company.exchange,
         "fiscal_year_end": company.fiscal_year_end,
         "security_id": company.security_id,
-        "publication_id": store.query_one(
-            "SELECT active_publication_id FROM company WHERE company_id=?", [cik]
-        )["active_publication_id"],
+        "publication_id": publication_id,
         "sic_description": sic_description,
         "website": website,
         "source_freshness": freshness,
@@ -292,7 +366,7 @@ def facts(
                 if item.get("fiscal_quarter")
                 else f"FY{item.get('fiscal_year')}"
             )
-            item["provenance"] = _provenance_ref_for_fact(store, item)
+            item["provenance"] = _provenance_ref_for_fact(store, item, context.dataset_id)
             item["input_fact_ids"] = item.get("source_raw_fact_ids", [])
             data.append(item)
         data.sort(key=lambda item: (item.get("fiscal_year") or 0, item.get("fiscal_quarter") or 0))
@@ -334,7 +408,12 @@ def metrics(
         ticker, security_id=security_id, publication_id=publication_id,
         module="financials",
     )
-    engine = MetricEngine(store)
+    published = PublicationRepository(store).facts(context)
+    engine = (
+        MetricEngine(store)
+        if _is_legacy_context(store, context)
+        else MetricEngine(store, published_facts=published)
+    )
     out = []
     for m in metrics.split(","):
         m = m.strip().upper()
@@ -386,8 +465,55 @@ def segments(
         module="segments",
     )
     try:
+        repository = PublicationRepository(store)
+        legacy = _is_legacy_context(store, context)
+        published_rows = None
+        if not legacy:
+            documents = {
+                item["source_document_id"]: item
+                for item in repository.entities(context, "source_document")
+            }
+            disclosure_by_document: dict[str, str] = {}
+            for fact in repository.facts(context):
+                document_id = fact.get("source_document_id")
+                disclosed_at = fact.get("as_known_at")
+                if document_id and disclosed_at:
+                    key = str(document_id)
+                    disclosure_by_document[key] = max(
+                        str(disclosed_at), disclosure_by_document.get(key, "")
+                    )
+            published_rows = repository.entities(context, "segment_fact")
+            for row in published_rows:
+                document = documents.get(row.get("source_document_id"), {})
+                for key in ("form_type", "filed_at", "accession_number", "source_url"):
+                    row[key] = document.get(key)
+                row["filed_at"] = row["filed_at"] or disclosure_by_document.get(
+                    str(row.get("source_document_id"))
+                )
+
+        profile_row = store.query_one(
+            "SELECT schema_version, content_json FROM issuer_profile_version WHERE profile_id=?",
+            [context.profile_id],
+        )
+        published_config = None
+        if not legacy and profile_row and profile_row["schema_version"] == 2:
+            from equitylens.issuers.profile import IssuerProfileV2
+            from equitylens.normalization.segments import segment_config_from_profile
+
+            content = profile_row["content_json"]
+            if isinstance(content, str):
+                content = json.loads(content)
+            published_config = segment_config_from_profile(
+                IssuerProfileV2.model_validate(content)
+            )
         result = get_segments(
-            store, company.ticker, kind=kind, frequency=frequency, limit=limit
+            store,
+            company.ticker,
+            kind=kind,
+            frequency=frequency,
+            limit=limit,
+            published_rows=published_rows,
+            published_config=published_config,
         )
         return {**result, **_version_fields(company, context)}
     except ValueError as exc:
@@ -405,7 +531,12 @@ def overview(
         ticker, security_id=security_id, publication_id=publication_id,
         module="financials",
     )
-    engine = MetricEngine(store)
+    published = PublicationRepository(store).facts(context)
+    engine = (
+        MetricEngine(store)
+        if _is_legacy_context(store, context)
+        else MetricEngine(store, published_facts=published)
+    )
     cik = company.cik
 
     def point_payload(point) -> dict:
@@ -462,12 +593,34 @@ def overview(
         }
 
     # latest fiscal period
-    latest = store.query_one(
-        "SELECT fiscal_year, fiscal_quarter, period_end FROM canonical_fact "
-        "WHERE company_id = ? AND period_type = 'Q_STANDALONE' AND fiscal_quarter IS NOT NULL "
-        "ORDER BY fiscal_year DESC, fiscal_quarter DESC LIMIT 1",
-        [cik],
-    )
+    if _is_legacy_context(store, context):
+        legacy_periods = engine.compute("REVENUE", cik, frequency="quarterly")
+        latest_point = legacy_periods[-1] if legacy_periods else None
+        latest = ({
+            "fiscal_year": latest_point.fiscal_year,
+            "fiscal_quarter": latest_point.fiscal_quarter,
+            "period_end": latest_point.period_end,
+        } if latest_point is not None else None)
+    else:
+        latest = max(
+            (
+                fact for fact in published
+                if fact.get("period_type") == "Q_STANDALONE"
+                and fact.get("fiscal_quarter") is not None
+            ),
+            key=lambda fact: (
+                fact.get("fiscal_year") or 0,
+                fact.get("fiscal_quarter") or 0,
+                str(fact.get("period_end") or ""),
+            ),
+            default=None,
+        )
+    if latest is not None and isinstance(latest, dict):
+        latest = {
+            "fiscal_year": latest.get("fiscal_year"),
+            "fiscal_quarter": latest.get("fiscal_quarter"),
+            "period_end": latest.get("period_end"),
+        }
     return {
         "ticker": ticker,
         **_version_fields(company, context),
@@ -479,32 +632,47 @@ def overview(
 
 
 @router.get("/provenance/{entity_id}")
-def provenance(entity_id: str, depth: int = Query(3, ge=1, le=6)):
+def provenance(
+    entity_id: str,
+    depth: int = Query(3, ge=1, le=6),
+    publication_id: str | None = None,
+):
     store = _store()
-    node = _build_provenance(store, entity_id, depth, set())
+    dataset_id = None
+    if publication_id is not None:
+        publication = store.query_one(
+            "SELECT dataset_id FROM publication WHERE publication_id=?", [publication_id]
+        )
+        if publication is None:
+            raise HTTPException(404, f"Unknown publication {publication_id}")
+        dataset_id = publication["dataset_id"]
+    node = _build_provenance(store, entity_id, depth, set(), dataset_id)
     if node is None:
         raise HTTPException(404, f"Unknown entity {entity_id}")
     return {"entity_id": entity_id, "kind": node["kind"], "tree": node}
 
 
-def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict | None:
+def _build_provenance(
+    store, entity_id: str, depth: int, visited: set, dataset_id: str | None = None
+) -> dict | None:
     if depth <= 0 or entity_id in visited:
         return None
     visited = visited | {entity_id}
     if entity_id.startswith("derived.v2.") or entity_id.startswith("derived:"):
-        return _build_derived_node(store, entity_id, depth, visited)
-    cf = store.query_one("SELECT * FROM canonical_fact WHERE canonical_fact_id = ?", [entity_id])
+        return _build_derived_node(store, entity_id, depth, visited, dataset_id)
+    cf = _entity_row(store, "canonical_fact", entity_id, dataset_id)
     if cf:
-        raw_ids = json.loads(cf.get("source_raw_fact_ids") or "[]")
+        raw_value = cf.get("source_raw_fact_ids") or []
+        raw_ids = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
         parents = []
         for rid in raw_ids:
-            p = _build_provenance(store, rid, depth - 1, visited)
+            p = _build_provenance(store, rid, depth - 1, visited, dataset_id)
             if p:
                 parents.append(p)
             else:
-                raw = store.query_one("SELECT * FROM raw_fact WHERE raw_fact_id = ?", [rid])
+                raw = _entity_row(store, "raw_fact", rid, dataset_id)
                 if raw:
-                    parents.append(_raw_node(store, raw, depth - 1, visited))
+                    parents.append(_raw_node(store, raw, depth - 1, visited, dataset_id))
         return {
             "entity_id": entity_id,
             "kind": "canonical_fact",
@@ -524,10 +692,10 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
             },
             "parents": parents,
         }
-    raw = store.query_one("SELECT * FROM raw_fact WHERE raw_fact_id = ?", [entity_id])
+    raw = _entity_row(store, "raw_fact", entity_id, dataset_id)
     if raw:
-        return _raw_node(store, raw, depth, visited)
-    src = store.query_one("SELECT * FROM source_document WHERE source_document_id = ?", [entity_id])
+        return _raw_node(store, raw, depth, visited, dataset_id)
+    src = _entity_row(store, "source_document", entity_id, dataset_id)
     if src:
         return {
             "entity_id": entity_id,
@@ -563,7 +731,9 @@ def _build_provenance(store, entity_id: str, depth: int, visited: set) -> dict |
     return None
 
 
-def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict | None:
+def _build_derived_node(
+    store, entity_id: str, depth: int, visited: set, dataset_id: str | None = None
+) -> dict | None:
     """Resolve a derived metric result id to a full provenance root (D09).
 
     The root carries the result value/frequency/unit/status/formula and the
@@ -579,7 +749,7 @@ def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict
             return None
         parents = []
         for fid in input_ids:
-            parent = _build_provenance(store, str(fid), depth - 1, visited)
+            parent = _build_provenance(store, str(fid), depth - 1, visited, dataset_id)
             if parent:
                 parents.append(parent)
         return {
@@ -605,7 +775,7 @@ def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict
         return None
     parents = []
     for fid in (point.input_fact_ids or []):
-        parent = _build_provenance(store, fid, depth - 1, visited)
+        parent = _build_provenance(store, fid, depth - 1, visited, dataset_id)
         if parent:
             parents.append(parent)
     return {
@@ -628,13 +798,16 @@ def _build_derived_node(store, entity_id: str, depth: int, visited: set) -> dict
     }
 
 
-def _raw_node(store, raw: dict, depth: int, visited: set) -> dict:
-    src = store.query_one("SELECT * FROM source_document WHERE source_document_id = ?",
-                          [raw.get("source_document_id")])
+def _raw_node(
+    store, raw: dict, depth: int, visited: set, dataset_id: str | None = None
+) -> dict:
+    src = _entity_row(store, "source_document", raw.get("source_document_id"), dataset_id)
     parents = []
     if src:
-        p = _build_provenance(store, src.get("source_document_id"), depth - 1, visited)
+        p = _build_provenance(store, src.get("source_document_id"), depth - 1, visited, dataset_id)
         if p:
+            if not p["fields"].get("filed_at") and raw.get("filed_at"):
+                p["fields"]["filed_at"] = raw["filed_at"]
             parents.append(p)
     return {
         "entity_id": raw.get("raw_fact_id"),
@@ -660,7 +833,7 @@ def _raw_node(store, raw: dict, depth: int, visited: set) -> dict:
 @router.get("/sources/{source_document_id}")
 def source(source_document_id: str):
     store = _store()
-    row = store.query_one(
+    row = _published_entity(store, "source_document", source_document_id) or store.query_one(
         "SELECT * FROM source_document WHERE source_document_id = ?", [source_document_id]
     )
     if not row:
@@ -1148,8 +1321,19 @@ def company_freshness(
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id
     )
+    repository = PublicationRepository(store)
+    legacy = _is_legacy_context(store, context)
+    source_documents = None if legacy else repository.entities(
+        context, "source_document"
+    )
     return {
-        **freshness(store, company.cik, company.ticker),
+        **freshness(
+            store,
+            company.cik,
+            company.ticker,
+            source_documents=source_documents,
+            canonical_facts=None if legacy else repository.facts(context),
+        ),
         **_version_fields(company, context),
     }
 

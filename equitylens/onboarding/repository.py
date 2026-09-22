@@ -113,7 +113,9 @@ class OnboardingRepository:
         actions = []
         remediation = (error or {}).get("remediation")
         if state == TaskState.FAILED:
-            if remediation == "PROFILE_IMPORT":
+            if remediation == "PROFILE_IMPORT" and not row.get("fetch_bundle_id"):
+                actions.append("REFETCH")
+            elif remediation == "PROFILE_IMPORT":
                 actions.append("PROFILE_IMPORT")
             elif remediation == "REFETCH":
                 actions.append("REFETCH")
@@ -124,7 +126,7 @@ class OnboardingRepository:
         if state == TaskState.NEEDS_REVIEW:
             actions.extend(["REVIEW", "EXPORT_REVIEW_PACKAGE"])
         if state == TaskState.NEEDS_ADAPTATION:
-            if remediation == "REFETCH":
+            if remediation == "REFETCH" or not row.get("fetch_bundle_id"):
                 actions.append("REFETCH")
             else:
                 actions.append("PROFILE_IMPORT")

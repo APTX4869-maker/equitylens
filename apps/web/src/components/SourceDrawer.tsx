@@ -78,26 +78,36 @@ function NodeRow({ node, depth }: { node: ProvenanceNode; depth: number }) {
 
 export function SourceDrawer({
   entityId,
+  publicationId,
   onClose,
 }: {
   entityId: string | null;
+  publicationId?: string | null;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<{ tree: ProvenanceNode; entity: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<{ tree: ProvenanceNode; entity: string; publication: string | null } | null>(null);
+  const [error, setError] = useState<{ entity: string; publication: string | null; message: string } | null>(null);
 
   useEffect(() => {
     if (!entityId) return;
+    let cancelled = false;
     api
-      .provenance(entityId)
+      .provenance(entityId, publicationId)
       .then((d) => {
-        setData({ tree: d.tree, entity: entityId });
-        setError(null);
+        if (!cancelled) {
+          setData({ tree: d.tree, entity: entityId, publication: publicationId ?? null });
+          setError(null);
+        }
       })
-      .catch((e) => setError(String(e)));
-  }, [entityId]);
+      .catch((e) => {
+        if (!cancelled) setError({ entity: entityId, publication: publicationId ?? null, message: String(e) });
+      });
+    return () => { cancelled = true; };
+  }, [entityId, publicationId]);
 
-  const loading = !data || data.entity !== entityId;
+  const loading = !data || data.entity !== entityId || data.publication !== (publicationId ?? null);
+  const currentError = error?.entity === entityId && error.publication === (publicationId ?? null)
+    ? error.message : null;
 
   if (!entityId) return null;
   return (
@@ -111,9 +121,9 @@ export function SourceDrawer({
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
-          {error ? <ErrorBox message={error} /> : null}
-          {loading && !error ? <div className="muted">加载溯源链…</div> : null}
-          {data && !loading ? <NodeRow node={data.tree} depth={0} /> : null}
+          {currentError ? <ErrorBox message={currentError} /> : null}
+          {loading && !currentError ? <div className="muted">加载溯源链…</div> : null}
+          {data && !loading && !currentError ? <NodeRow node={data.tree} depth={0} /> : null}
           <div className="beginner-note" style={{ marginTop: 16 }}>
             <div>!</div>
             <div>

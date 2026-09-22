@@ -79,6 +79,34 @@ def test_ingest_today_does_not_refresh_old_filing(db):
     assert sec["days_ago"] is not None and sec["days_ago"] >= 2000  # ~2020 -> now
 
 
+def test_published_facts_supply_disclosure_date_for_older_dataset_envelopes(db):
+    """Early immutable datasets omitted filed_at from source-document payloads."""
+    result = freshness(
+        db,
+        AAPL_CIK,
+        "AAPL",
+        source_documents=[{
+            "source_document_id": "published-10q",
+            "document_type": "FILING_DOCUMENT",
+            "form_type": "10-Q",
+            "fetched_at": "2026-09-19T00:00:00+00:00",
+        }],
+        canonical_facts=[{
+            "canonical_fact_id": "published-revenue",
+            "source_document_id": "published-10q",
+            "as_known_at": "2026-08-27",
+        }],
+    )
+
+    financials = next(
+        module for module in result["modules"] if module["key"] == "sec_financials"
+    )
+    assert financials["as_of"] == "2026-08-27"
+    assert financials["status"] == "ok"
+    segments = next(module for module in result["modules"] if module["key"] == "segments")
+    assert segments["as_of"] == "2026-08-27"
+
+
 def test_quote_block_marks_stale_observation(db):
     """D10: the quote-comparison block reports the same status as freshness — a
     stale quote is STALE (not OK) yet remains viewable with its price/date."""

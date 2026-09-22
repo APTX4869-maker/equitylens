@@ -35,13 +35,16 @@ async function stubOverview(page: Page) {
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: {
     modules: [], stale_modules: [], hint: null,
   }}));
-  await page.route(`**/api/v1/provenance/${derivedId}`, (route) => route.fulfill({ json: {
+  await page.route(`**/api/v1/provenance/${derivedId}*`, (route) => {
+    expect(new URL(route.request().url()).searchParams.get("publication_id")).toBe("pub-aapl");
+    return route.fulfill({ json: {
     entity_id: derivedId, kind: "derived_metric", tree: {
       entity_id: derivedId, kind: "derived_metric", label: "REVENUE · FY2025Q4",
       fields: { metric: "REVENUE", value: 400_000_000_000, unit: "USD", status: "CALCULATED" },
       parents: [],
     },
-  }}));
+  }});
+  });
 }
 
 test("overview chart and KPI source follow the selected metric", async ({ page }) => {

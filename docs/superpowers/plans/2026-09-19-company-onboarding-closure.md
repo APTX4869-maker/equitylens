@@ -347,15 +347,15 @@ Run: the Playwright command from Step 2.
 - Consumes all C01—C09 interfaces.
 - Produces a published NVDA task and a reproducible validation record, or records an external SEC 403/429 outage without weakening gates.
 
-- [ ] **Step 1: Run the real NVDA flow** with a valid `EQUITYLENS_USER_AGENT`: refetch, inspect bundle/candidate, download, maintain/version `NVDA.yaml`, upload, let executor build/validate, review PASS, approve, publish, open the company, and force browser reload.
-- [ ] **Step 2: Add regression fixtures and golden assertions** from the exact downloaded SEC bytes; assert filing context/locator and segment evidence rather than Company Facts substitutes.
-- [ ] **Step 3: Run focused closure tests**
+- [x] **Step 1: Run the real NVDA flow** with a valid `EQUITYLENS_USER_AGENT`: refetch, inspect bundle/candidate, download, maintain/version `NVDA.yaml`, upload, let executor build/validate, review PASS, approve, publish, open the company, and force browser reload.
+- [x] **Step 2: Add regression fixtures and golden assertions** from the exact downloaded SEC bytes; assert filing context/locator and segment evidence rather than Company Facts substitutes.
+- [x] **Step 3: Run focused closure tests**
 
 Run: `uv run pytest tests/golden/test_onboarding_issuers.py tests/integration/test_onboarding_pipeline.py tests/integration/test_onboarding_api.py -q`
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm --dir apps/web exec playwright test e2e/company-onboarding.spec.ts --project=chromium`
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 ```bash
 uv sync --frozen
@@ -369,8 +369,8 @@ PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 git diff --check
 ```
 
-- [ ] **Step 5: Inspect in a no-extension browser** and record task timeline, publication IDs, screenshots, commands, exact results, and any external blocker in `docs/reviews/2026-09-19-company-onboarding-closure-validation.md`.
-- [ ] **Step 6: Update progress and commit** with message `test: verify NVDA onboarding closure`.
+- [x] **Step 5: Inspect in a no-extension browser** and record task timeline, publication IDs, screenshots, commands, exact results, and any external blocker in `docs/reviews/2026-09-19-company-onboarding-closure-validation.md`.
+- [x] **Step 6: Update progress and commit** with message `test: verify NVDA onboarding closure`.
 
 ## Self-Review Record
 

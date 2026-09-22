@@ -116,8 +116,8 @@ export const api = {
     getJson<OverviewResponse>(`/api/v1/companies/${ticker}/overview${identityQuery(identity)}`, { signal }),
   marketQuote: (ticker: string, identity?: { security_id?: string; publication_id?: string | null }, signal?: AbortSignal) =>
     getJson<MarketQuote>(`/api/v1/companies/${ticker}/market/quote${identityQuery(identity)}`, { signal }),
-  provenance: (entityId: string) =>
+  provenance: (entityId: string, publicationId?: string | null) =>
     getJson<{ entity_id: string; kind: string; tree: ProvenanceNode }>(
-      `/api/v1/provenance/${entityId}`
+      `/api/v1/provenance/${entityId}${publicationId ? `?publication_id=${encodeURIComponent(publicationId)}` : ""}`
     ),
 };

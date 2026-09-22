@@ -15,6 +15,7 @@ from equitylens.quality.models import CheckResult, CheckStatus, QualityReport, S
 from equitylens.quality.rules import (
     balance_equation,
     cash_bridge,
+    cash_bridge_with_disclosed_change,
     eps_reconciliation,
     evidence_required,
     required_period_coverage,
@@ -22,6 +23,25 @@ from equitylens.quality.rules import (
 )
 from equitylens.storage.raw_store import sha256_bytes
 from equitylens.storage.writer import writer_for
+
+
+def _segment_revenue_for_anchor(
+    segments: list[dict], annual_anchor: dict | None
+) -> list[dict]:
+    """Select segment revenue on the same annual basis as consolidated revenue."""
+    if annual_anchor is None:
+        return []
+    anchor_year = annual_anchor.get("fiscal_year")
+    anchor_end = str(annual_anchor.get("period_end") or "")
+    return [
+        item
+        for item in segments
+        if item.get("metric_name") == "REVENUE"
+        and item.get("period_type") == "FY"
+        and item.get("fiscal_year") == anchor_year
+        and str(item.get("period_end") or "") == anchor_end
+        and not item.get("aggregate")
+    ]
 
 
 class QualityEngine:
@@ -294,23 +314,47 @@ class QualityEngine:
             "OPERATING_CASH_FLOW",
             "INVESTING_CASH_FLOW",
             "FINANCING_CASH_FLOW",
-            "FX_EFFECT_ON_CASH",
             bridge_cash_metric,
         )
         cash_values = [value(name) for name in cash_names]
+        fx_effect = value("FX_EFFECT_ON_CASH")
+        disclosed_change = value("NET_CHANGE_IN_CASH_INCLUDING_FX")
         if opening_cash is not None and all(item is not None for item in cash_values):
-            checks.append(
-                cash_bridge(
-                    opening=opening_cash["value"],
-                    operating=cash_values[0],
-                    investing=cash_values[1],
-                    financing=cash_values[2],
-                    fx=cash_values[3],
-                    closing=cash_values[4],
-                    other=value("OTHER_CASH_CHANGE") or 0,
-                    decimals=(annual_basis.get(bridge_cash_metric) or latest[bridge_cash_metric]).get("decimals", 0),
+            decimals = (annual_basis.get(bridge_cash_metric) or latest[bridge_cash_metric]).get("decimals", 0)
+            if fx_effect is not None:
+                checks.append(
+                    cash_bridge(
+                        opening=opening_cash["value"],
+                        operating=cash_values[0],
+                        investing=cash_values[1],
+                        financing=cash_values[2],
+                        fx=fx_effect,
+                        closing=cash_values[3],
+                        other=value("OTHER_CASH_CHANGE") or 0,
+                        decimals=decimals,
+                    )
                 )
-            )
+            elif disclosed_change is not None:
+                checks.append(
+                    cash_bridge_with_disclosed_change(
+                        opening=opening_cash["value"],
+                        operating=cash_values[0],
+                        investing=cash_values[1],
+                        financing=cash_values[2],
+                        disclosed_change=disclosed_change,
+                        closing=cash_values[3],
+                        decimals=decimals,
+                    )
+                )
+            else:
+                checks.append(
+                    CheckResult(
+                        check_id="CASH.bridge",
+                        status=CheckStatus.FAIL,
+                        actual={"missing": ["FX_EFFECT_ON_CASH_OR_NET_CHANGE_IN_CASH_INCLUDING_FX"]},
+                        reason="CASH_BRIDGE_INPUT_MISSING",
+                    )
+                )
         else:
             checks.append(
                 CheckResult(
@@ -341,10 +385,7 @@ class QualityEngine:
             )
 
         segments = parsed.get("segment_fact", [])
-        segment_revenue = [
-            item for item in segments
-            if item.get("metric_name") == "REVENUE" and not item.get("aggregate")
-        ]
+        segment_revenue = _segment_revenue_for_anchor(segments, annual_anchor)
         if segment_revenue and value("REVENUE") is not None:
             eliminations = sum(
                 float(item.get("value") or 0)

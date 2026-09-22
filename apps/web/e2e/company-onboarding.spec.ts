@@ -45,6 +45,10 @@ async function installOnboardingApiFixture(page: Page) {
   await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: { ticker: "AAPL", latest_period: null, kpis: {}, trend: {}, provenance_available: true } }));
   await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: { status: "UNAVAILABLE", configured: false, synced: false, reason: "test" } }));
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
+  await page.route("**/api/v1/companies/KO?**", (route) => route.fulfill({ json: { ...apple, company_id: "0000021344", security_id: "sec-ko", ticker: "KO", name: "The Coca-Cola Company", exchange: "NYSE", publication_id: "pub-ko", cik: "0000021344", source_freshness: { COMPANYFACTS_SNAPSHOT: { fetched_at: "2026-09-12T00:00:00Z", sha256: "fixture" } } } }));
+  await page.route("**/api/v1/companies/KO/overview?**", (route) => route.fulfill({ json: { ticker: "KO", latest_period: { fiscal_year: 2026, fiscal_quarter: 2, period_end: "2026-06-30" }, kpis: {}, trend: {}, provenance_available: true } }));
+  await page.route("**/api/v1/companies/KO/market/quote?**", (route) => route.fulfill({ json: { status: "UNAVAILABLE", configured: false, synced: false, reason: "test" } }));
+  await page.route("**/api/v1/companies/KO/freshness?**", (route) => route.fulfill({ json: { modules: [{ key: "sec_financials", label: "SEC 财务事实", as_of: "2026-08-01", detail: "最近披露 10-Q", status: "ok", days_ago: 42 }], stale_modules: [], hint: null } }));
   await page.route("**/api/v1/companies/discover", async (route) => {
     await route.fulfill({ json: {
       discovery_id: "discovery-ko", ticker: "KO", identity_hash: "identity-ko", expires_at: "2026-09-12T02:00:00Z",
@@ -89,6 +93,12 @@ test("company appears only after publication and duplicate submit is prevented",
   expect(fixture.createCalls()).toBe(1);
 
   await page.getByRole("button", { name: "批准并发布" }).click();
+  const publishedCompany = page.getByTestId("company-list").getByText("KO", { exact: true });
+  await expect(publishedCompany).toBeVisible();
+  await page.getByRole("button", { name: "关闭建档中心" }).click();
+  await publishedCompany.click();
+  await expect(page.getByRole("heading", { name: /The Coca-Cola Company/ })).toBeVisible();
+  await page.reload();
   await expect(page.getByTestId("company-list").getByText("KO", { exact: true })).toBeVisible();
 });
 

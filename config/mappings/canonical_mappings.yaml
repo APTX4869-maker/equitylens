@@ -6,7 +6,7 @@
 #     SHORT_TERM_DEBT's LongTermDebtCurrent); add separate Depreciation and
 #     AmortizationOfIntangibleAssets concepts for issuers that do not report a
 #     single combined D&A line (MSFT).
-version: 3
+version: 4
 canonical_facts:
   REVENUE:
     type: duration
@@ -169,12 +169,18 @@ canonical_facts:
     concepts:
       - us-gaap:EffectOfExchangeRateOnCashAndCashEquivalents
       - us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+  NET_CHANGE_IN_CASH_INCLUDING_FX:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
   CAPITAL_EXPENDITURES:
     type: duration
     unit_family: currency
     sign: outflow_positive
     concepts:
       - us-gaap:PaymentsToAcquirePropertyPlantAndEquipment
+      - us-gaap:PaymentsToAcquireProductiveAssets
   DEPRECIATION_AMORTIZATION:
     type: duration
     unit_family: currency

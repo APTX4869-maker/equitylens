@@ -160,6 +160,51 @@ def test_ttm_requires_consecutive_quarters():
     assert eng.ttm(incomplete) is None
 
 
+def test_ttm_flattens_provenance_for_derived_standalone_quarters():
+    """A derived quarter has input_ids rather than a canonical_fact_id."""
+    eng = MetricEngine(None)
+    facts = [
+        _q("OPERATING_CASH_FLOW", 2025, 4, 40.0),
+        _q("OPERATING_CASH_FLOW", 2026, 1, 10.0),
+        {
+            **_q("OPERATING_CASH_FLOW", 2026, 2, 20.0),
+            "canonical_fact_id": None,
+            "input_ids": ["ocf-ytd3", "ocf-ytd6"],
+        },
+        {
+            **_q("OPERATING_CASH_FLOW", 2026, 3, 30.0),
+            "canonical_fact_id": None,
+            "input_ids": ["ocf-ytd6", "ocf-ytd9"],
+        },
+    ]
+
+    ttm = eng.ttm(facts)
+
+    assert ttm is not None
+    assert ttm["value"] == pytest.approx(100.0)
+    assert ttm["input_ids"] == [
+        "OPERATING_CASH_FLOW-2025-4",
+        "OPERATING_CASH_FLOW-2026-1",
+        "ocf-ytd3",
+        "ocf-ytd6",
+        "ocf-ytd9",
+    ]
+
+
+def test_published_lowercase_currency_unit_still_computes_ttm():
+    facts = [
+        {**_q("REVENUE", 2026, quarter, float(quarter)), "unit": "usd"}
+        for quarter in range(1, 5)
+    ]
+    engine = MetricEngine(None, published_facts=facts)
+
+    current = engine.current("REVENUE", "published-company", frequency="ttm")
+
+    assert current.value == pytest.approx(10.0)
+    assert current.status == "OK"
+    assert current.unit == "USD"
+
+
 def test_same_day_duplicate_period_selection_is_stable():
     """D05/D06: database insertion order cannot change the selected fact."""
     facts = [

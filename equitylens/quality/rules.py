@@ -94,6 +94,51 @@ def cash_bridge(
     )
 
 
+def cash_bridge_with_disclosed_change(
+    *,
+    opening: float,
+    operating: float,
+    investing: float,
+    financing: float,
+    disclosed_change: float,
+    closing: float,
+    decimals: int | str = 0,
+) -> CheckResult:
+    """Reconcile issuers that disclose net cash change including FX as one line."""
+    activities = _sum_intervals([operating, investing, financing], decimals)
+    change = RoundingInterval.from_value(disclosed_change, decimals)
+    full_bridge = activities.intersects(change)
+    closing_from_change = _sum_intervals([opening, disclosed_change], decimals)
+    disclosed_closing = RoundingInterval.from_value(closing, decimals)
+    passed = closing_from_change.intersects(disclosed_closing)
+    implied_fx_or_other = disclosed_change - operating - investing - financing
+    return CheckResult(
+        check_id="CASH.bridge" if full_bridge else "CASH.rollforward",
+        status=CheckStatus.PASS if passed else CheckStatus.FAIL,
+        severity=Severity.BLOCKER if full_bridge or not passed else Severity.WARNING,
+        actual={
+            "opening": opening,
+            "operating": operating,
+            "investing": investing,
+            "financing": financing,
+            "disclosed_change_including_fx": disclosed_change,
+            "implied_fx_or_other": implied_fx_or_other,
+            "closing": closing,
+        },
+        expected={
+            "closing_from_disclosed_change": opening + disclosed_change,
+            "activities_equal_disclosed_change": operating + investing + financing
+            if full_bridge else None,
+        },
+        tolerance={"basis": "xbrl_decimals", "decimals": str(decimals)},
+        reason=(
+            "CASH_DEFINITION_MISMATCH" if not passed
+            else "FX_OR_OTHER_NOT_SEPARATELY_DISCLOSED" if not full_bridge
+            else None
+        ),
+    )
+
+
 def derive_standalone_quarter(
     *,
     current_ytd: float,

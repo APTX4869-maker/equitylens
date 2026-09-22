@@ -14,8 +14,15 @@ if TYPE_CHECKING:
     from equitylens.onboarding.models import FetchBundle
 
 
-GENERATOR_VERSION = "issuer-profile-candidate.v2"
+GENERATOR_VERSION = "issuer-profile-candidate.v4"
 PROFILE_SCHEMA_VERSION = 2
+
+
+class _NoAliasSafeDumper(yaml.SafeDumper):
+    """Keep generated review YAML compatible with the strict import loader."""
+
+    def ignore_aliases(self, data: Any) -> bool:
+        return True
 
 
 def _canonical(value: Any) -> str:
@@ -105,6 +112,14 @@ def _unit_for_family(family: str) -> str:
     return {"currency": "USD", "shares": "shares", "currency_per_share": "USD/shares"}.get(
         family, "__REVIEW_REQUIRED__"
     )
+
+
+def _profile_year_end(value: str | None) -> str | None:
+    if value is None or "-" in value:
+        return value
+    if len(value) == 4 and value.isdigit():
+        return f"{value[:2]}-{value[2:]}"
+    return value
 
 
 def build_candidate_artifact(
@@ -200,7 +215,7 @@ def build_candidate_artifact(
         "version": version,
         "template": "us_gaap_operating_v1",
         "template_evidence": [root_evidence] if root_evidence else [],
-        "fiscal_calendar": {"year_end": fiscal_year_end, "week_based": False,
+        "fiscal_calendar": {"year_end": _profile_year_end(fiscal_year_end), "week_based": False,
                             "evidence": [root_evidence] if root_evidence else []},
         "metrics": metrics,
         "segments": {"parser": None, "axes": [], "reconciliation": None,
@@ -241,8 +256,8 @@ def build_candidate_artifact(
     unresolved.sort(key=lambda item: item.path)
     comments = ["# Candidate only. Review every field before import."]
     comments.extend(f"# REVIEW REQUIRED: {item.path} — {item.action}" for item in unresolved)
-    yaml_text = "\n".join(comments) + "\n" + yaml.safe_dump(
-        profile, allow_unicode=True, sort_keys=False
+    yaml_text = "\n".join(comments) + "\n" + yaml.dump(
+        profile, Dumper=_NoAliasSafeDumper, allow_unicode=True, sort_keys=False
     )
     content_sha256 = _sha(_canonical({
         "profile": profile,

@@ -7,6 +7,7 @@ the parser under test never generates this table.
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from equitylens.companies.models import CompanyIdentity, SecurityIdentity
 from equitylens.companies.registry import CompanyRegistry, seed_security_id
 from equitylens.issuers.profile import load_profile_yaml
 from equitylens.normalization.fiscal_periods import FiscalCalendar
+from equitylens.normalization.ixbrl import IxbrlDocument
 from equitylens.normalization.normalize import normalize_companyfacts
+from equitylens.normalization.segments import extract_segments, segment_config_from_profile
 from equitylens.onboarding.pipeline import ProfileMappingRegistry
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
@@ -32,6 +35,86 @@ REQUIRED_METRICS = {
     "TOTAL_LIABILITIES", "STOCKHOLDERS_EQUITY", "OPERATING_CASH_FLOW",
     "INVESTING_CASH_FLOW", "FINANCING_CASH_FLOW", "CASH_AND_EQUIVALENTS",
 }
+
+
+def test_nvda_fixed_10k_preserves_filing_context_signs_and_segment_evidence():
+    directory = ROOT / "tests" / "fixtures" / "onboarding" / "0001045810"
+    manifest = json.loads((directory / "manifest.json").read_text())
+    filing = manifest["annual_filing"]
+    compressed = directory / filing["fixture_path"]
+    assert hashlib.sha256(compressed.read_bytes()).hexdigest() == filing["compressed_sha256"]
+    content = gzip.decompress(compressed.read_bytes())
+    assert hashlib.sha256(content).hexdigest() == filing["content_sha256"]
+
+    document = IxbrlDocument.parse(content)
+    expected = manifest["expected"]
+
+    def annual_value(concept: str) -> float:
+        fact = next(
+            item for item in document.facts(concept)
+            if not item.dims and item.period_end == filing["period_end"]
+        )
+        assert fact.context_ref
+        assert fact.locator.startswith("/")
+        return fact.value
+
+    assert annual_value("us-gaap:Revenues") == expected["revenue"]
+    assert annual_value("us-gaap:NetCashProvidedByUsedInOperatingActivities") == expected["operating_cash_flow"]
+    assert annual_value("us-gaap:NetCashProvidedByUsedInInvestingActivities") == expected["investing_cash_flow"]
+    assert annual_value("us-gaap:NetCashProvidedByUsedInFinancingActivities") == expected["financing_cash_flow"]
+    assert annual_value("us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect") == expected["net_change_in_cash_including_fx"]
+
+    profile = load_profile_yaml(ROOT / manifest["profile_path"])
+    config = segment_config_from_profile(profile)
+    segments, warnings = extract_segments(
+        "NVDA",
+        document,
+        config,
+        FiscalCalendar({}, {}, fallback_mm_dd="01-31"),
+        f"filing:{filing['accession']}:{filing['content_sha256']}",
+    )
+    assert warnings == []
+    latest = {
+        row["segment_name_reported"]: row["value"]
+        for row in segments
+        if row["period_type"] == "FY" and row["period_end"] == filing["period_end"]
+    }
+    assert latest == expected["segments"]
+    assert sum(latest.values()) == expected["revenue"]
+
+    evidence = {item.evidence_id: item for item in profile.evidence}
+    segment_evidence = evidence[profile.segments.evidence[0]]
+    assert segment_evidence.source_document_id == f"filing:{filing['accession']}:{filing['content_sha256']}"
+    assert segment_evidence.content_sha256 == filing["content_sha256"]
+    assert segment_evidence.locator in {
+        fact.locator
+        for fact in document.facts("us-gaap:Revenues")
+        if fact.axis_members.get("StatementBusinessSegmentsAxis")
+    }
+
+
+def test_nvda_formal_profile_evidence_resolves_against_fixed_sec_bytes():
+    directory = ROOT / "tests" / "fixtures" / "onboarding" / "0001045810"
+    manifest = json.loads((directory / "manifest.json").read_text())["formal_profile"]
+    profile = load_profile_yaml(ROOT / manifest["profile_path"])
+    assert profile.version == 3
+    assert len(profile.evidence) == 37
+
+    locators_by_document = {}
+    for filing in manifest["documents"]:
+        compressed = (directory / filing["fixture_path"]).read_bytes()
+        assert hashlib.sha256(compressed).hexdigest() == filing["compressed_sha256"]
+        content = gzip.decompress(compressed)
+        assert hashlib.sha256(content).hexdigest() == filing["content_sha256"]
+        document_id = f"filing:{filing['accession']}:{filing['content_sha256']}"
+        locators_by_document[document_id] = {
+            item["locator"] for item in IxbrlDocument.parse(content).fact_catalog()
+        } | {"/"}
+
+    for evidence in profile.evidence:
+        assert evidence.source_document_id in locators_by_document
+        assert evidence.content_sha256 == evidence.source_document_id.rsplit(":", 1)[1]
+        assert evidence.locator in locators_by_document[evidence.source_document_id]
 
 
 def _case(cik: str):

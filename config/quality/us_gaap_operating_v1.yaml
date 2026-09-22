@@ -1,4 +1,4 @@
-version: us_gaap_operating_v1.1
+version: us_gaap_operating_v1.2
 coverage_metric: REVENUE
 coverage:
   annual_years: 3

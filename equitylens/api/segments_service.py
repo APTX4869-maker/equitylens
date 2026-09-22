@@ -28,24 +28,35 @@ def _latest_per_row(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-def get_segments(store, ticker: str, kind: str = "segment", frequency: str = "annual",
-                 limit: int | None = None) -> dict:
+def get_segments(
+    store,
+    ticker: str,
+    kind: str = "segment",
+    frequency: str = "annual",
+    limit: int | None = None,
+    *,
+    published_rows: list[dict] | None = None,
+    published_config=None,
+) -> dict:
     company_cik = None
     from equitylens.domain.companies import get_company
 
     company_cik = get_company(ticker, store=store).cik
-    config = SegmentConfigRegistry().get(ticker)
+    config = published_config or SegmentConfigRegistry().get(ticker)
     if config is None:
         raise ValueError(f"No segment mapping configured for {ticker}")
 
-    rows = store.query(
-        """SELECT sf.*, sd.form_type, sd.filed_at, sd.accession_number, sd.source_url
-           FROM segment_fact sf
-           JOIN source_document sd ON sd.source_document_id = sf.source_document_id
-           WHERE sf.company_id = ? AND sf.segment_kind = ?
-           ORDER BY sd.filed_at""",
-        [company_cik, kind],
-    )
+    if published_rows is None:
+        rows = store.query(
+            """SELECT sf.*, sd.form_type, sd.filed_at, sd.accession_number, sd.source_url
+               FROM segment_fact sf
+               JOIN source_document sd ON sd.source_document_id = sf.source_document_id
+               WHERE sf.company_id = ? AND sf.segment_kind = ?
+               ORDER BY sd.filed_at""",
+            [company_cik, kind],
+        )
+    else:
+        rows = [row for row in published_rows if row.get("segment_kind") == kind]
     for r in rows:
         if r.get("source_raw_fact_ids"):
             try:

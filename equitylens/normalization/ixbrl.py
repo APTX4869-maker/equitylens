@@ -34,6 +34,7 @@ class IxbrlFact:
     unit_ref: str | None
     text: str | None
     scale: int = 0
+    sign: int = 1
     decimals: str | None = None
     dims: list[tuple[str, str]] = field(default_factory=list)  # [(dimension, member)] full names
     period_start: str | None = None
@@ -46,7 +47,7 @@ class IxbrlFact:
         if self.text is None:
             return None
         try:
-            return float(self.text.replace(",", "").strip()) * (10 ** self.scale)
+            return self.sign * float(self.text.replace(",", "").strip()) * (10 ** self.scale)
         except ValueError:
             return None
 
@@ -103,6 +104,7 @@ class IxbrlDocument:
                     unit_ref=el.get("unitRef"),
                     text=el.text,
                     scale=scale_int,
+                    sign=-1 if el.get("sign") == "-" else 1,
                     decimals=el.get("decimals"),
                     dims=ctx.get("dims", []),
                     period_start=ctx.get("period_start"),

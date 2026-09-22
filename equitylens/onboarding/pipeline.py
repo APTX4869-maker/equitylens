@@ -21,6 +21,7 @@ from equitylens.ingestion.sec.client import SECClient
 from equitylens.issuers.profile import (
     IssuerProfile,
     IssuerProfileV2,
+    ProfileEvidenceError,
     load_profile_yaml,
     parse_profile,
     validate_profile_v2_against_bundle,
@@ -266,6 +267,18 @@ class OnboardingPipeline:
         profile = load_profile_yaml(paths[-1])
         if profile.company_id != task.company_id:
             raise ValueError("profile company_id does not match onboarding company")
+        if isinstance(profile, IssuerProfileV2):
+            try:
+                validate_profile_v2_against_bundle(
+                    profile, self.repository.get_fetch_bundle(task.fetch_bundle_id)
+                )
+            except ProfileEvidenceError as exc:
+                raise OnboardingPause(
+                    TaskState.NEEDS_ADAPTATION,
+                    OnboardingStep.BUILD,
+                    "installed profile evidence differs from the current fixed fetch bundle; review and import a revised profile",
+                    candidate_artifact=self.candidate_artifact(task),
+                ) from exc
         profile_id = publications.create_profile(
             task.company_id,
             version=profile.version,
@@ -437,6 +450,8 @@ class OnboardingPipeline:
                 "document_type": document.document_type,
                 "form_type": document.form_type,
                 "accession_number": document.accession_number,
+                "filed_at": document.filed_at.isoformat() if document.filed_at else None,
+                "report_date": document.report_date.isoformat() if document.report_date else None,
                 "source_url": document.source_url,
                 "fetched_at": document.fetched_at,
                 "content_sha256": document.content_sha256,

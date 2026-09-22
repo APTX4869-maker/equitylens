@@ -300,6 +300,16 @@ def test_profile_v2_build_uses_filing_context_instead_of_companyfacts(db, tmp_pa
     assert {row["raw_value"] for row in parsed} == {100.0}
     assert all(row["context_id"] == "ctx" and row["locator"].startswith("/") for row in parsed)
     assert all(row["source_document_id"].startswith("filing:") for row in parsed)
+    source_rows = db.query(
+        "SELECT payload_json FROM dataset_row WHERE dataset_id=? AND entity_type='source_document'",
+        [built.dataset_id],
+    )
+    sources = [json.loads(row["payload_json"]) for row in source_rows]
+    published_filing = next(
+        row for row in sources if row["source_document_id"] == filing.document_id
+    )
+    assert published_filing["filed_at"] == filing.filed_at.isoformat()
+    assert published_filing["report_date"] == filing.report_date.isoformat()
 
 
 def test_configured_pipeline_fetches_builds_and_validates(db, tmp_path):
@@ -377,6 +387,43 @@ def test_unconfigured_issuer_pauses_for_adaptation(db, tmp_path):
         "SELECT count(*) AS n FROM issuer_profile_candidate WHERE onboarding_id=?",
         [task.onboarding_id],
     )["n"] == 1
+
+
+def test_installed_profile_with_stale_evidence_pauses_for_new_candidate(db, tmp_path):
+    submissions, companyfacts = _payloads()
+
+    def fetch(url: str):
+        if "submissions" in url:
+            content = json.dumps(submissions).encode()
+        elif "companyfacts" in url:
+            content = json.dumps(companyfacts).encode()
+        else:
+            content = _ixbrl_revenue()
+        return content, {"fetched_at": "2026-09-12T00:00:00+00:00"}
+
+    repository = OnboardingRepository(db)
+    task = repository.create_task(
+        company_id=CIK, security_id=_register(db), input_fingerprint="stale-profile"
+    )
+    profile_root = tmp_path / "profiles"
+    pipeline = OnboardingPipeline(
+        db, repository, raw_dir=tmp_path / "raw", profile_root=profile_root, fetcher=fetch
+    )
+    runner = OnboardingRunner(db, repository, handlers=pipeline.handlers())
+    assert runner.run_once() is True
+    bundle = repository.get_fetch_bundle(repository.get(task.onboarding_id).fetch_bundle_id)
+    stale = _profile_v2_for_bundle(bundle, 1)
+    stale["evidence"][0]["content_sha256"] = "f" * 64
+    path = profile_root / CIK / "1.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump(stale, sort_keys=False))
+
+    assert runner.run_once() is True
+    paused = repository.get(task.onboarding_id)
+    assert paused.state == TaskState.NEEDS_ADAPTATION
+    assert paused.profile_candidate_id
+    assert paused.profile_id is None
+    assert paused.actions == ["CANCEL", "PROFILE_IMPORT"]
 
 
 def test_profile_import_after_pause_rebuilds_instead_of_skipping_build(db, tmp_path):

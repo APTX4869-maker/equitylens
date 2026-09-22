@@ -136,6 +136,33 @@ def test_attention_count_is_exact_beyond_current_page_and_progress_is_shared(db,
     assert detail.json()["progress"]["percent"] == 40
 
 
+def test_legacy_adaptation_without_fetch_bundle_can_refetch(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    db._conn.execute(
+        """
+        INSERT INTO company_onboarding (
+          onboarding_id, company_id, state, current_step, revision,
+          cancel_requested, input_fingerprint, error_json, created_at, updated_at
+        ) VALUES ('legacy-no-bundle', '0000320193', 'NEEDS_ADAPTATION', 'BUILD',
+          3, false, 'legacy', ?, now(), now())
+        """,
+        [json.dumps({"code": "ADAPTATION_REQUIRED", "message": "profile missing"})],
+    )
+
+    detail = client.get("/api/v1/company-onboardings/legacy-no-bundle")
+    assert detail.status_code == 200
+    assert "REFETCH" in detail.json()["actions"]
+    assert "PROFILE_IMPORT" not in detail.json()["actions"]
+
+    response = client.post(
+        "/api/v1/company-onboardings/legacy-no-bundle/refetch",
+        json={"expected_revision": 3},
+    )
+    assert response.status_code == 200
+    assert response.json()["state"] == "FETCHING"
+    assert response.json()["revision"] == 4
+
+
 def test_same_idempotency_key_with_other_input_conflicts(db, monkeypatch):
     client, discovery = _client(db, monkeypatch)
     first, _ = _create(client, discovery)
@@ -647,6 +674,17 @@ def test_profile_review_and_quality_report_endpoints_complete_the_workflow(db, m
     ).run_once()
     published = client.get(f"/api/v1/company-onboardings/{task['onboarding_id']}")
     assert published.json()["state"] == "PUBLISHED"
+    directory = client.get("/api/v1/companies")
+    published_company = next(item for item in directory.json()["items"] if item["ticker"] == "EXAMPLE")
+    assert published_company["quality_status"] == "VERIFIED"
+    # Publications created before the status update retain a PENDING stored value.
+    db._conn.execute(
+        "UPDATE company SET quality_status='PENDING' WHERE company_id=?",
+        [task["company_id"]],
+    )
+    directory = client.get("/api/v1/companies")
+    published_company = next(item for item in directory.json()["items"] if item["ticker"] == "EXAMPLE")
+    assert published_company["quality_status"] == "VERIFIED"
 
     report = client.get("/api/v1/companies/EXAMPLE/quality-report")
     assert report.status_code == 200
@@ -732,3 +770,320 @@ def test_financial_reads_are_pinned_to_publication_and_reject_cross_company(db, 
         params={"metrics": "REVENUE", "publication_id": msft.publication_id},
     )
     assert wrong.status_code == 404
+
+
+def test_metrics_and_overview_compute_from_the_published_dataset(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    company_id = "0000320193"
+    publications = PublicationRepository(db)
+    profile_id = publications.create_profile(
+        company_id, version=301, schema_version=1, content={"version": 301}
+    )
+    rows = [(
+        "source_document", "published-filing", {
+            "source_document_id": "published-filing",
+            "company_id": company_id,
+            "provider": "SEC",
+            "document_type": "FILING_DOCUMENT",
+            "form_type": "10-Q",
+            "source_url": "https://www.sec.gov/Archives/example",
+            "fetched_at": "2026-09-01T00:00:00Z",
+            "content_sha256": "a" * 64,
+        },
+    )]
+    for quarter, value in enumerate((10.0, 20.0, 30.0, 40.0), start=1):
+        fact_id = f"published-revenue-q{quarter}"
+        rows.append((
+            "raw_fact",
+            f"raw-q{quarter}",
+            {
+                "raw_fact_id": f"raw-q{quarter}",
+                "source_document_id": "published-filing",
+                "concept": "Revenues",
+            },
+        ))
+        rows.append((
+            "canonical_fact",
+            fact_id,
+            {
+                "canonical_fact_id": fact_id,
+                "company_id": company_id,
+                "canonical_metric": "REVENUE",
+                "period_type": "Q_STANDALONE",
+                "fiscal_year": 2026,
+                "fiscal_quarter": quarter,
+                "period_end": f"2026-{quarter * 3:02d}-30",
+                "value": value,
+                "unit": "USD",
+                "status": "REPORTED",
+                "mapping_rule_id": "fixture",
+                "mapping_version": "v1",
+                "source_raw_fact_ids": [f"raw-q{quarter}"],
+            },
+        ))
+    dataset_id = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": []},
+        rows=rows,
+    )
+    publication = publications.publish_dataset(
+        company_id=company_id,
+        dataset_id=dataset_id,
+        profile_id=profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+
+    metrics = client.get(
+        "/api/v1/companies/AAPL/metrics",
+        params={"metrics": "REVENUE", "frequency": "quarterly"},
+    )
+    overview = client.get("/api/v1/companies/AAPL/overview")
+
+    assert metrics.status_code == 200
+    assert metrics.json()["publication_id"] == publication.publication_id
+    assert [item["value"] for item in metrics.json()["metrics"]] == [10, 20, 30, 40]
+    assert overview.status_code == 200
+    assert overview.json()["kpis"]["TTM_REVENUE"]["value"] == 100
+    assert overview.json()["latest_period"]["fiscal_quarter"] == 4
+    fact = client.get("/api/v1/provenance/published-revenue-q4")
+    assert fact.status_code == 200
+    assert [node["kind"] for node in fact.json()["tree"]["parents"]] == ["raw_fact"]
+    assert fact.json()["tree"]["parents"][0]["parents"][0]["kind"] == "source_document"
+    facts = client.get("/api/v1/companies/AAPL/facts", params={"metrics": "REVENUE"})
+    assert facts.json()["facts"][-1]["provenance"]["source_url"] == "https://www.sec.gov/Archives/example"
+    assert client.get("/api/v1/sources/published-filing").status_code == 200
+    derived = client.get(
+        f"/api/v1/provenance/{overview.json()['kpis']['TTM_REVENUE']['result_id']}"
+    )
+    assert derived.status_code == 200
+    assert len(derived.json()["tree"]["parents"]) == 4
+    assert all(node["kind"] == "canonical_fact" for node in derived.json()["tree"]["parents"])
+
+    restated_rows = []
+    for entity_type, row_id, payload in rows:
+        changed = dict(payload)
+        if entity_type == "canonical_fact":
+            changed["mapping_version"] = "v2"
+        elif entity_type == "raw_fact":
+            changed["concept"] = "RevenueFromContract"
+        elif entity_type == "source_document":
+            changed["source_url"] = "https://www.sec.gov/Archives/restated"
+        restated_rows.append((entity_type, row_id, changed))
+    restated_dataset = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": ["restated"]},
+        rows=restated_rows,
+    )
+    restated = publications.publish_dataset(
+        company_id=company_id,
+        dataset_id=restated_dataset,
+        profile_id=profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+    old_tree = client.get(
+        "/api/v1/provenance/published-revenue-q4",
+        params={"publication_id": publication.publication_id},
+    )
+    new_tree = client.get(
+        "/api/v1/provenance/published-revenue-q4",
+        params={"publication_id": restated.publication_id},
+    )
+    assert old_tree.json()["tree"]["fields"]["mapping_version"] == "v1"
+    assert new_tree.json()["tree"]["fields"]["mapping_version"] == "v2"
+    assert old_tree.json()["tree"]["parents"][0]["fields"]["concept"] == "Revenues"
+    pinned_facts = client.get(
+        "/api/v1/companies/AAPL/facts",
+        params={"metrics": "REVENUE", "publication_id": publication.publication_id},
+    )
+    assert pinned_facts.json()["facts"][-1]["provenance"]["source_url"] == "https://www.sec.gov/Archives/example"
+
+
+def test_segments_and_freshness_read_the_published_dataset(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    company_id = "0000320193"
+    document_id = "published-filing"
+    digest = "d" * 64
+    profile = _strict_profile(company_id, 302, document_id, digest)
+    profile["securities"][0]["ticker"] = "AAPL"
+    profile["securities"][0]["exchange"] = "NASDAQ"
+    profile["segments"] = {
+        "parser": "ixbrl_segments_v1",
+        "axes": [{
+            "name": "StatementBusinessSegmentsAxis",
+            "kind": "segment",
+            "label": "Operating segment",
+            "members": {"PublishedSegmentMember": {"label": "Published Segment"}},
+            "evidence": ["filing-evidence"],
+        }],
+        "reconciliation": "explicit_eliminations",
+        "revenue_concept": "us-gaap:Revenues",
+        "profit_concept": None,
+        "evidence": ["filing-evidence"],
+    }
+    profile["applicability"]["SEGMENTS"] = "required"
+    profile["applicability_evidence"].pop("SEGMENTS")
+
+    publications = PublicationRepository(db)
+    profile_id = publications.create_profile(
+        company_id, version=302, schema_version=2, content=profile
+    )
+    dataset_id = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": []},
+        rows=[
+            (
+                "source_document",
+                document_id,
+                {
+                    "source_document_id": document_id,
+                    "company_id": company_id,
+                    "provider": "SEC",
+                    "document_type": "FILING_DOCUMENT",
+                    "form_type": "10-K",
+                    "fetched_at": "2026-09-19T12:00:00+00:00",
+                    "content_sha256": digest,
+                    "source_url": "https://www.sec.gov/example",
+                },
+            ),
+            (
+                "source_document",
+                "published-filing-new",
+                {
+                    "source_document_id": "published-filing-new",
+                    "company_id": company_id,
+                    "provider": "SEC",
+                    "document_type": "FILING_DOCUMENT",
+                    "form_type": "10-K/A",
+                    "fetched_at": "2026-09-19T12:00:00+00:00",
+                    "content_sha256": "f" * 64,
+                    "source_url": "https://www.sec.gov/example-new",
+                },
+            ),
+            (
+                "canonical_fact", "old-disclosure-date", {
+                    "canonical_fact_id": "old-disclosure-date",
+                    "company_id": company_id,
+                    "canonical_metric": "REVENUE",
+                    "period_type": "FY",
+                    "status": "REPORTED",
+                    "mapping_rule_id": "fixture",
+                    "mapping_version": "v1",
+                    "source_raw_fact_ids": [],
+                    "source_document_id": document_id,
+                    "as_known_at": "2026-08-20",
+                },
+            ),
+            (
+                "canonical_fact", "new-disclosure-date", {
+                    "canonical_fact_id": "new-disclosure-date",
+                    "company_id": company_id,
+                    "canonical_metric": "REVENUE",
+                    "period_type": "FY",
+                    "status": "REPORTED",
+                    "mapping_rule_id": "fixture",
+                    "mapping_version": "v1",
+                    "source_raw_fact_ids": [],
+                    "source_document_id": "published-filing-new",
+                    "as_known_at": "2026-08-27",
+                },
+            ),
+            (
+                "source_document",
+                "published-companyfacts",
+                {
+                    "source_document_id": "published-companyfacts",
+                    "company_id": company_id,
+                    "provider": "SEC",
+                    "document_type": "COMPANYFACTS",
+                    "fetched_at": "2026-09-19T12:00:00+00:00",
+                    "content_sha256": "e" * 64,
+                    "source_url": "https://data.sec.gov/example",
+                },
+            ),
+            *[
+                (
+                    "source_document", f"recent-filing-{index}", {
+                        "source_document_id": f"recent-filing-{index}",
+                        "company_id": company_id,
+                        "provider": "SEC",
+                        "document_type": "FILING_DOCUMENT",
+                        "form_type": "10-Q",
+                        "fetched_at": "2026-09-20T12:00:00+00:00",
+                        "content_sha256": f"{index}" * 64,
+                        "source_url": f"https://www.sec.gov/recent-{index}",
+                    },
+                )
+                for index in range(5)
+            ],
+            (
+                "segment_fact",
+                "published-segment-fact",
+                {
+                    "segment_fact_id": "published-segment-fact",
+                    "company_id": company_id,
+                    "segment_name_reported": "PublishedSegmentMember",
+                    "segment_name_canonical": "Published Segment",
+                    "segment_kind": "segment",
+                    "metric_name": "REVENUE",
+                    "fiscal_year": 2026,
+                    "fiscal_quarter": None,
+                    "period_type": "FY",
+                    "period_end": "2026-01-25",
+                    "value": 123.0,
+                    "unit": "USD",
+                    "status": "DISCLOSED",
+                    "source_raw_fact_ids": [],
+                    "source_document_id": document_id,
+                },
+            ),
+            (
+                "segment_fact", "published-segment-new", {
+                    "segment_fact_id": "published-segment-new",
+                    "company_id": company_id,
+                    "segment_name_reported": "PublishedSegmentMember",
+                    "segment_name_canonical": "Published Segment",
+                    "segment_kind": "segment",
+                    "metric_name": "REVENUE",
+                    "fiscal_year": 2026,
+                    "fiscal_quarter": None,
+                    "period_type": "FY",
+                    "period_end": "2026-01-25",
+                    "value": 456.0,
+                    "unit": "USD",
+                    "status": "DISCLOSED",
+                    "source_raw_fact_ids": [],
+                    "source_document_id": "published-filing-new",
+                },
+            ),
+        ],
+    )
+    publication = publications.publish_dataset(
+        company_id=company_id,
+        dataset_id=dataset_id,
+        profile_id=profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+
+    segment_response = client.get("/api/v1/companies/AAPL/segments")
+    freshness_response = client.get("/api/v1/companies/AAPL/freshness")
+    company_response = client.get("/api/v1/companies/AAPL")
+
+    assert segment_response.status_code == 200
+    assert segment_response.json()["publication_id"] == publication.publication_id
+    assert [item["name"] for item in segment_response.json()["segments"]] == [
+        "Published Segment"
+    ]
+    assert segment_response.json()["segments"][0]["latest"]["value"] == 456.0
+    assert freshness_response.status_code == 200
+    modules = {item["key"]: item for item in freshness_response.json()["modules"]}
+    assert modules["sec_financials"]["as_of"] == "2026-08-27"
+    assert modules["segments"]["as_of"] == "2026-08-27"
+    assert company_response.json()["source_freshness"]["COMPANYFACTS_SNAPSHOT"][
+        "fetched_at"
+    ].startswith("2026-09-19")
