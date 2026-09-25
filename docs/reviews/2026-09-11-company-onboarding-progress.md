@@ -2,9 +2,9 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T10 已按顺序执行；当时 KO/COST 官方 iXBRL 证据不可取得，真实发布未冒进。扩展 C01—C10 已按顺序开发；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。用户接受系统采集校验 + 维护者专属适配复核，要求顺序执行并逐阶段更新本文。
+状态：T01—T10 已按顺序执行；当时 KO/COST 官方 iXBRL 证据不可取得，真实发布未冒进。扩展 C01—C10 已按顺序开发；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。2026-09-25 的 N01 补齐 NVDA 行情、管理层/Form 4 和估值审核，在正式数据库副本完成真实验收；桌面闭环通过，移动端替代导航仍待方案确认。
 
-扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。
+扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。NVDA 研究补全计划：`docs/superpowers/plans/2026-09-25-nvda-completion.md`。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
 |---|---|---|---|---|
@@ -28,6 +28,7 @@
 | C08 五阶段与适配工作台 | 已完成 | RED 无进度条；GREEN 17 浏览器测试，type/lint 通过 | 已自检 | 候选审查、证据、下载、上传边界和无刷新恢复已覆盖 |
 | C09 全局任务入口 | 已完成 | 21 个全量浏览器路径、类型/lint/build 通过 | 已自检 | 精确计数、刷新恢复、终态消失与最近任务恢复均已覆盖 |
 | C10 NVDA 真实闭环 | 已完成（独立验收库及正式库） | 412 个全量后端、37 个浏览器测试通过；正式库真实浏览器与 SEC 溯源检查 | 独立代码审查发现均已修复，v3 证据补入 golden | `docs/reviews/2026-09-19-company-onboarding-closure-validation.md`；正式任务 5/5 已发布 |
+| N01 NVDA 行情/管理层/估值补全 | 核心功能已完成；移动端入口待定 | 423 个全量后端、38 个浏览器测试；真实副本行情/管理层/估值/版本失效/桌面与移动布局通过 | 自检完成；移动端导航设计未擅自扩展 | `docs/reviews/2026-09-25-nvda-completion-validation.md` |
 
 ## C01 不可变 FETCH 持久化
 
@@ -200,6 +201,24 @@
 证据文件/报告：`docs/reviews/2026-09-19-company-onboarding-closure-validation.md`、`tests/fixtures/onboarding/0001045810/`、`config/issuers/0001045810/`。独立发布任务 `85171c6c-42e9-4abf-8b85-a405ec315969`，publication `95c57f23-84fc-49f7-9f94-99d6d85eb241`；正式任务 `2dfbca4b-f4ea-423c-aaa9-06362cbce376`，publication `87ba7dd8-dce9-4767-9643-21b4001a8eee`。
 
 边界与下一步：独立验收库 `/tmp/equitylens-nvda-c10.XfGQKC` 和正式 `data/` 是分别审核发布的版本。管理层、行情、估值仍明确显示未同步/需配置，不能宣称整个研究面板全部完成。行情刷新与公司页面数据刷新体验优化保留为后续单独待办。
+
+## N01 NVDA 行情、管理层与估值补全
+
+阶段与提交号：N01；实现提交 `eaca3b8`、`b196c19`、`8013cd1`、`78f711e`、`5437b99`、`c8e9d9c`、`b007e30`，验证文档提交在本阶段记录更新后创建。
+
+实际改动：为 NVDA 配置 Nasdaq/Tencent 行情符号及缺配置错误；Form 4 按 SEC `primaryDocument` 获取并逐文档隔离失败；加入版本化 NVDA 估值先验、发布身份绑定草稿、五项假设审核卡和确认后公司能力自动重读。正式库副本真实演练进一步修复显式 store 未贯穿 filing 查询、空财年季度破坏 TTM 当前值、发布币种大小写误判三项边界。
+
+测试命令及结果：
+
+- 后端全量：`423 passed, 1 warning in 129.04s`。
+- 前端 lint、TypeScript、Next build 通过；浏览器全量 `38 passed in 27.7s`。
+- 正式数据库副本真实同步：Nasdaq NVDA `$223.705`；高管 10、董事 10、Form 4 文档 12、内部人交易 30。
+- 估值草稿确认后 default 200、目录 READY；新 publication 使旧确认失效并返回 `VALUATION_DRAFT_STALE`。
+- 1440×900 与 390×844 配置卡布局无横向溢出；确认后不刷新浏览器直接进入 `$82` 估值工作区。
+
+证据文件/报告：`docs/reviews/2026-09-25-nvda-completion-validation.md`。
+
+遗留问题与下一步：移动端现有 CSS 隐藏完整侧边栏，Topbar 没有公司或研究模块替代导航，普通用户无法自行进入 NVDA 估值页。该问题涉及移动导航方案，未在没有用户确认的情况下扩展；N01 暂不标记为整体完成。此前记录的行情刷新和公司页面数据刷新优化仍保留为后续事项。
 
 ## 每阶段记录格式
 
