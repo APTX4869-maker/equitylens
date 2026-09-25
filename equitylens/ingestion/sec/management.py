@@ -28,12 +28,31 @@ class ManagementSyncReport:
     compensation_rows: int = 0
     board_members: int = 0
     insider_transactions: int = 0
+    form4_documents: int = 0
+    form4_skipped: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
 def _slug(name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "-", name.lower()).strip("-")
     return s[:40] or "x"
+
+
+def _primary_document_name(row: dict) -> str:
+    value = str(row.get("primaryDocument") or "").strip().replace("\\", "/")
+    name = value.rsplit("/", 1)[-1]
+    if not name or name in {".", ".."}:
+        raise ValueError(
+            "SEC_PRIMARY_DOCUMENT_MISSING: SEC primaryDocument is missing"
+        )
+    return name
+
+
+def _filing_document_url(
+    cik_int: str, accession_number: str, document_name: str
+) -> str:
+    accession = accession_number.replace("-", "")
+    return f"{SEC_ARCHIVES_URL}{cik_int}/{accession}/{document_name}"
 
 
 def _fetch_doc(client: SECClient, url: str, directory: Path, doc_name: str,
@@ -111,51 +130,89 @@ def sync_management(
             report.warnings.append("no DEF 14A found in recent filings")
 
         # ---------- 2) Form 4 ----------
+        existing_rows = store.query(
+            "SELECT * FROM insider_transaction WHERE company_id = ?", [cik]
+        )
         ins_rows: list[dict] = []
-        for row in list_filing_docs(
+        successful_accessions: set[str] = set()
+        form4_filings = list_filing_docs(
             ticker, forms=("4",), limit_per_form=forms4_limit, raw_dir=raw_dir
-        ):
+        )
+        for row in form4_filings:
             accn = row["accessionNumber"]
             accn_nodash = accn.replace("-", "")
             directory = raw_dir / "sec" / cik / "filing_docs" / accn
-            url = f"{SEC_ARCHIVES_URL}{cik_int}/{accn_nodash}/form4.xml"
-            if fetch:
-                content, doc = _fetch_doc(own_client, url, directory, "form4.xml",
-                                          cik, "4", accn, row.get("filingDate"))
-            else:
-                record = load_snapshot_record(directory, "form4.xml")
-                if record is None:
-                    continue
-                content = record.content
-                doc = SourceDocument(provider="SEC", document_type="FILING_DOCUMENT",
-                                     form_type="4", accession_number=accn,
-                                     filed_at=row.get("filingDate"), source_url=url,
-                                     content_sha256=record.sha256, local_path=str(record.path),
-                                     fetched_at=record.fetched_at,
-                                     parser_version=PARSER_VERSION, company_id=cik)
-            docs_to_persist.append(doc)
-            parsed = parse_form4(content)
-            for i, t in enumerate(parsed.transactions):
-                ins_rows.append({
-                    "transaction_id": f"f4_{cik}_{accn_nodash}_{i}",
-                    "company_id": cik,
-                    "insider_name": t.insider_name,
-                    "insider_cik": t.insider_cik,
-                    "officer_title": t.officer_title,
-                    "transaction_date": t.transaction_date,
-                    "transaction_code": t.transaction_code,
-                    "security_title": t.security_title,
-                    "shares": t.shares,
-                    "price_per_share": t.price_per_share,
-                    "acquired_disposed_code": t.acquired_disposed_code,
-                    "shares_owned_after": t.shares_owned_after,
-                    "filed_at": row.get("filingDate"),
-                    "accession_number": accn,
-                    "source_url": url,
-                    "source_document_id": doc.source_document_id,
-                })
-        store.replace_insider_transactions(cik, ins_rows)
-        report.insider_transactions = len(ins_rows)
+            raw_doc_name = str(row.get("primaryDocument") or "<missing>")
+            try:
+                doc_name = _primary_document_name(row)
+                url = _filing_document_url(cik_int, accn, doc_name)
+                if fetch:
+                    content, doc = _fetch_doc(
+                        own_client, url, directory, doc_name,
+                        cik, "4", accn, row.get("filingDate"),
+                    )
+                else:
+                    record = load_snapshot_record(directory, doc_name)
+                    if record is None:
+                        raise FileNotFoundError(
+                            f"no cached {doc_name}; run with --fetch"
+                        )
+                    content = record.content
+                    doc = SourceDocument(
+                        provider="SEC", document_type="FILING_DOCUMENT",
+                        form_type="4", accession_number=accn,
+                        filed_at=row.get("filingDate"), source_url=url,
+                        content_sha256=record.sha256, local_path=str(record.path),
+                        fetched_at=record.fetched_at,
+                        parser_version=PARSER_VERSION, company_id=cik,
+                        metadata_json={"primary_document": doc_name},
+                    )
+                parsed = parse_form4(content)
+                docs_to_persist.append(doc)
+                successful_accessions.add(accn)
+                report.form4_documents += 1
+                report.warnings.extend(
+                    f"Form 4 {accn} ({doc_name}): {warning}"
+                    for warning in parsed.warnings
+                )
+                for i, t in enumerate(parsed.transactions):
+                    ins_rows.append({
+                        "transaction_id": f"f4_{cik}_{accn_nodash}_{i}",
+                        "company_id": cik,
+                        "insider_name": t.insider_name,
+                        "insider_cik": t.insider_cik,
+                        "officer_title": t.officer_title,
+                        "transaction_date": t.transaction_date,
+                        "transaction_code": t.transaction_code,
+                        "security_title": t.security_title,
+                        "shares": t.shares,
+                        "price_per_share": t.price_per_share,
+                        "acquired_disposed_code": t.acquired_disposed_code,
+                        "shares_owned_after": t.shares_owned_after,
+                        "filed_at": row.get("filingDate"),
+                        "accession_number": accn,
+                        "source_url": url,
+                        "source_document_id": doc.source_document_id,
+                    })
+            except Exception as exc:
+                report.form4_skipped += 1
+                message = str(exc)
+                if message.startswith("SEC_PRIMARY_DOCUMENT_MISSING:"):
+                    report.warnings.append(message)
+                else:
+                    report.warnings.append(
+                        "SEC_FORM4_PARSE_FAILED: "
+                        f"Form 4 {accn} ({raw_doc_name}) skipped: {exc}"
+                    )
+        carried_rows = [
+            dict(row) for row in existing_rows
+            if row.get("accession_number") not in successful_accessions
+        ]
+        combined_rows = sorted(
+            [*carried_rows, *ins_rows], key=lambda item: item["transaction_id"]
+        )
+        store.replace_insider_transactions(cik, combined_rows)
+        report.insider_transactions = len(combined_rows)
         store.upsert_source_documents([d.to_row() for d in docs_to_persist])
     finally:
         if client is None:

@@ -11,6 +11,9 @@ class _Store:
     def replace_insider_transactions(self, company_id, rows):
         pass
 
+    def query(self, sql, params=None):
+        return []
+
     def upsert_source_documents(self, rows):
         self.source_rows.extend(rows)
 
