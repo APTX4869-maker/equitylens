@@ -1,0 +1,528 @@
+applicability:
+  EPS: required
+  SEGMENTS: required
+  VALUATION: required
+applicability_evidence: {}
+cash_debt:
+  cash_components:
+  - us-gaap:CashAndCashEquivalentsAtCarryingValue
+  debt_components:
+  - us-gaap:LongTermDebtNoncurrent
+  evidence:
+  - ev-450d280394bbad2c
+  - ev-6550e6efbb4a2e8c
+  - ev-c9ba28f2bef01ac8
+  restricted_cash_policy: separate
+company_id: 0001045810
+eps_method: reported_diluted
+eps_method_evidence:
+- ev-f19ba49177fa13d9
+evidence:
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-0012dd6191142088
+  locator: /*/*[2]/*[870]/*[2]/*[7]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-0b45c758f2bdbab8
+  locator: /*/*[2]/ix:continuation[18]/*[2]/*/ix:nonFraction[1]
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-0f7104cebccd1194
+  locator: /*/*[2]/*[836]/*[2]/*[5]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-13e8720bd0fb3305
+  locator: /*/*[2]/*[854]/*[2]/*[10]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-1ea48cb6a39a2865
+  locator: /*/*[2]/*[854]/*[2]/*[33]/*[1]/*/*/ix:nonFraction[3]/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-25f44bf13112348e
+  locator: /*/*[2]/*[870]/*[2]/*[25]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-2fca85ce662e539c
+  locator: /*/*[2]/*[870]/*[2]/*[8]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-318445e7d4c581bb
+  locator: /*/*[2]/*[870]/*[2]/*[31]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-3b2dff60f9946512
+  locator: /*/*[2]/*[836]/*[2]/*[26]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-450d280394bbad2c
+  locator: /*/*[2]/*[870]/*[2]/*[40]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-5236866c67aa0557
+  locator: /*/*[2]/*[854]/*[2]/*[39]/*[3]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-546a5d8e719338a4
+  locator: /*/*[2]/*[836]/*[2]/*[19]/*[11]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-611dd974d49f0ef1
+  locator: /*/*[2]/*[854]/*[2]/*[28]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-6550e6efbb4a2e8c
+  locator: /*/*[2]/*[854]/*[2]/*[25]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-689d5ed13b2ba3be
+  locator: /*/*[2]/*[870]/*[2]/*[28]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-6f4ebf0dfcc9df35
+  locator: /*/*[2]/*[836]/*[2]/*[27]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-7238189fd47c60cf
+  locator: /*/*[2]/*[854]/*[2]/*[38]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-78f2ee5bb1d62840
+  locator: /
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-7a1e7aaafe886c09
+  locator: /*/*[2]/*[854]/*[2]/*[17]/*[3]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-82eacfb855041dc1
+  locator: /*/*[2]/*[854]/*[2]/*[24]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-8624ce2b231f7fc7
+  locator: /*/*[2]/*[836]/*[2]/*[17]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-99deccb026e67a1d
+  locator: /*/*[2]/*[836]/*[2]/*[12]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-b4f0cb87c91b2397
+  locator: /*/*[2]/*[836]/*[2]/*[4]/*[11]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-c4dd6b791b036d6e
+  locator: /*/*[2]/ix:continuation[22]/*[6]/*/ix:nonFraction[2]
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-c91ceb7bc2d2831b
+  locator: /*/*[2]/*[870]/*[2]/*[20]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-c9ba28f2bef01ac8
+  locator: /*/*[2]/*[854]/*[2]/*[5]/*[3]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-d0175e8c4c87a727
+  locator: /*/*[2]/*[836]/*[2]/*[18]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-d55e3f4b4896527d
+  locator: /*/*[2]/ix:continuation[12]/*[2]/*/ix:nonFraction[1]
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-d6d8d0b4de5e28e8
+  locator: /*/*[2]/*[870]/*[2]/*[34]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-dc2aac311a9f7683
+  locator: /*/*[2]/ix:continuation[22]/ix:nonNumeric/*[2]/*[2]/*[17]/*[10]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-df2d90ab1fc93860
+  locator: /*/*[2]/*[836]/*[2]/*[6]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-e44fa316ce0725fb
+  locator: /*/*[2]/*[836]/*[2]/*[22]/*[11]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-e5aac063a96a8be9
+  locator: /*/*[2]/*[870]/*[2]/*[38]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-ed1e933e31847bbb
+  locator: /*/*[2]/*[854]/*[2]/*[6]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-f19ba49177fa13d9
+  locator: /*/*[2]/*[836]/*[2]/*[23]/*[11]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- content_sha256: d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+  evidence_id: ev-fcdb228f615ad4d3
+  locator: /*/*[2]/*[870]/*[2]/*[39]/*[2]/*/ix:nonFraction
+  source_document_id: filing:0001045810-24-000029:d493052febacf3c5cc619ec6d0637c28a6b93bf605b121a5cae00b81a0d56048
+- evidence_id: ev-nvda-segments-2026
+  source_document_id: filing:0001045810-26-000021:467f9ed57e599a1ef9d3bc5aecc5693fb8592457e30c92c9c85f09148cb49b38
+  content_sha256: 467f9ed57e599a1ef9d3bc5aecc5693fb8592457e30c92c9c85f09148cb49b38
+  locator: /*/*[2]/ix:continuation[44]/ix:continuation/*[1]/*/*[6]/*[3]/*/ix:nonFraction
+fiscal_calendar:
+  evidence:
+  - ev-78f2ee5bb1d62840
+  week_based: true
+  year_end: 01-31
+metrics:
+  AMORTIZATION_OF_INTANGIBLE_ASSETS:
+    concepts:
+    - us-gaap:AmortizationOfIntangibleAssets
+    context: consolidated
+    evidence:
+    - ev-d55e3f4b4896527d
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  BALANCE_TOTAL:
+    concepts:
+    - us-gaap:LiabilitiesAndStockholdersEquity
+    context: consolidated
+    evidence:
+    - ev-5236866c67aa0557
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  BASIC_EPS:
+    concepts:
+    - us-gaap:EarningsPerShareBasic
+    context: consolidated
+    evidence:
+    - ev-e44fa316ce0725fb
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD/shares
+  BASIC_WEIGHTED_AVG_SHARES:
+    concepts:
+    - us-gaap:WeightedAverageNumberOfSharesOutstandingBasic
+    context: consolidated
+    evidence:
+    - ev-3b2dff60f9946512
+    period: duration
+    selection: latest_filed_same_basis
+    unit: shares
+  CAPITAL_EXPENDITURES:
+    concepts:
+    - us-gaap:PaymentsToAcquireProductiveAssets
+    context: consolidated
+    evidence:
+    - ev-25f44bf13112348e
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  CASH_AND_EQUIVALENTS:
+    concepts:
+    - us-gaap:CashAndCashEquivalentsAtCarryingValue
+    context: consolidated
+    evidence:
+    - ev-c9ba28f2bef01ac8
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  CASH_AND_RESTRICTED_CASH:
+    concepts:
+    - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+    context: consolidated
+    evidence:
+    - ev-450d280394bbad2c
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  COMMERCIAL_PAPER:
+    concepts:
+    - us-gaap:CommercialPaper
+    context: consolidated
+    evidence:
+    - ev-c4dd6b791b036d6e
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  COST_OF_REVENUE:
+    concepts:
+    - us-gaap:CostOfRevenue
+    context: consolidated
+    evidence:
+    - ev-0f7104cebccd1194
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  CURRENT_ASSETS:
+    concepts:
+    - us-gaap:AssetsCurrent
+    context: consolidated
+    evidence:
+    - ev-13e8720bd0fb3305
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  CURRENT_LIABILITIES:
+    concepts:
+    - us-gaap:LiabilitiesCurrent
+    context: consolidated
+    evidence:
+    - ev-82eacfb855041dc1
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  DEPRECIATION:
+    concepts:
+    - us-gaap:Depreciation
+    context: consolidated
+    evidence:
+    - ev-0b45c758f2bdbab8
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  DEPRECIATION_AMORTIZATION:
+    concepts:
+    - us-gaap:DepreciationDepletionAndAmortization
+    context: consolidated
+    evidence:
+    - ev-2fca85ce662e539c
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  DILUTED_EPS:
+    concepts:
+    - us-gaap:EarningsPerShareDiluted
+    context: consolidated
+    evidence:
+    - ev-f19ba49177fa13d9
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD/shares
+  DILUTED_WEIGHTED_AVG_SHARES:
+    concepts:
+    - us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding
+    context: consolidated
+    evidence:
+    - ev-6f4ebf0dfcc9df35
+    period: duration
+    selection: latest_filed_same_basis
+    unit: shares
+  DIVIDENDS_PAID:
+    concepts:
+    - us-gaap:PaymentsOfDividends
+    context: consolidated
+    evidence:
+    - ev-d6d8d0b4de5e28e8
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  FINANCING_CASH_FLOW:
+    concepts:
+    - us-gaap:NetCashProvidedByUsedInFinancingActivities
+    context: consolidated
+    evidence:
+    - ev-e5aac063a96a8be9
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  GROSS_PROFIT:
+    concepts:
+    - us-gaap:GrossProfit
+    context: consolidated
+    evidence:
+    - ev-df2d90ab1fc93860
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  INCOME_TAX_EXPENSE:
+    concepts:
+    - us-gaap:IncomeTaxExpenseBenefit
+    context: consolidated
+    evidence:
+    - ev-d0175e8c4c87a727
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  INVESTING_CASH_FLOW:
+    concepts:
+    - us-gaap:NetCashProvidedByUsedInInvestingActivities
+    context: consolidated
+    evidence:
+    - ev-689d5ed13b2ba3be
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  LONG_TERM_DEBT:
+    concepts:
+    - us-gaap:LongTermDebtNoncurrent
+    context: consolidated
+    evidence:
+    - ev-6550e6efbb4a2e8c
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  LONG_TERM_DEBT_CURRENT:
+    concepts:
+    - us-gaap:LongTermDebtCurrent
+    context: consolidated
+    evidence:
+    - ev-dc2aac311a9f7683
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  NET_CHANGE_IN_CASH_INCLUDING_FX:
+    concepts:
+    - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
+    context: consolidated
+    evidence:
+    - ev-fcdb228f615ad4d3
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  NET_INCOME:
+    concepts:
+    - us-gaap:NetIncomeLoss
+    context: consolidated
+    evidence:
+    - ev-546a5d8e719338a4
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  OPERATING_CASH_FLOW:
+    concepts:
+    - us-gaap:NetCashProvidedByUsedInOperatingActivities
+    context: consolidated
+    evidence:
+    - ev-c91ceb7bc2d2831b
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  OPERATING_INCOME:
+    concepts:
+    - us-gaap:OperatingIncomeLoss
+    context: consolidated
+    evidence:
+    - ev-99deccb026e67a1d
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  PRETAX_INCOME:
+    concepts:
+    - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+    context: consolidated
+    evidence:
+    - ev-8624ce2b231f7fc7
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  REVENUE:
+    concepts:
+    - us-gaap:Revenues
+    context: consolidated
+    evidence:
+    - ev-b4f0cb87c91b2397
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  SHARES_OUTSTANDING:
+    concepts:
+    - us-gaap:CommonStockSharesOutstanding
+    context: consolidated
+    evidence:
+    - ev-1ea48cb6a39a2865
+    period: instant
+    selection: latest_filed_same_basis
+    unit: shares
+  SHARE_BASED_COMPENSATION:
+    concepts:
+    - us-gaap:ShareBasedCompensation
+    context: consolidated
+    evidence:
+    - ev-0012dd6191142088
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  SHARE_REPURCHASES:
+    concepts:
+    - us-gaap:PaymentsForRepurchaseOfCommonStock
+    context: consolidated
+    evidence:
+    - ev-318445e7d4c581bb
+    period: duration
+    selection: latest_filed_same_basis
+    unit: USD
+  SHORT_TERM_INVESTMENTS:
+    concepts:
+    - us-gaap:MarketableSecuritiesCurrent
+    context: consolidated
+    evidence:
+    - ev-ed1e933e31847bbb
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  STOCKHOLDERS_EQUITY:
+    concepts:
+    - us-gaap:StockholdersEquity
+    context: consolidated
+    evidence:
+    - ev-7238189fd47c60cf
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  TOTAL_ASSETS:
+    concepts:
+    - us-gaap:Assets
+    context: consolidated
+    evidence:
+    - ev-7a1e7aaafe886c09
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+  TOTAL_LIABILITIES:
+    concepts:
+    - us-gaap:Liabilities
+    context: consolidated
+    evidence:
+    - ev-611dd974d49f0ef1
+    period: instant
+    selection: latest_filed_same_basis
+    unit: USD
+schema_version: 2
+securities:
+- class_label: null
+  currency: USD
+  evidence:
+  - ev-78f2ee5bb1d62840
+  exchange: Nasdaq
+  instrument_type: COMMON_STOCK
+  ticker: NVDA
+segments:
+  parser: ixbrl_segments_v1
+  axes:
+  - name: StatementBusinessSegmentsAxis
+    kind: segment
+    label: Operating segment
+    members:
+      ComputeAndNetworkingSegmentMember:
+        label: Compute & Networking
+        aggregate: false
+      GraphicsSegmentMember:
+        label: Graphics
+        aggregate: false
+      ComputeAndNetworkingMember:
+        label: Compute & Networking
+        aggregate: false
+      GraphicsMember:
+        label: Graphics
+        aggregate: false
+    evidence:
+    - ev-nvda-segments-2026
+  reconciliation: explicit_eliminations
+  revenue_concept: us-gaap:Revenues
+  profit_concept: null
+  evidence:
+  - ev-nvda-segments-2026
+template: us_gaap_operating_v1
+template_evidence:
+- ev-78f2ee5bb1d62840
+version: 2

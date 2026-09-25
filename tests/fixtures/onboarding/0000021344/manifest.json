@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-09-12T08:47:17Z",
+  "company_name": "The Coca-Cola Company",
+  "ticker": "KO",
+  "exchange": "NYSE",
+  "profile_path": "config/issuers/0000021344/1.yaml",
+  "submissions_path": "submissions.json",
+  "companyfacts_path": "companyfacts.json",
+  "snapshots": [
+    {"path": "submissions.json", "url": "https://data.sec.gov/submissions/CIK0000021344.json", "sha256": "f3e144fdab520ef86dc9aea18d5b93485df2aceababe570cae9084a675beb652"},
+    {"path": "companyfacts.json", "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000021344.json", "sha256": "53d363a9aa3071406cda9857654358f4dca42e174a1defb8cc1ce9ad2a4c9e40"}
+  ],
+  "annual_filing": {"accession": "0001628280-26-010047", "filed": "2026-02-20", "period_end": "2025-12-31", "url": "https://www.sec.gov/Archives/edgar/data/21344/000162828026010047/ko-20251231.htm"},
+  "manual_source_note": "Values transcribed from the FY2025 consolidated statements of income, balance sheets and cash flows; USD values are converted from disclosed millions.",
+  "expected_facts": {
+    "REVENUE": {"value": 47941000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Geographic and Customer Data: Net operating revenues"},
+    "OPERATING_INCOME": {"value": 13762000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Income: Operating income"},
+    "NET_INCOME": {"value": 13107000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Income: Net income attributable to shareowners"},
+    "BASIC_EPS": {"value": 3.05, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Income: Basic net income per share"},
+    "DILUTED_EPS": {"value": 3.04, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Income: Diluted net income per share"},
+    "BASIC_WEIGHTED_AVG_SHARES": {"value": 4303000000, "unit": "shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Note 18: weighted average shares, basic"},
+    "DILUTED_WEIGHTED_AVG_SHARES": {"value": 4313000000, "unit": "shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Note 18: weighted average shares, diluted"},
+    "TOTAL_ASSETS": {"value": 104816000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Balance Sheets: Total assets"},
+    "TOTAL_LIABILITIES": {"value": 70541000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Derived from total liabilities and equity less total equity on the same balance-sheet filing basis"},
+    "STOCKHOLDERS_EQUITY": {"value": 32169000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Balance Sheets: Equity attributable to shareowners"},
+    "OPERATING_CASH_FLOW": {"value": 7408000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Cash Flows: Net cash provided by operating activities"},
+    "INVESTING_CASH_FLOW": {"value": -67000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Cash Flows: Net cash used in investing activities"},
+    "FINANCING_CASH_FLOW": {"value": -8140000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Cash Flows: Net cash used in financing activities"},
+    "CASH_AND_EQUIVALENTS": {"value": 10270000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Balance Sheets: Cash and cash equivalents"},
+    "CAPITAL_EXPENDITURES": {"value": 2112000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-12-31", "accession": "0001628280-26-010047", "locator": "Consolidated Statements of Cash Flows: Purchases of property, plant and equipment"}
+  },
+  "expected_missing": {}
+}

@@ -1,0 +1,43 @@
+[project]
+name = "equitylens"
+version = "0.1.0"
+description = "EquityLens - local-first US equity research system (facts from SEC, calc from code, opinion from evidence)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "duckdb>=1.1",
+    "polars>=1.8",
+    "pyyaml>=6.0",
+    "lxml>=5.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    # pinned: 1.59.0 matches the installed chromium-headless-shell 1217 build
+    "playwright==1.59.0",
+]
+
+[project.scripts]
+equitylens = "equitylens.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["equitylens"]
+
+# PyPI reachability is poor from this network; use the TUNA mirror by default.
+[tool.uv]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,238 @@
+# Canonical fact mappings — versioned concept -> canonical metric rules.
+# V0.1 scope: the fact set required by CODEX_START_HERE.md for AAPL/MSFT.
+# Every rule id is versioned; changing a rule creates a new rule id.
+# v2: split long-term debt into its non-overlapping noncurrent portion (LongTermDebt
+#     was the total including the current portion and double-counted against
+#     SHORT_TERM_DEBT's LongTermDebtCurrent); add separate Depreciation and
+#     AmortizationOfIntangibleAssets concepts for issuers that do not report a
+#     single combined D&A line (MSFT).
+version: 4
+canonical_facts:
+  REVENUE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      - us-gaap:Revenues
+  COST_OF_REVENUE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:CostOfGoodsAndServicesSold
+      - us-gaap:CostOfRevenue
+      - us-gaap:CostOfGoodsSold
+  GROSS_PROFIT:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:GrossProfit
+  OPERATING_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:OperatingIncomeLoss
+  PRETAX_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+  INCOME_TAX_EXPENSE:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:IncomeTaxExpenseBenefit
+  NET_INCOME:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetIncomeLoss
+  BASIC_EPS:
+    type: duration
+    unit_family: currency_per_share
+    concepts:
+      - us-gaap:EarningsPerShareBasic
+  DILUTED_EPS:
+    type: duration
+    unit_family: currency_per_share
+    concepts:
+      - us-gaap:EarningsPerShareDiluted
+  BASIC_WEIGHTED_AVG_SHARES:
+    type: duration
+    unit_family: shares
+    concepts:
+      - us-gaap:WeightedAverageNumberOfSharesOutstandingBasic
+  DILUTED_WEIGHTED_AVG_SHARES:
+    type: duration
+    unit_family: shares
+    concepts:
+      - us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding
+  CASH_AND_EQUIVALENTS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:CashAndCashEquivalentsAtCarryingValue
+  CASH_AND_RESTRICTED_CASH:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+  SHORT_TERM_INVESTMENTS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:ShortTermInvestments
+      - us-gaap:MarketableSecuritiesCurrent
+      - us-gaap:AvailableForSaleSecuritiesCurrent
+  TOTAL_ASSETS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:Assets
+  BALANCE_TOTAL:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LiabilitiesAndStockholdersEquity
+  TOTAL_LIABILITIES:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:Liabilities
+  TOTAL_EQUITY:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+  CURRENT_ASSETS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:AssetsCurrent
+  CURRENT_LIABILITIES:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:LiabilitiesCurrent
+  LONG_TERM_DEBT_CURRENT:
+    type: instant
+    unit_family: currency
+    concepts:
+      # Current portion of long-term debt (distinct component, summed in the
+      # net-debt bridge; must never be lumped with a "total long-term debt" tag).
+      - us-gaap:LongTermDebtCurrent
+  SHORT_TERM_BORROWINGS:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:ShortTermBorrowings
+  COMMERCIAL_PAPER:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:CommercialPaper
+  LONG_TERM_DEBT:
+    type: instant
+    unit_family: currency
+    concepts:
+      # Non-overlapping noncurrent portion only. us-gaap:LongTermDebt is the
+      # TOTAL (including the current portion), which would double-count against
+      # LONG_TERM_DEBT_CURRENT when summed in the net-debt bridge.
+      - us-gaap:LongTermDebtNoncurrent
+  STOCKHOLDERS_EQUITY:
+    type: instant
+    unit_family: currency
+    concepts:
+      - us-gaap:StockholdersEquity
+  SHARES_OUTSTANDING:
+    type: instant
+    unit_family: shares
+    concepts:
+      - us-gaap:CommonStockSharesOutstanding
+  OPERATING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInOperatingActivities
+  INVESTING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInInvestingActivities
+  FINANCING_CASH_FLOW:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInFinancingActivities
+  FX_EFFECT_ON_CASH:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:EffectOfExchangeRateOnCashAndCashEquivalents
+      - us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+  NET_CHANGE_IN_CASH_INCLUDING_FX:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
+  CAPITAL_EXPENDITURES:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsToAcquirePropertyPlantAndEquipment
+      - us-gaap:PaymentsToAcquireProductiveAssets
+  DEPRECIATION_AMORTIZATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:DepreciationAmortizationAndAccretionNet
+      - us-gaap:DepreciationDepletionAndAmortization
+  DEPRECIATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:Depreciation
+  AMORTIZATION_OF_INTANGIBLE_ASSETS:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:AmortizationOfIntangibleAssets
+  SHARE_BASED_COMPENSATION:
+    type: duration
+    unit_family: currency
+    concepts:
+      - us-gaap:ShareBasedCompensation
+  DIVIDENDS_PAID:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsOfDividends
+      - us-gaap:PaymentsOfDividendsCommonStock
+  SHARE_REPURCHASES:
+    type: duration
+    unit_family: currency
+    sign: outflow_positive
+    concepts:
+      - us-gaap:PaymentsForRepurchaseOfCommonStock
+
+# Duration CURRENCY facts that may lack a standalone Q4 (10-K reports only the
+# full year; Q4 must be derived as FY - YTD_9M). Also cash-flow style facts:
+# 10-Qs report YTD values only, so Q2/Q3/Q4 are derived by differencing the
+# YTD chain within the same fiscal year.
+# NEVER include per-share ratios (EPS, weighted shares): differencing those
+# is meaningless; missing values stay missing rather than guessed.
+derive_standalone_quarter:
+  - REVENUE
+  - COST_OF_REVENUE
+  - GROSS_PROFIT
+  - OPERATING_INCOME
+  - PRETAX_INCOME
+  - INCOME_TAX_EXPENSE
+  - NET_INCOME
+  - OPERATING_CASH_FLOW
+  - CAPITAL_EXPENDITURES
+  - DEPRECIATION_AMORTIZATION
+  - SHARE_BASED_COMPENSATION
+  - DIVIDENDS_PAID
+  - SHARE_REPURCHASES

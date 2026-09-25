@@ -1,0 +1,23 @@
+# EquityLens API — FastAPI + DuckDB 后端镜像
+# 构建：docker compose build api（或 docker build -f Dockerfile.api .）
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# 与宿主环境一致的镜像源（清华），可按需改回官方源
+ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PYTHONUNBUFFERED=1
+ENV EQUITYLENS_USER_AGENT="EquityLens/0.1 (docker compose; research tool)"
+
+WORKDIR /app
+
+# 先拷依赖清单（利用层缓存），再拷代码并安装项目（含 equitylens CLI）
+COPY pyproject.toml uv.lock ./
+COPY equitylens ./equitylens
+COPY config ./config
+COPY spec ./spec
+RUN uv sync --frozen --no-dev
+
+# 数据目录挂载（SEC/行情快照 + DuckDB），由 compose 映射 ./data
+VOLUME ["/app/data"]
+
+EXPOSE 8000
+CMD ["uv", "run", "--no-sync", "uvicorn", "equitylens.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

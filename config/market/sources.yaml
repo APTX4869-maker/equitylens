@@ -1,0 +1,30 @@
+# 行情数据源运行配置（M8：首个真实 provider 接入）
+#
+# 纪律：行情是"外部事实"，不是 SEC 事实。抓取 → 原始快照（SHA-256）→ 落库 →
+# API 只读；页面展示 provider 与观测时间。同步失败/未同步是显式状态，绝不伪造价格。
+# 两个源均为非授权公开接口，仅用于研究展示（corporate_action_policy: none，不做复权推断）。
+version: market-sources.v1
+
+# 尝试顺序 = 主备链：nasdaq 优先（交易所口径），失败后回退 tencent（国内网络可用）
+active_providers: [nasdaq, tencent]
+
+# 快照视为"过期"的分钟数（当前仅用于展示与后续提醒，不做自动刷新）
+stale_after_minutes: 90
+
+providers:
+  nasdaq:
+    label: "Nasdaq"
+    endpoint: "https://api.nasdaq.com"
+    timezone: "America/New_York"
+    license_notes: "Nasdaq 官方站点公开 JSON（非授权接口，可能随时变更），仅研究用途。"
+  tencent:
+    label: "腾讯行情"
+    endpoint: "https://qt.gtimg.cn"
+    encoding: "gbk"
+    timezone: "Asia/Shanghai"
+    license_notes: "腾讯行情公开接口（非授权），仅研究用途。"
+
+# 每家公司在各 provider 的行情代码
+symbols:
+  AAPL: { nasdaq: AAPL, tencent: usAAPL }
+  MSFT: { nasdaq: MSFT, tencent: usMSFT }

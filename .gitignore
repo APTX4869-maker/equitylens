@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Data (generated)
+data/equitylens.duckdb
+data/equitylens.duckdb.*
+data/parquet/
+data/raw/sec/*/companyfacts.json
+data/raw/sec/*/submissions.json
+data/raw/sec/_registry/company_tickers.json
+data/raw/**/_manifest.json
+data/raw/**/.manifest.lock
+
+# Keep raw snapshots small in git; fixtures live under tests/fixtures
+*.log
+.DS_Store

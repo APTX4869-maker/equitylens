@@ -1,0 +1,70 @@
+version: 1
+sources:
+  SEC_PUBLIC_DATA:
+    tier: A
+    authority: regulator
+    base_urls:
+      submissions: https://data.sec.gov/submissions/
+      companyfacts: https://data.sec.gov/api/xbrl/companyfacts/
+      companyconcept: https://data.sec.gov/api/xbrl/companyconcept/
+      frames: https://data.sec.gov/api/xbrl/frames/
+    docs: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
+    auth: none
+    max_internal_rps: 2
+    required_headers:
+      User-Agent: "EquityLens <contact-email-config>"
+    raw_cache: required
+
+  SEC_ARCHIVES:
+    tier: A
+    authority: regulator
+    base_url: https://www.sec.gov/Archives/edgar/data/
+    docs: https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data
+    raw_cache: required
+
+  APPLE_IR:
+    tier: B
+    authority: issuer
+    base_url: https://investor.apple.com/
+    ticker: AAPL
+
+  MICROSOFT_IR:
+    tier: B
+    authority: issuer
+    base_url: https://www.microsoft.com/en-us/investor/
+    ticker: MSFT
+
+  US_TREASURY:
+    tier: C
+    authority: government
+    base_url: https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics
+    use: risk_free_rate
+
+  FRED:
+    tier: C
+    authority: federal_reserve_data_service
+    docs: https://fred.stlouisfed.org/docs/api/fred/series_observations.html
+    auth: api_key
+    use: macro_series
+
+  MARKET_PROVIDER:
+    tier: D
+    authority: configured_vendor
+    required_configuration:
+      - provider_name
+      - license_notes
+      - timezone
+      - corporate_action_policy
+    production_fallback_to_scraper: false
+    # M8: concrete runtime config lives in config/market/sources.yaml
+    configured:
+      active: [nasdaq, tencent]
+      providers:
+        nasdaq:
+          license_notes: "Nasdaq 官方站点公开 JSON（非授权接口，可能随时变更），仅研究用途。"
+          timezone: America/New_York
+          corporate_action_policy: none
+        tencent:
+          license_notes: "腾讯行情公开接口（非授权），仅研究用途。"
+          timezone: Asia/Shanghai
+          corporate_action_policy: none

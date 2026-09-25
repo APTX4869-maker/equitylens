@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EquityLens issuer profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "company_id",
+    "version",
+    "template",
+    "fiscal_calendar",
+    "metrics",
+    "segments",
+    "cash_debt",
+    "securities",
+    "applicability",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "company_id": {"type": "string", "pattern": "^\\d{10}$"},
+    "version": {"type": "integer", "minimum": 1},
+    "template": {"const": "us_gaap_operating_v1"},
+    "fiscal_calendar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["year_end", "week_based"],
+      "properties": {
+        "year_end": {"type": "string", "pattern": "^\\d{2}-\\d{2}$"},
+        "week_based": {"type": "boolean"}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["concepts", "unit", "context", "period", "selection"],
+        "properties": {
+          "concepts": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "unit": {"type": "string"},
+          "context": {"const": "consolidated"},
+          "period": {"enum": ["duration", "instant"]},
+          "selection": {"const": "latest_filed_same_basis"}
+        }
+      }
+    },
+    "segments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axes", "reconciliation"],
+      "properties": {
+        "axes": {"type": "array", "items": {"type": "string"}},
+        "reconciliation": {"enum": ["explicit_eliminations", "not_applicable"]}
+      }
+    },
+    "cash_debt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cash_components", "debt_components", "restricted_cash_policy"],
+      "properties": {
+        "cash_components": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "debt_components": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "restricted_cash_policy": {"enum": ["include", "exclude", "separate"]}
+      }
+    },
+    "eps_method": {"enum": ["reported_diluted", "two_class", "preferred_adjusted", null]},
+    "securities": {"type": "array", "minItems": 1},
+    "applicability": {"type": "object"},
+    "evidence": {"type": "array", "minItems": 1}
+  }
+}

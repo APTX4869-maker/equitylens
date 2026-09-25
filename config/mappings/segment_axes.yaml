@@ -1,0 +1,48 @@
+# Per-issuer segment/product dimension mapping (M4).
+# Each issuer discloses its own axis/member taxonomy; we map them to stable
+# canonical labels. Kinds:
+#   segment  - company-reportable operating segment (per ASC 280)
+#   product  - product/service category (often a revenue disaggregation)
+#   geo      - geographic disclosure
+# An axis marked `aggregate: true` (e.g. hardware total) is kept in facts but
+# excluded from the default segment mix view.
+version: 1
+issuers:
+  AAPL:
+    axes:
+      - name: StatementBusinessSegmentsAxis
+        kind: segment
+        label: 公司报告分部（地理区域）
+        members:
+          AmericasSegmentMember: {label: 美洲}
+          EuropeSegmentMember: {label: 欧洲}
+          GreaterChinaSegmentMember: {label: 大中华区}
+          JapanSegmentMember: {label: 日本}
+          RestOfAsiaPacificSegmentMember: {label: 亚太其他}
+      - name: ProductOrServiceAxis
+        kind: product
+        label: 产品类别
+        members:
+          IPhoneMember: {label: iPhone}
+          IPadMember: {label: iPad}
+          MacMember: {label: Mac}
+          WearablesHomeandAccessoriesMember: {label: 可穿戴/家居/配件}
+          ServiceMember: {label: 服务}
+          ProductMember: {label: 硬件产品合计, aggregate: true}
+    metrics:
+      REVENUE: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+    # Apple does not disclose segment operating income -> NOT_DISCLOSED
+    profit_concept: null
+
+  MSFT:
+    axes:
+      - name: StatementBusinessSegmentsAxis
+        kind: segment
+        label: 公司报告分部
+        members:
+          ProductivityAndBusinessProcessesMember: {label: 生产力与业务流程}
+          IntelligentCloudMember: {label: 智能云}
+          MorePersonalComputingMember: {label: 更多个人计算}
+    metrics:
+      REVENUE: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+    profit_concept: us-gaap:OperatingIncomeLoss

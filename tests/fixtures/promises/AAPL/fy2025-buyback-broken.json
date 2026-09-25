@@ -1,0 +1,17 @@
+{
+  "promise_id": "aapl-fy2025-buyback-unrealistic",
+  "speaker": "Tim Cook",
+  "statement_date": "2024-11-01",
+  "source_url": "https://www.sec.gov/Archives/edgar/data/0000320193/fixture",
+  "source_label": "fixture: 反事实承诺（应判 BROKEN）",
+  "promise_text": "我们承诺本财年回购 5000 亿美元股票（反事实测试）。",
+  "normalized_claim": "FY2025 股票回购 ≥ $500B（反事实）",
+  "verification": {
+    "metric": "SHARE_REPURCHASES",
+    "frequency": "annual",
+    "fiscal_year": 2025,
+    "operator": "gte",
+    "target": 500000000000
+  },
+  "verification_deadline": "2025-11-30"
+}

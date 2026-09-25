@@ -1,0 +1,107 @@
+# WACC / risk-free component defaults (M5).
+# Every number carries a source/date label — never an unexplained constant.
+# The risk-free rate is normally refreshed from the US Treasury feed when it
+# is reachable; this file is the documented fallback (value + as_of + source).
+# v5: structured defaults plus issuer-specific economic scenario stories.
+# Growth remains a hand-versioned research
+# prior, NOT historical CAGR extrapolated into the future).
+version: 5
+defaults:
+  op_margin_end_delta:
+    value: 0.005
+    version: "margin-path.v1"
+    reason: "五年内仅假设营业利润率改善 0.5 个百分点，避免把短期高利润机械外推。"
+  tax_rate_fallback:
+    value: 0.17
+    version: "tax-fallback.v1"
+    reason: "最新财年有效税率无法可靠计算时使用的明确回退；不冒充公司披露。"
+  da_pct_fallback:
+    value: 0.03
+    version: "da-fallback.v1"
+    reason: "同期间折旧摊销事实不完整时使用的简化回退。"
+  capex_pct_fallback:
+    value: 0.05
+    version: "capex-fallback.v1"
+    reason: "同期间资本开支事实缺失时使用的简化回退。"
+  nwc_pct:
+    value: 0.002
+    version: "nwc.v1"
+    reason: "营运资金变动按收入增量的 0.2% 估计；当前 SEC 映射不足以稳定拆出经营性营运资金。"
+  terminal_growth:
+    value: 0.025
+    version: "terminal-growth.v1"
+    reason: "成熟期名义增长假设，低于长期经济增长的审慎区间上沿。"
+  debt_weight:
+    value: 0.10
+    version: "capital-weight.v1"
+    reason: "当前版本使用 10% 债务权重；待市场价值资本结构接入后替换。"
+risk_free_rate:
+  value: 0.0425
+  as_of: "2026-08-01"
+  source: "US Treasury 10Y (documented fallback; live feed not reachable from this network)"
+  source_url: "https://home.treasury.gov/resource-center/data-chart-center/interest-rates"
+equity_risk_premium:
+  value: 0.045
+  source: "EquityLens config v1 (documented assumption; ERP requires an explicit dated source in production)"
+  version: "erp.v1"
+terminal_roic:
+  value: 0.20
+  source: "EquityLens stable-period assumption: mature large-cap incremental ROIC"
+  version: "terminal-roic.v1"
+issuers:
+  AAPL:
+    beta: 1.1
+    beta_source: "assumption (no market-data provider configured; ~1.1 based on 3Y weekly vs SPX)"
+    pre_tax_debt_cost: 0.031
+    debt_cost_source: "assumption (AA-rated issuer; cross-checked on next market sync)"
+    growth_path: [0.06, 0.05, 0.045, 0.04, 0.035]
+    growth_path_source: "assumption v2 (mature hardware/services; hand-versioned prior, not historical CAGR)"
+    growth_path_version: "aapl-growth.v2"
+    growth_path_reason: "成熟硬件与服务组合：首年 6%，随后逐步回落；这是研究先验，不是历史增速外推。"
+    scenarios:
+      version: "aapl-scenarios.v1"
+      bear:
+        label: "悲观"
+        story: "硬件换机周期转弱且服务增速不能抵消，首年收入收缩 5%；竞争与投入使第五年营业利润率比基准低 3 个百分点，风险溢价上升。"
+        revenue_growth: [-0.05, 0.00, 0.01, 0.02, 0.025]
+        op_margin_delta: -0.03
+        wacc_delta: 0.01
+        terminal_growth_delta: -0.005
+      base:
+        label: "中性"
+        story: "沿用 AAPL 已版本化的成熟硬件与服务组合基准，不额外改变经营或资本假设。"
+      bull:
+        label: "乐观"
+        story: "服务与换机需求好于基准，第五年利润率高 2 个百分点，风险溢价略降，稳定期增长略高。"
+        revenue_growth: [0.10, 0.085, 0.07, 0.055, 0.045]
+        op_margin_delta: 0.02
+        wacc_delta: -0.005
+        terminal_growth_delta: 0.005
+  MSFT:
+    beta: 1.0
+    beta_source: "assumption (no market-data provider configured; ~1.0 based on 3Y weekly vs SPX)"
+    pre_tax_debt_cost: 0.030
+    debt_cost_source: "assumption (AAA-rated issuer; cross-checked on next market sync)"
+    growth_path: [0.12, 0.11, 0.10, 0.09, 0.08]
+    growth_path_source: "assumption v2 (cloud/AI-driven software; hand-versioned prior, not historical CAGR)"
+    growth_path_version: "msft-growth.v2"
+    growth_path_reason: "云与 AI 驱动的软件组合：首年 12%，随后逐步回落；这是研究先验，不是历史增速外推。"
+    scenarios:
+      version: "msft-scenarios.v1"
+      bear:
+        label: "悲观"
+        story: "云与 AI 投入转化慢于预期，首年增长降至 2%，第五年利润率比基准低 3 个百分点，风险溢价上升。"
+        revenue_growth: [0.02, 0.04, 0.05, 0.055, 0.06]
+        op_margin_delta: -0.03
+        wacc_delta: 0.01
+        terminal_growth_delta: -0.005
+      base:
+        label: "中性"
+        story: "沿用 MSFT 已版本化的云与 AI 软件组合基准，不额外改变经营或资本假设。"
+      bull:
+        label: "乐观"
+        story: "云与 AI 商业化快于基准，第五年利润率高 2 个百分点，风险溢价略降，稳定期增长略高。"
+        revenue_growth: [0.16, 0.14, 0.12, 0.10, 0.09]
+        op_margin_delta: 0.02
+        wacc_delta: -0.005
+        terminal_growth_delta: 0.005

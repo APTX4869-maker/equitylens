@@ -1,0 +1,47 @@
+schema_version: 1
+company_id: "0000021344"
+version: 1
+template: us_gaap_operating_v1
+fiscal_calendar: {year_end: "12-31", week_based: false}
+metrics:
+  REVENUE: {concepts: ["us-gaap:Revenues"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  OPERATING_INCOME: {concepts: ["us-gaap:OperatingIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  NET_INCOME: {concepts: ["us-gaap:NetIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  BASIC_EPS: {concepts: ["us-gaap:EarningsPerShareBasic"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  DILUTED_EPS: {concepts: ["us-gaap:EarningsPerShareDiluted"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  BASIC_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfSharesOutstandingBasic"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  DILUTED_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  TOTAL_ASSETS: {concepts: ["us-gaap:Assets"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  BALANCE_TOTAL: {concepts: ["us-gaap:LiabilitiesAndStockholdersEquity"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  TOTAL_LIABILITIES: {concepts: ["us-gaap:Liabilities"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  TOTAL_EQUITY: {concepts: ["us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  STOCKHOLDERS_EQUITY: {concepts: ["us-gaap:StockholdersEquity"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  CASH_AND_EQUIVALENTS: {concepts: ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  CASH_AND_RESTRICTED_CASH: {concepts: ["us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  OPERATING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInOperatingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  INVESTING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInInvestingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  FINANCING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInFinancingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  FX_EFFECT_ON_CASH: {concepts: ["us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  CAPITAL_EXPENDITURES: {concepts: ["us-gaap:PaymentsToAcquirePropertyPlantAndEquipment"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+segments: {axes: [], reconciliation: explicit_eliminations}
+cash_debt:
+  cash_components: ["us-gaap:CashAndCashEquivalentsAtCarryingValue"]
+  debt_components: ["us-gaap:CommercialPaper", "us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtNoncurrent"]
+  restricted_cash_policy: separate
+eps_method: reported_diluted
+securities:
+  - ticker: KO
+    exchange: NYSE
+    currency: USD
+    instrument_type: COMMON_STOCK
+    evidence: [sec-identity]
+applicability: {EPS: required, SEGMENTS: required, VALUATION: required}
+evidence:
+  - evidence_id: sec-identity
+    source_document_id: SEC-submissions-CIK0000021344
+    content_sha256: f3e144fdab520ef86dc9aea18d5b93485df2aceababe570cae9084a675beb652
+    locator: https://data.sec.gov/submissions/CIK0000021344.json
+  - evidence_id: companyfacts-fy2025
+    source_document_id: SEC-companyfacts-CIK0000021344
+    content_sha256: 53d363a9aa3071406cda9857654358f4dca42e174a1defb8cc1ce9ad2a4c9e40
+    locator: https://data.sec.gov/api/xbrl/companyfacts/CIK0000021344.json

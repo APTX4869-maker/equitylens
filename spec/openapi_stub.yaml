@@ -1,0 +1,125 @@
+openapi: 3.1.0
+info:
+  title: EquityLens API
+  version: 0.1.0
+paths:
+  /api/v1/company-onboardings/{task_id}/profile-candidate:
+    get:
+      summary: Read the current immutable issuer-profile candidate
+      responses:
+        '200': {description: Candidate and unresolved fields}
+        '404': {description: Candidate not available}
+    post:
+      summary: Generate or reuse a deterministic candidate for the current fetch bundle
+      responses:
+        '200': {description: Current task and candidate summary}
+        '409': {description: Task revision or fixed-input conflict}
+  /api/v1/company-onboardings/{task_id}/profile-candidate.yaml:
+    get:
+      summary: Download the current candidate Profile v2 YAML
+      responses:
+        '200': {description: YAML attachment}
+  /api/v1/company-onboardings/{task_id}/profile-current.yaml:
+    get:
+      summary: Download the current reviewed immutable Profile YAML
+      responses:
+        '200': {description: YAML attachment with version and content hash headers}
+        '404': {description: Reviewed profile not imported}
+  /api/v1/company-onboardings/{task_id}/profile-yaml:
+    post:
+      summary: Atomically import reviewed Profile v2 YAML and resume BUILD
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Resumed task}
+        '409': {description: Revision, idempotency, version, identity, or evidence conflict}
+        '422': {description: Strict YAML or Profile v2 validation error}
+  /api/v1/company-onboardings/{task_id}/refetch:
+    post:
+      summary: Request a new fixed SEC input bundle for a refetch-remediable task
+      responses:
+        '200': {description: Task queued at FETCH with historical pointers retained}
+        '409': {description: Refetch action is not allowed}
+  /api/v1/companies/{ticker}:
+    get:
+      summary: Company identity and source freshness
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/facts:
+    get:
+      summary: Canonical financial facts
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+        - name: frequency
+          in: query
+          schema: {type: string, enum: [annual, quarterly, ttm]}
+        - name: view
+          in: query
+          schema: {type: string, enum: [latest_restated, point_in_time]}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/segments:
+    get:
+      summary: Reported/mapped segment facts
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/management:
+    get:
+      summary: Management and governance research
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+  /api/v1/companies/{ticker}/valuation/run:
+    post:
+      summary: Run deterministic valuation model
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}
+        '409':
+          description: Valuation requires an identity-bound confirmation
+  /api/v1/companies/{ticker}/valuation-profile:
+    put:
+      summary: Validate or confirm security/publication-bound valuation assumptions
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Draft validated or assumptions confirmed}
+        '409':
+          description: Model, data, currency, ADR, share-basis, or confirmation gate failed
+  /api/v1/provenance/{entity_id}:
+    get:
+      summary: Resolve recursive data lineage
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: OK}

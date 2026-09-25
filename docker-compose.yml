@@ -1,0 +1,40 @@
+# EquityLens — 本地优先美股研究系统（Docker Compose）
+# 用法：
+#   docker compose up -d --build
+#   docker compose exec api uv run --no-sync equitylens sync AAPL MSFT
+#   docker compose exec api uv run --no-sync equitylens sync-segments AAPL MSFT
+#   docker compose exec api uv run --no-sync equitylens sync-management AAPL MSFT
+#   docker compose exec api uv run --no-sync equitylens sync-quotes AAPL MSFT
+#   打开 http://localhost:3000（web 通过 EQUITYLENS_API_URL 代理到 http://api:8000）
+name: equitylens
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      EQUITYLENS_USER_AGENT: "EquityLens/0.1 (docker compose; research tool)"
+    volumes:
+      - ./data:/app/data          # SEC/行情原始快照 + equitylens.duckdb
+      - ./config:/app/config:ro   # 映射/行情/估值配置（只读）
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      EQUITYLENS_API_URL: "http://api:8000"   # next.config 重写到 compose 内网服务名
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy

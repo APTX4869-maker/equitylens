@@ -1,0 +1,14 @@
+.git
+.gitignore
+data
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+tests
+apps/web/node_modules
+apps/web/.next
+apps/web/.turbo
+.pytest_cache
+.ruff_cache
+.mypy_cache

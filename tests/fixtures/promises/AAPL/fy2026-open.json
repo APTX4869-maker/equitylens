@@ -1,0 +1,17 @@
+{
+  "promise_id": "aapl-fy2026-forward",
+  "speaker": "Luca Maestri",
+  "statement_date": "2025-11-02",
+  "source_url": "https://www.sec.gov/Archives/edgar/data/0000320193/fixture-open",
+  "source_label": "fixture: FY2026 前瞻承诺（财报未披露 → OPEN）",
+  "promise_text": "下财年我们仍将保持可观的资本回报。",
+  "normalized_claim": "FY2026 股票回购 ≥ $100B（待验证）",
+  "verification": {
+    "metric": "SHARE_REPURCHASES",
+    "frequency": "annual",
+    "fiscal_year": 2026,
+    "operator": "gte",
+    "target": 100000000000
+  },
+  "verification_deadline": "2026-11-30"
+}

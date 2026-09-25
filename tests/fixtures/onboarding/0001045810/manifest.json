@@ -1,0 +1,43 @@
+{
+  "company_id": "0001045810",
+  "ticker": "NVDA",
+  "profile_path": "config/issuers/0001045810/2.yaml",
+  "formal_profile": {
+    "profile_path": "config/issuers/0001045810/3.yaml",
+    "documents": [
+      {
+        "accession": "0001045810-24-000029",
+        "fixture_path": "formal-filing-2024-10k.html.gz",
+        "content_sha256": "0d55f6c9381ac5dd1e85cc3e2989a0dc5f54e42327677b4641057f20695973a3",
+        "compressed_sha256": "12b8f7bc495f7de25e049d1c272e7deb92ef7ebd51ce878e05aae5e4f7eb763d"
+      },
+      {
+        "accession": "0001045810-26-000021",
+        "fixture_path": "formal-filing-2026-10k.html.gz",
+        "content_sha256": "1762a892ff7e22f7876c7ae4396cb38ef01fe8b83535b8a80ec3b1c71a16e5d2",
+        "compressed_sha256": "c686266fdf6b7fa7c5cf91dfef75a7ee9d00e5716122c6472f493eeda125af7f"
+      }
+    ]
+  },
+  "annual_filing": {
+    "accession": "0001045810-26-000021",
+    "form": "10-K",
+    "period_end": "2026-01-25",
+    "source_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm",
+    "fixture_path": "filing-2026-10k.html.gz",
+    "content_sha256": "467f9ed57e599a1ef9d3bc5aecc5693fb8592457e30c92c9c85f09148cb49b38",
+    "compressed_sha256": "deb848224c2c1dbb07305537754a06cd45005ccbc7e2542fc87e29c75a1156ad"
+  },
+  "expected": {
+    "revenue": 215938000000,
+    "operating_cash_flow": 102718000000,
+    "investing_cash_flow": -52228000000,
+    "financing_cash_flow": -48474000000,
+    "net_change_in_cash_including_fx": 2016000000,
+    "cash_and_restricted_cash": 10605000000,
+    "segments": {
+      "ComputeAndNetworkingSegmentMember": 193479000000,
+      "GraphicsSegmentMember": 22459000000
+    }
+  }
+}

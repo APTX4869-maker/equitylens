@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-09-12T08:47:17Z",
+  "company_name": "Costco Wholesale Corporation",
+  "ticker": "COST",
+  "exchange": "Nasdaq",
+  "profile_path": "config/issuers/0000909832/1.yaml",
+  "submissions_path": "submissions.json",
+  "companyfacts_path": "companyfacts.json",
+  "snapshots": [
+    {"path": "submissions.json", "url": "https://data.sec.gov/submissions/CIK0000909832.json", "sha256": "1cb27b4fe2b9c1b3d2886f8f1673a5a33e0f880ccd191b8ed84303bc1973f7e9"},
+    {"path": "companyfacts.json", "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000909832.json", "sha256": "71a4fd99c86f27c3aa27b8f05b3a9705c16f0060b425395bb1a367ce239b7d1f"}
+  ],
+  "annual_filing": {"accession": "0000909832-25-000101", "filed": "2025-10-08", "period_end": "2025-08-31", "url": "https://www.sec.gov/Archives/edgar/data/909832/000090983225000101/cost-20250831.htm"},
+  "manual_source_note": "Values transcribed from the FY2025 consolidated statements; revenue includes net sales plus membership fees, and USD values are converted from disclosed millions.",
+  "expected_facts": {
+    "REVENUE": {"value": 275235000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Total revenue"},
+    "OPERATING_INCOME": {"value": 10383000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Operating income"},
+    "NET_INCOME": {"value": 8099000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Net income attributable to Costco"},
+    "BASIC_EPS": {"value": 18.24, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Net income per share basic"},
+    "DILUTED_EPS": {"value": 18.21, "unit": "USD/shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Net income per share diluted"},
+    "BASIC_WEIGHTED_AVG_SHARES": {"value": 443985000, "unit": "shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Weighted average shares basic"},
+    "DILUTED_WEIGHTED_AVG_SHARES": {"value": 444803000, "unit": "shares", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Income: Weighted average shares diluted"},
+    "TOTAL_ASSETS": {"value": 77099000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Balance Sheets: Total assets"},
+    "TOTAL_LIABILITIES": {"value": 47935000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Balance Sheets: Total liabilities"},
+    "STOCKHOLDERS_EQUITY": {"value": 29164000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Balance Sheets: Total Costco stockholders' equity"},
+    "OPERATING_CASH_FLOW": {"value": 13335000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Cash Flows: Net cash provided by operating activities"},
+    "INVESTING_CASH_FLOW": {"value": -5311000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Cash Flows: Net cash used in investing activities"},
+    "FINANCING_CASH_FLOW": {"value": -3775000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Cash Flows: Net cash used in financing activities"},
+    "CASH_AND_EQUIVALENTS": {"value": 14161000000, "unit": "USD", "period_type": "INSTANT", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Balance Sheets: Cash and cash equivalents"},
+    "CAPITAL_EXPENDITURES": {"value": 5498000000, "unit": "USD", "period_type": "FY", "fiscal_year": 2025, "period_end": "2025-08-31", "accession": "0000909832-25-000101", "locator": "Consolidated Statements of Cash Flows: Additions to property and equipment"}
+  },
+  "expected_missing": {}
+}

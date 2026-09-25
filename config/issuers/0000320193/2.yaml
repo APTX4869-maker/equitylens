@@ -1,0 +1,44 @@
+schema_version: 1
+company_id: "0000320193"
+version: 2
+template: us_gaap_operating_v1
+fiscal_calendar: {year_end: "09-27", week_based: true}
+metrics:
+  REVENUE: {concepts: ["us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  OPERATING_INCOME: {concepts: ["us-gaap:OperatingIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  NET_INCOME: {concepts: ["us-gaap:NetIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  BASIC_EPS: {concepts: ["us-gaap:EarningsPerShareBasic"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  DILUTED_EPS: {concepts: ["us-gaap:EarningsPerShareDiluted"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  BASIC_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfSharesOutstandingBasic"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  DILUTED_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  TOTAL_ASSETS: {concepts: ["us-gaap:Assets"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  TOTAL_LIABILITIES: {concepts: ["us-gaap:Liabilities"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  STOCKHOLDERS_EQUITY: {concepts: ["us-gaap:StockholdersEquity"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  CASH_AND_EQUIVALENTS: {concepts: ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis}
+  OPERATING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInOperatingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  INVESTING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInInvestingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  FINANCING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInFinancingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  FX_EFFECT_ON_CASH: {concepts: ["us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+  CAPITAL_EXPENDITURES: {concepts: ["us-gaap:PaymentsToAcquirePropertyPlantAndEquipment"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis}
+segments: {axes: [StatementBusinessSegmentsAxis, ProductOrServiceAxis], reconciliation: explicit_eliminations}
+cash_debt:
+  cash_components: ["us-gaap:CashAndCashEquivalentsAtCarryingValue", "us-gaap:MarketableSecuritiesCurrent"]
+  debt_components: ["us-gaap:CommercialPaper", "us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtNoncurrent"]
+  restricted_cash_policy: separate
+eps_method: reported_diluted
+securities:
+  - ticker: AAPL
+    exchange: Nasdaq
+    currency: USD
+    instrument_type: COMMON_STOCK
+    evidence: [sec-identity]
+applicability: {EPS: required, SEGMENTS: required, VALUATION: required}
+evidence:
+  - evidence_id: sec-identity
+    source_document_id: SEC-submissions-CIK0000320193
+    content_sha256: 2503475b32d84986bc12632a6430d620526d4fd08026014d0d5d64cb7ab602ab
+    locator: https://data.sec.gov/submissions/CIK0000320193.json
+  - evidence_id: companyfacts-fy2025
+    source_document_id: SEC-companyfacts-CIK0000320193
+    content_sha256: d6799f729e7ec9c5716a967bc070441ee2a7daf1eb6adfb98cf71a1e733cb970
+    locator: https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json
