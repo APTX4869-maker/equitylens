@@ -2,10 +2,11 @@
 # Every number carries a source/date label — never an unexplained constant.
 # The risk-free rate is normally refreshed from the US Treasury feed when it
 # is reachable; this file is the documented fallback (value + as_of + source).
-# v5: structured defaults plus issuer-specific economic scenario stories.
+# v6: structured defaults plus issuer-specific economic scenario stories,
+# including an explicitly reviewable NVDA research prior.
 # Growth remains a hand-versioned research
 # prior, NOT historical CAGR extrapolated into the future).
-version: 5
+version: 6
 defaults:
   op_margin_end_delta:
     value: 0.005
@@ -102,6 +103,34 @@ issuers:
         label: "乐观"
         story: "云与 AI 商业化快于基准，第五年利润率高 2 个百分点，风险溢价略降，稳定期增长略高。"
         revenue_growth: [0.16, 0.14, 0.12, 0.10, 0.09]
+        op_margin_delta: 0.02
+        wacc_delta: -0.005
+        terminal_growth_delta: 0.005
+  NVDA:
+    beta: 2.10
+    beta_source: "assumption v1 (high-volatility semiconductor equity research prior; not a live market observation)"
+    pre_tax_debt_cost: 0.040
+    debt_cost_source: "assumption v1 (USD investment-grade issuer research prior; not a live bond quote)"
+    growth_path: [0.30, 0.24, 0.18, 0.14, 0.10]
+    growth_path_source: "assumption v1 (AI accelerator expansion with explicit five-year fade; not historical CAGR extrapolation)"
+    growth_path_version: "nvda-growth.v1"
+    growth_path_reason: "AI 加速计算仍处于扩张阶段，但五年增长路径逐年回落；这是待用户审核的研究先验。"
+    scenarios:
+      version: "nvda-scenarios.v1"
+      bear:
+        label: "悲观"
+        story: "AI 基础设施消化库存、竞争与出口限制压低增长和利润率，同时资本成本上升。"
+        revenue_growth: [0.12, 0.10, 0.08, 0.07, 0.06]
+        op_margin_delta: -0.06
+        wacc_delta: 0.015
+        terminal_growth_delta: -0.005
+      base:
+        label: "中性"
+        story: "沿用 NVDA 已版本化的 AI 加速计算增长衰减路径，不额外改变经营或资本假设。"
+      bull:
+        label: "乐观"
+        story: "AI 基础设施投资和平台扩张持续强于基准，利润率韧性更高且风险溢价略降。"
+        revenue_growth: [0.40, 0.32, 0.24, 0.18, 0.12]
         op_margin_delta: 0.02
         wacc_delta: -0.005
         terminal_growth_delta: 0.005

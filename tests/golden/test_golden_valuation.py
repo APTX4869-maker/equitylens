@@ -581,3 +581,14 @@ def test_default_run_reproducible_and_persisted(company_db):
     assert a["result"]["fair_value_per_share"] == pytest.approx(b["result"]["fair_value_per_share"], rel=1e-12)
     runs = company_db.query("SELECT count(*) n FROM valuation_run")
     assert runs[0]["n"] >= 2
+
+
+def test_nvda_has_versioned_research_defaults():
+    from equitylens.valuation.defaults import load_valuation_config
+
+    issuer = load_valuation_config()["issuers"]["NVDA"]
+    assert issuer["growth_path_version"] == "nvda-growth.v1"
+    assert len(issuer["growth_path"]) == 5
+    assert set(issuer["scenarios"]) == {"version", "bear", "base", "bull"}
+    assert issuer["beta_source"].startswith("assumption")
+    assert issuer["growth_path_source"].startswith("assumption")
