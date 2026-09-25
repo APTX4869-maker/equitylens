@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, userErrorMessage } from "@/lib/api";
 import type { CompanyInfo, CompanyListItem, Fact, MarketQuote, OnboardingTask, OverviewResponse } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
@@ -17,6 +17,11 @@ import { SourceDrawer } from "@/components/SourceDrawer";
 import { AddCompanyDialog } from "@/components/companies/AddCompanyDialog";
 import { OnboardingCenter } from "@/components/companies/OnboardingCenter";
 import { OnboardingAttentionButton } from "@/components/companies/OnboardingAttentionButton";
+import {
+  REFRESH_MODULE_LABELS,
+  RefreshProgress,
+  type RefreshProgressItem,
+} from "@/components/RefreshProgress";
 
 type Cached = { info: CompanyInfo; overview: OverviewResponse };
 type FreshnessModule = {
@@ -29,6 +34,7 @@ type RefreshModule = {
   retryable: boolean;
   reason?: string | null;
   changed?: boolean;
+  finished_at?: string | null;
 };
 type RefreshResult = {
   refresh_id: string;
@@ -65,7 +71,8 @@ export default function Home() {
   const [sourceEntity, setSourceEntity] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
-  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const [reloadWarning, setReloadWarning] = useState<string | null>(null);
+  const [refreshProgress, setRefreshProgress] = useState<Record<string, RefreshProgressItem>>({});
   const [valuationReviewGeneration, setValuationReviewGeneration] = useState<Record<string, number>>({});
   const companyRef = useRef(company);
   const companyListRequestSeq = useRef(0);
@@ -117,7 +124,8 @@ export default function Home() {
     setMetricFact(null);
     setSourceEntity(null);
     setRefreshMsg(null);
-    setRefreshResult(null);
+    setReloadWarning(null);
+    setRefreshProgress({});
     setCompany(next);
   }, []);
 
@@ -158,8 +166,19 @@ export default function Home() {
       } else {
         setError("公司或财务总览加载失败");
       }
-      setMarket((prev) => ({ ...prev, [company]: mqR.status === "fulfilled" ? mqR.value : null }));
-      setFreshness((prev) => ({ ...prev, [company]: freshR.status === "fulfilled" ? freshR.value : null }));
+      if (mqR.status === "fulfilled") {
+        setMarket((prev) => ({ ...prev, [company]: mqR.value }));
+      }
+      if (freshR.status === "fulfilled") {
+        setFreshness((prev) => ({ ...prev, [company]: freshR.value }));
+      }
+      const failedOptionalReads = [
+        mqR.status === "rejected" ? "行情" : null,
+        freshR.status === "rejected" ? "数据新鲜度" : null,
+      ].filter(Boolean);
+      setReloadWarning(failedOptionalReads.length
+        ? `页面重新读取失败，已保留上次${failedOptionalReads.join("和")}`
+        : null);
     })();
     return () => {
       cancelled = true;
@@ -182,21 +201,82 @@ export default function Home() {
     const requestSeq = ++refreshRequestSeq.current;
     setRefreshing(true);
     setRefreshMsg(null);
+    const requested = modules?.length
+      ? modules
+      : ["financials", "segments", "management", "quotes"];
+    setRefreshProgress((previous) => {
+      const requestedItems = Object.fromEntries(
+        requested.map((moduleName, index) => [
+          moduleName,
+          {
+            ...(modules?.length ? previous[moduleName] : {}),
+            phase: index === 0 ? "running" : "pending",
+            reason: null,
+          } satisfies RefreshProgressItem,
+        ])
+      );
+      return modules?.length ? { ...previous, ...requestedItems } : requestedItems;
+    });
+    let activeModule: string | null = requested[0] ?? null;
     try {
       const batches = modules?.length
         ? [modules]
         : ["financials", "segments", "management", "quotes"].map((moduleName) => [moduleName]);
       let combined: RefreshResult | null = null;
-      for (const batch of batches) {
-        const response = await api.fetchLongRunningJson<RefreshResult>(
-          `/api/v1/companies/${requestCompany}/refresh`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ modules: batch }),
-          }
-        );
+      for (const [batchIndex, batch] of batches.entries()) {
+        const completedModule = batch[0];
+        if (!completedModule) continue;
+        activeModule = completedModule;
+        let response: RefreshResult;
+        try {
+          response = await api.fetchLongRunningJson<RefreshResult>(
+            `/api/v1/companies/${requestCompany}/refresh`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ modules: batch }),
+            }
+          );
+        } catch (reason) {
+          response = {
+            refresh_id: `client-error-${Date.now()}`,
+            status: "partial",
+            review_required: false,
+            modules: {
+              [completedModule]: {
+                status: "error",
+                retryable: true,
+                reason: userErrorMessage(reason),
+                changed: false,
+                finished_at: new Date().toISOString(),
+              },
+            },
+          };
+        }
         if (requestSeq !== refreshRequestSeq.current || companyRef.current !== requestCompany) return;
+        const completed = response.modules[completedModule];
+        setRefreshProgress((previous) => {
+          const next = {
+            ...previous,
+            [completedModule]: {
+              phase: completed?.status === "ok" ? "success" : "error",
+              changed: completed?.changed,
+              checkedAt: completed?.finished_at,
+              reason: completed?.reason ?? (completed ? null : "刷新接口未返回该模块的结果"),
+              retryable: completed?.retryable ?? !completed,
+            } satisfies RefreshProgressItem,
+          };
+          const nextModule = batches[batchIndex + 1]?.[0];
+          if (nextModule) next[nextModule] = { ...next[nextModule], phase: "running" };
+          return next;
+        });
+        if (completed?.status === "ok") setReloadKey((key) => key + 1);
+        if (response.review_required) {
+          setValuationReviewGeneration((previous) => ({
+            ...previous,
+            [requestCompany]: (previous[requestCompany] ?? 0) + 1,
+          }));
+        }
         if (!combined) {
           combined = response;
           continue;
@@ -219,33 +299,32 @@ export default function Home() {
           : "ok" as const,
       };
       if (requestSeq !== refreshRequestSeq.current || companyRef.current !== requestCompany) return;
-      setRefreshResult((previous) => {
-        if (!modules?.length || !previous) return d;
-        const mergedModules = { ...previous.modules };
-        for (const moduleName of modules) {
-          if (d.modules[moduleName]) mergedModules[moduleName] = d.modules[moduleName];
-        }
-        return {
-          ...d,
-          modules: mergedModules,
-          review_required: previous.review_required || d.review_required,
-        };
-      });
-      if (d.review_required) {
-        setValuationReviewGeneration((previous) => ({
-          ...previous,
-          [requestCompany]: (previous[requestCompany] ?? 0) + 1,
-        }));
-      }
-      const parts = Object.entries(d.modules ?? {}).map(([k, m]) => {
-        const label = m.status === "ok" ? "成功" : m.status === "skipped" ? "未执行" : "失败";
-        return `${k}:${label}`;
+      const parts = requested.map((moduleName) => {
+        const result = d.modules[moduleName];
+        const moduleLabel = REFRESH_MODULE_LABELS[moduleName as keyof typeof REFRESH_MODULE_LABELS] ?? moduleName;
+        const statusLabel = result?.status === "ok"
+          ? result.changed ? "已更新" : "暂无更新"
+          : result?.status === "skipped" ? "未执行" : "失败";
+        return `${moduleLabel}${statusLabel}`;
       });
       setRefreshMsg(`刷新完成：${parts.join("、")}`);
-      setReloadKey((k) => k + 1);  // re-fetch the company's data
     } catch (e) {
       if (requestSeq === refreshRequestSeq.current && companyRef.current === requestCompany) {
-        setRefreshMsg(`刷新失败：${String(e)}`);
+        const reason = userErrorMessage(e);
+        if (activeModule) {
+          const failedModule = activeModule;
+          setRefreshProgress((previous) => ({
+            ...previous,
+            [failedModule]: {
+              ...previous[failedModule],
+              phase: "error",
+              checkedAt: new Date().toISOString(),
+              reason,
+              retryable: true,
+            },
+          }));
+        }
+        setRefreshMsg(`刷新失败：${reason}`);
       }
     } finally {
       if (requestSeq === refreshRequestSeq.current && companyRef.current === requestCompany) {
@@ -312,11 +391,12 @@ export default function Home() {
             </div>
             <div className="tool-right">
               {refreshMsg ? <span className="tool-value" style={{ marginRight: 8 }}>{refreshMsg}</span> : null}
-              {Object.entries(refreshResult?.modules ?? {})
-                .filter(([, module]) => module.status === "error" && module.retryable)
+              {reloadWarning ? <span className="tool-value refresh-reload-warning" role="status">{reloadWarning}</span> : null}
+              {Object.entries(refreshProgress)
+                .filter(([, item]) => item.phase === "error" && item.retryable)
                 .map(([module]) => (
                   <button key={module} className="tool-chip" onClick={() => void refresh([module])} disabled={refreshing}>
-                    重试 {module}
+                    重试{REFRESH_MODULE_LABELS[module as keyof typeof REFRESH_MODULE_LABELS] ?? module}
                   </button>
                 ))}
               <button className="tool-chip" onClick={() => void refresh()} disabled={refreshing}>
@@ -325,6 +405,11 @@ export default function Home() {
               <button className="tool-chip" onClick={() => setTab("ai")}>✦ 问 AI</button>
             </div>
           </div>
+
+          <RefreshProgress
+            items={refreshProgress}
+            freshness={freshness[company]?.modules ?? []}
+          />
 
           {tab === "overview" ? (
             <section className="section active" id="section-overview">
