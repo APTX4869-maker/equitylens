@@ -346,3 +346,36 @@ def test_current_ttm_rejects_unit_mismatch(db):
     assert point.status == "INCOMPLETE_PERIOD"
     assert point.value is None
     assert "unit" in point.missing_reason.lower()
+
+
+def test_current_ttm_ignores_quarter_without_fiscal_year(db):
+    """Malformed SEC period metadata must not crash current quote derivation."""
+    cid = "TTM_NULL_YEAR"
+    _insert_fact(
+        db,
+        cid,
+        "NET_INCOME",
+        "Q_STANDALONE",
+        None,
+        1,
+        999.0,
+        period_end="2024-06-30",
+    )
+    for quarter in range(1, 5):
+        _insert_fact(
+            db,
+            cid,
+            "NET_INCOME",
+            "Q_STANDALONE",
+            2025,
+            quarter,
+            25.0,
+            period_end=f"2025-{quarter * 3:02d}-30",
+        )
+
+    point = MetricEngine(db).current("NET_INCOME", cid, "ttm")
+
+    assert point.status == "OK"
+    assert point.value == 100.0
+    assert point.fiscal_year == 2025
+    assert point.fiscal_quarter == 4

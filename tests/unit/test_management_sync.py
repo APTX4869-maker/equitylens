@@ -97,7 +97,7 @@ def _filing(accession: str, document: str) -> dict:
 
 
 def _stub_filings(monkeypatch, rows):
-    def list_docs(ticker, *, forms, limit_per_form, raw_dir):
+    def list_docs(ticker, *, forms, limit_per_form, raw_dir, store=None):
         return [] if forms == ("DEF 14A",) else list(rows)
 
     monkeypatch.setattr(
@@ -107,6 +107,32 @@ def _stub_filings(monkeypatch, rows):
         "equitylens.ingestion.sec.management.get_company",
         lambda ticker, store: SimpleNamespace(cik="0001045810"),
     )
+
+
+def test_sync_management_threads_explicit_store_to_filing_lookup(monkeypatch, tmp_path):
+    store = FakeStore()
+    seen_stores = []
+
+    def list_docs(ticker, *, forms, limit_per_form, raw_dir, store):
+        seen_stores.append(store)
+        return []
+
+    monkeypatch.setattr(
+        "equitylens.ingestion.sec.management.list_filing_docs", list_docs
+    )
+    monkeypatch.setattr(
+        "equitylens.ingestion.sec.management.get_company",
+        lambda ticker, store: SimpleNamespace(cik="0001045810"),
+    )
+
+    sync_management(
+        "NVDA",
+        store=store,
+        client=FakeClient([]),
+        raw_dir=tmp_path / "raw",
+    )
+
+    assert seen_stores == [store, store]
 
 
 def test_form4_fetch_and_replay_keep_primary_document_identity(monkeypatch, tmp_path):

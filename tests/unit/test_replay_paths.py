@@ -26,7 +26,7 @@ def test_management_offline_replay_reads_selected_raw_store(monkeypatch, tmp_pat
 
     calls = []
 
-    def list_docs(ticker, *, forms, limit_per_form, raw_dir):
+    def list_docs(ticker, *, forms, limit_per_form, raw_dir, store=None):
         calls.append((ticker, forms, limit_per_form, raw_dir))
         return []
 
@@ -62,7 +62,7 @@ def test_management_offline_replay_preserves_snapshot_fetch_time(monkeypatch, tm
         metadata={"fetched_at": "2024-05-06T07:08:09+00:00"},
     )
 
-    def list_docs(ticker, *, forms, limit_per_form, raw_dir):
+    def list_docs(ticker, *, forms, limit_per_form, raw_dir, store=None):
         if forms == ("DEF 14A",):
             return [{
                 "accessionNumber": accession,

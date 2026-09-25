@@ -39,6 +39,7 @@ def _install_company(
     evidence=None,
     profile_version=401,
     complete_valuation_facts=False,
+    fact_currency="USD",
 ):
     registry = CompanyRegistry(db)
     registry.register_company(
@@ -70,7 +71,7 @@ def _install_company(
         content={"company_id": company_id, "version": profile_version},
     )
     facts = [
-        ("REVENUE", 1_000.0, "USD", "FY", None),
+        ("REVENUE", 1_000.0, fact_currency, "FY", None),
     ]
     if complete_valuation_facts:
         facts.extend([
@@ -338,6 +339,15 @@ def test_currency_and_adr_identity_gates_cannot_be_confirmed(db, monkeypatch):
     )
     assert unknown_adr.status_code == 409
     assert unknown_adr.json()["error"]["code"] == "VALUATION_ADR_RATIO_UNKNOWN"
+
+
+def test_currency_gate_normalizes_published_unit_case(db, monkeypatch):
+    publication = _install_company(db, fact_currency="usd")
+    client = _client(db, monkeypatch)
+
+    response = _confirm(client, publication)
+
+    assert response.status_code == 200, response.text
 
 
 def test_quote_identity_is_separate_for_each_security(db, monkeypatch):

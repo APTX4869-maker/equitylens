@@ -94,7 +94,8 @@ def sync_management(
     try:
         # ---------- 1) DEF 14A proxy ----------
         proxy_filings = list_filing_docs(
-            ticker, forms=("DEF 14A",), limit_per_form=1, raw_dir=raw_dir
+            ticker, forms=("DEF 14A",), limit_per_form=1, raw_dir=raw_dir,
+            store=store,
         )
         if proxy_filings:
             row = proxy_filings[0]
@@ -136,7 +137,8 @@ def sync_management(
         ins_rows: list[dict] = []
         successful_accessions: set[str] = set()
         form4_filings = list_filing_docs(
-            ticker, forms=("4",), limit_per_form=forms4_limit, raw_dir=raw_dir
+            ticker, forms=("4",), limit_per_form=forms4_limit, raw_dir=raw_dir,
+            store=store,
         )
         for row in form4_filings:
             accn = row["accessionNumber"]

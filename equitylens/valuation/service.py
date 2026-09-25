@@ -116,12 +116,12 @@ def confirm_valuation_profile(
         )
     facts = PublicationRepository(store).facts(context)
     currencies = {
-        str(fact.get("unit"))
+        str(fact.get("unit")).strip().upper()
         for fact in facts
-        if len(str(fact.get("unit") or "")) == 3
-        and str(fact.get("unit")).isalpha()
+        if len(str(fact.get("unit") or "").strip()) == 3
+        and str(fact.get("unit") or "").strip().isalpha()
     }
-    if currencies and security["currency"] not in currencies:
+    if currencies and str(security["currency"]).strip().upper() not in currencies:
         _valuation_error(
             "VALUATION_CURRENCY_MISMATCH",
             "financial statement and security quote currencies are not verified as compatible",

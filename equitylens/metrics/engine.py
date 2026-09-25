@@ -276,7 +276,12 @@ class MetricEngine:
 
         loaded = self.load_facts(company_id, list(dependencies))
         series = {name: self.standalone_series(loaded[name]) for name in dependencies}
-        all_keys = {key for values in series.values() for key in values if key[1] in (1, 2, 3, 4)}
+        all_keys = {
+            key
+            for values in series.values()
+            for key in values
+            if self._valid_quarter_key(key)
+        }
         if not all_keys:
             return self._missing_point(metric, "ttm", "MISSING_INPUT", "no quarterly observations")
 
@@ -397,13 +402,21 @@ class MetricEngine:
 
     # ---------------- TTM ----------------
 
+    @staticmethod
+    def _valid_quarter_key(key: tuple) -> bool:
+        return (
+            len(key) >= 2
+            and isinstance(key[0], int)
+            and key[1] in (1, 2, 3, 4)
+        )
+
     def ttm(self, facts: list[dict], as_of_quarter: tuple | None = None) -> dict | None:
         """TTM of a duration metric = sum of 4 *consecutive* standalone quarters.
 
         A missing quarter in the window yields None (never a partial sum).
         """
         series = self.standalone_series(facts)
-        quarters = sorted((k for k in series if k[1] in (1, 2, 3, 4)), reverse=True)
+        quarters = sorted((k for k in series if self._valid_quarter_key(k)), reverse=True)
         if not quarters:
             return None
         end = as_of_quarter or quarters[0]
@@ -484,7 +497,7 @@ class MetricEngine:
                                               freq, unit="ratio"))
             else:  # ttm: two complete TTM windows 4 quarters apart (8 consecutive quarters)
                 series = self.standalone_series(rev)
-                keys = sorted((k for k in series if k[1] in (1, 2, 3, 4)))
+                keys = sorted((k for k in series if self._valid_quarter_key(k)))
                 for k in keys:
                     window8 = self._trailing_window(set(series), k, 8)
                     if window8 is None:
@@ -505,8 +518,8 @@ class MetricEngine:
             if freq == "ttm":
                 num_series = self.standalone_series(facts[num_metric])
                 den_series = self.standalone_series(facts["REVENUE"])
-                keys = sorted({k for k in num_series if k[1] in (1, 2, 3, 4)}
-                              & {k for k in den_series if k[1] in (1, 2, 3, 4)})
+                keys = sorted({k for k in num_series if self._valid_quarter_key(k)}
+                              & {k for k in den_series if self._valid_quarter_key(k)})
                 for key in keys:
                     nt = self._ttm_window(num_series, key)
                     dt = self._ttm_window(den_series, key)
@@ -536,8 +549,8 @@ class MetricEngine:
                 ocf_series = self.standalone_series(ocf_facts)
                 capex_series = self.standalone_series(capex_facts)
                 rev_series = self.standalone_series(rev_facts)
-                keys = sorted({k for k in ocf_series if k[1] in (1, 2, 3, 4)}
-                              & {k for k in capex_series if k[1] in (1, 2, 3, 4)})
+                keys = sorted({k for k in ocf_series if self._valid_quarter_key(k)}
+                              & {k for k in capex_series if self._valid_quarter_key(k)})
                 for key in keys:
                     ot = self._ttm_window(ocf_series, key)
                     ct = self._ttm_window(capex_series, key)
@@ -628,7 +641,7 @@ class MetricEngine:
             facts = self.load_facts(company_id, [metric])[metric]
             if freq == "ttm":
                 series = self.standalone_series(facts)
-                keys = sorted((k for k in series if k[1] in (1, 2, 3, 4)))
+                keys = sorted((k for k in series if self._valid_quarter_key(k)))
                 for key in keys:
                     f = series[key]
                     # TTM summing is only meaningful for additive currency
