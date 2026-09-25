@@ -30,7 +30,10 @@ from equitylens.onboarding.service import OnboardingService
 from equitylens.publication.models import sha256_json
 from equitylens.publication.repository import PublicationConflict, PublicationRepository
 from equitylens.valuation.dcf import ValuationError
-from equitylens.valuation.service import confirm_valuation_profile
+from equitylens.valuation.service import (
+    confirm_valuation_profile,
+    valuation_profile_draft,
+)
 
 
 router = APIRouter(prefix="/api/v1")
@@ -586,6 +589,42 @@ def valuation_profile(ticker: str, body: ValuationProfileRequest):
         )
     except CompanyRegistryError as exc:
         _raise_service_error(exc)
+    except ValuationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "field": exc.field,
+                    "message": exc.message,
+                }
+            },
+        )
+
+
+@router.get("/companies/{ticker}/valuation-profile/draft")
+def valuation_profile_review_draft(
+    ticker: str,
+    security_id: str | None = None,
+    publication_id: str | None = None,
+):
+    store = _store()
+    try:
+        security = CompanyRegistry(store).resolve(ticker, security_id)
+        context = PublicationRepository(store).context(
+            security.company_id, publication_id
+        )
+        return valuation_profile_draft(
+            store,
+            company_id=security.company_id,
+            ticker=security.ticker,
+            security_id=security.security_id,
+            publication_id=context.publication_id,
+        )
+    except CompanyRegistryError as exc:
+        _raise_service_error(exc)
+    except PublicationConflict as exc:
+        raise HTTPException(404, _detail(exc.code, str(exc))) from exc
     except ValuationError as exc:
         return JSONResponse(
             status_code=409,

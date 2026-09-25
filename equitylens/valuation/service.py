@@ -82,16 +82,25 @@ def confirm_valuation_profile(
     )
     if security is None:
         _valuation_error("VALUATION_SECURITY_MISMATCH", "security does not belong to company")
+    company = store.query_one(
+        "SELECT reporting_template, active_publication_id FROM company WHERE company_id=?",
+        [company_id],
+    )
+    if company is None:
+        _valuation_error("VALUATION_PUBLICATION_MISMATCH", "company does not exist")
+    if company["active_publication_id"] != publication_id:
+        _valuation_error(
+            "VALUATION_DRAFT_STALE",
+            "the active publication changed; reload and review the valuation draft",
+            "publication_id",
+        )
     try:
         context = PublicationRepository(store).context(company_id, publication_id)
     except PublicationConflict as exc:
         _valuation_error("VALUATION_PUBLICATION_MISMATCH", str(exc))
     if model_version != dcf_mod.MODEL_VERSION:
         _valuation_error("VALUATION_MODEL_UNSUPPORTED", "valuation model version is unsupported")
-    company = store.query_one(
-        "SELECT reporting_template FROM company WHERE company_id=?", [company_id]
-    )
-    if company is None or company["reporting_template"] != "us_gaap_operating_v1":
+    if company["reporting_template"] != "us_gaap_operating_v1":
         _valuation_error(
             "VALUATION_MODEL_UNSUPPORTED",
             "no validated valuation model exists for this reporting template",
@@ -211,6 +220,47 @@ def confirm_valuation_profile(
         "assumptions_hash": assumptions_hash,
         "confirmation_fingerprint": fingerprint,
         "status": "READY" if confirmed else "NEEDS_CONFIGURATION",
+    }
+
+
+def valuation_profile_draft(
+    store,
+    *,
+    company_id: str,
+    ticker: str,
+    security_id: str,
+    publication_id: str,
+) -> dict:
+    """Build a reviewable, identity-bound valuation draft without writing it."""
+    try:
+        valuation = default_valuation(store, company_id, ticker)
+    except (TypeError, ValueError) as exc:
+        _valuation_error("VALUATION_DEFAULT_UNAVAILABLE", str(exc))
+    assumptions = valuation["assumptions"]
+    assumptions_hash = sha256_json(assumptions["inputs"])
+    confirmed = store.query_one(
+        """
+        SELECT assumption_set_id FROM valuation_assumption_set
+        WHERE company_id=? AND security_id=? AND publication_id=?
+          AND model_version=? AND assumptions_hash=? AND status='CONFIRMED'
+        ORDER BY confirmed_at DESC LIMIT 1
+        """,
+        [company_id, security_id, publication_id, dcf_mod.MODEL_VERSION, assumptions_hash],
+    )
+    return {
+        "company_id": company_id,
+        "ticker": ticker,
+        "security_id": security_id,
+        "publication_id": publication_id,
+        "model_version": dcf_mod.MODEL_VERSION,
+        "status": "READY" if confirmed else "NEEDS_CONFIGURATION",
+        "confirmation_id": confirmed["assumption_set_id"] if confirmed else None,
+        "assumptions": assumptions,
+        "preview": {
+            key: valuation[key]
+            for key in ("result", "scenarios", "sensitivity", "model_quality", "market")
+        },
+        "acknowledgement_required": confirmed is None,
     }
 
 

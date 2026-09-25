@@ -38,6 +38,7 @@ def _install_company(
     instrument_type="COMMON_STOCK",
     evidence=None,
     profile_version=401,
+    complete_valuation_facts=False,
 ):
     registry = CompanyRegistry(db)
     registry.register_company(
@@ -68,29 +69,49 @@ def _install_company(
         schema_version=1,
         content={"company_id": company_id, "version": profile_version},
     )
+    facts = [
+        ("REVENUE", 1_000.0, "USD", "FY", None),
+    ]
+    if complete_valuation_facts:
+        facts.extend([
+            ("OPERATING_INCOME", 200.0, "USD", "FY", None),
+            ("PRETAX_INCOME", 180.0, "USD", "FY", None),
+            ("INCOME_TAX_EXPENSE", 36.0, "USD", "FY", None),
+            ("CAPITAL_EXPENDITURES", 50.0, "USD", "FY", None),
+            ("DEPRECIATION_AMORTIZATION", 30.0, "USD", "FY", None),
+            ("DILUTED_WEIGHTED_AVG_SHARES", 10.0, "shares", "FY", None),
+            ("LONG_TERM_DEBT", 100.0, "USD", "INSTANT", "2025-12-31"),
+            ("LONG_TERM_DEBT_CURRENT", 0.0, "USD", "INSTANT", "2025-12-31"),
+            ("CASH_AND_EQUIVALENTS", 200.0, "USD", "INSTANT", "2025-12-31"),
+            ("SHORT_TERM_INVESTMENTS", 0.0, "USD", "INSTANT", "2025-12-31"),
+        ])
+    rows = []
+    for metric, value, unit, period_type, instant_date in facts:
+        fact_id = f"{metric.lower()}-{profile_version}"
+        rows.append((
+            "canonical_fact",
+            fact_id,
+            {
+                "canonical_fact_id": fact_id,
+                "company_id": company_id,
+                "canonical_metric": metric,
+                "period_type": period_type,
+                "fiscal_year": 2025,
+                "period_end": "2025-12-31",
+                "instant_date": instant_date,
+                "value": value,
+                "unit": unit,
+                "status": "REPORTED",
+                "mapping_rule_id": "fixture",
+                "mapping_version": "v1",
+                "source_raw_fact_ids": [],
+            },
+        ))
     dataset_id = DatasetBuilder(db).seal_rows(
         company_id=company_id,
         profile_id=profile_id,
         source_manifest={"documents": []},
-        rows=[
-            (
-                "canonical_fact",
-                f"revenue-{profile_version}",
-                {
-                    "canonical_fact_id": f"revenue-{profile_version}",
-                    "company_id": company_id,
-                    "canonical_metric": "REVENUE",
-                    "period_type": "FY",
-                    "fiscal_year": 2025,
-                    "value": 1_000.0,
-                    "unit": "USD",
-                    "status": "REPORTED",
-                    "mapping_rule_id": "fixture",
-                    "mapping_version": "v1",
-                    "source_raw_fact_ids": [],
-                },
-            )
-        ],
+        rows=rows,
     )
     publication = publications.publish_dataset(
         company_id=company_id,
@@ -99,6 +120,27 @@ def _install_company(
         quality_report_id=None,
         review_id=None,
     )
+    if complete_valuation_facts:
+        for _, _, payload in rows:
+            db._conn.execute(
+                """
+                INSERT INTO canonical_fact (
+                  canonical_fact_id, company_id, canonical_metric, period_type,
+                  fiscal_year, fiscal_quarter, period_start, period_end, instant_date,
+                  value, unit, status, mapping_rule_id, mapping_version,
+                  source_raw_fact_ids, as_known_at, created_at, warnings_json
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '[]', now(), now(), '[]')
+                """,
+                [
+                    payload["canonical_fact_id"], payload["company_id"],
+                    payload["canonical_metric"], payload["period_type"],
+                    payload["fiscal_year"],
+                    "2025-01-01" if payload["period_type"] == "FY" else None,
+                    payload["period_end"], payload["instant_date"], payload["value"],
+                    payload["unit"], payload["status"], payload["mapping_rule_id"],
+                    payload["mapping_version"],
+                ],
+            )
     return publication
 
 
@@ -130,6 +172,70 @@ def test_new_security_requires_confirmed_assumptions(db, monkeypatch):
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "VALUATION_NEEDS_CONFIGURATION"
+
+
+def test_unconfirmed_company_can_load_identity_bound_draft(db, monkeypatch):
+    publication = _install_company(
+        db,
+        ticker="AAPL",
+        complete_valuation_facts=True,
+    )
+    client = _client(db, monkeypatch)
+    before_sets = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+    before_runs = db.query_one("SELECT count(*) AS n FROM valuation_run")["n"]
+
+    response = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["security_id"] == "security-newco"
+    assert body["publication_id"] == publication.publication_id
+    assert body["model_version"] == MODEL_VERSION
+    assert body["status"] == "NEEDS_CONFIGURATION"
+    assert body["acknowledgement_required"] is True
+    assert body["assumptions"]["inputs"]["shares"] > 0
+    assert body["preview"]["scenarios"]["base"]["status"] == "OK"
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before_sets
+    assert db.query_one("SELECT count(*) AS n FROM valuation_run")["n"] == before_runs
+
+
+def test_confirmation_rejects_draft_after_active_publication_changes(db, monkeypatch):
+    publication = _install_company(
+        db,
+        ticker="AAPL",
+        complete_valuation_facts=True,
+    )
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+        },
+    ).json()
+    _install_new_publication(db, publication.company_id, version=402)
+    before = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+
+    response = client.put(
+        "/api/v1/companies/AAPL/valuation-profile",
+        json={
+            "security_id": draft["security_id"],
+            "publication_id": draft["publication_id"],
+            "model_version": draft["model_version"],
+            "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "VALUATION_DRAFT_STALE"
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
 
 
 def test_confirmation_binds_security_publication_model_and_assumptions(db, monkeypatch):
