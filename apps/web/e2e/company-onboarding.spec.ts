@@ -510,11 +510,46 @@ test("mobile overview does not overflow the viewport", async ({ page }) => {
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport);
 });
 
-test("valuation explains a company configuration gate", async ({ page }) => {
+test("valuation turns a company configuration gate into an assumption review", async ({ page }) => {
   await installOnboardingApiFixture(page);
   await page.route("**/api/v1/companies?**", (route) => route.fulfill({ json: { items: [{ ...apple, capabilities: [{ module: "valuation", status: "NEEDS_CONFIGURATION", reason: "需要确认 USD 与稀释股本口径" }] }], next_cursor: null } }));
+  await page.route("**/api/v1/companies/AAPL/valuation-profile/draft", (route) => route.fulfill({ json: {
+    security_id: apple.security_id,
+    publication_id: apple.publication_id,
+    model_version: "fcff_dcf.v2",
+    status: "NEEDS_CONFIGURATION",
+    acknowledgement_required: true,
+    assumptions: {
+      inputs: {
+        revenue_base: 1000,
+        revenue_growth: [0.1, 0.09, 0.08, 0.07, 0.06],
+        op_margin_start: 0.3,
+        op_margin_end: 0.32,
+        tax_rate: 0.17,
+        da_pct: 0.03,
+        capex_pct: 0.04,
+        nwc_pct: 0.01,
+        wacc: 0.1,
+        terminal_growth: 0.025,
+        terminal_roic: 0.2,
+        net_cash: 100,
+        shares: 10,
+      },
+      meta: {},
+    },
+    preview: {
+      scenarios: {
+        bear: { label: "悲观", status: "OK", reason: null, result: { fair_value_per_share: 70 } },
+        base: { label: "中性", status: "OK", reason: null, result: { fair_value_per_share: 100 } },
+        bull: { label: "乐观", status: "OK", reason: null, result: { fair_value_per_share: 130 } },
+      },
+      result: { fair_value_per_share: 100 },
+    },
+  } }));
   await page.goto("/");
   await page.getByRole("button", { name: "估值" }).click();
-  await expect(page.getByTestId("valuation-gate")).toContainText("待配置");
-  await expect(page.getByTestId("valuation-gate")).toContainText("需要确认 USD 与稀释股本口径");
+  const setup = page.getByTestId("valuation-setup");
+  await expect(setup).toContainText("审核并启用 AAPL 估值");
+  await expect(setup).toContainText("pub-aapl");
+  await expect(page.getByTestId("valuation-confirm")).toBeDisabled();
 });
