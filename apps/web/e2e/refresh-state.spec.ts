@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubPublishedCompanyDirectory } from "./company-directory-fixture";
 
+test.use({ timezoneId: "Asia/Shanghai" });
+
 test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page); });
 
 const inputs = {
@@ -110,7 +112,69 @@ test("full refresh uses bounded sequential module requests", async ({ page }) =>
   await expect.poll(() => refreshBodies.length).toBe(4);
   expect(refreshBodies).toEqual(moduleNames.map((moduleName) => ({ modules: [moduleName] })));
   expect(refreshUrls.every((url) => url.startsWith("http://127.0.0.1:8000/"))).toBe(true);
-  await expect(page.getByText(/financials:成功.*segments:成功.*management:成功.*quotes:成功/)).toBeVisible();
+  await expect(page.getByText("刷新完成：财务已更新、分部暂无更新、治理暂无更新、行情暂无更新")).toBeVisible();
+});
+
+test("refresh shows live module progress and explains successful checks without updates", async ({ page }) => {
+  await stubShell(page, [
+    {
+      key: "sec_financials", label: "SEC 财务事实", as_of: "2026-07-29",
+      detail: "最近披露 10-Q 2026-07-29", status: "ok", days_ago: 58,
+    },
+    {
+      key: "segments", label: "分部数据", as_of: "2026-07-29",
+      detail: "最近披露 10-Q 2026-07-29", status: "ok", days_ago: 58,
+    },
+  ]);
+  const modules = ["financials", "segments", "management", "quotes"];
+  let releaseFinancial!: () => void;
+  let releaseSegments!: () => void;
+  const financialGate = new Promise<void>((resolve) => { releaseFinancial = resolve; });
+  const segmentGate = new Promise<void>((resolve) => { releaseSegments = resolve; });
+
+  await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
+    const body = route.request().postDataJSON() as { modules: string[] };
+    const selected = body.modules[0];
+    if (selected === "financials") await financialGate;
+    if (selected === "segments") await segmentGate;
+    await route.fulfill({ json: {
+      refresh_id: `refresh-${selected}`,
+      status: "ok",
+      review_required: false,
+      modules: Object.fromEntries(modules.map((moduleName) => [
+        moduleName,
+        {
+          status: moduleName === selected ? "ok" : "skipped",
+          retryable: false,
+          changed: false,
+          finished_at: selected === "financials"
+            ? "2026-09-25T02:03:04+00:00"
+            : "2026-09-25T02:04:05+00:00",
+        },
+      ])),
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+
+  const progress = page.getByTestId("refresh-progress");
+  await expect(progress).toBeVisible();
+  await expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText("进行中");
+  await expect(progress.getByTestId("refresh-module-segments")).toContainText("等待");
+
+  releaseFinancial();
+  await expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText("检查成功，暂无更新");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText("数据日期 2026-07-29");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText("本次检查 2026-09-25 10:03:04");
+  await expect(progress.getByTestId("refresh-module-segments")).toContainText("进行中");
+
+  releaseSegments();
+  await expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  await expect(progress).toContainText("4 / 4 完成");
+  await expect(progress.getByText("检查成功，暂无更新")).toHaveCount(4);
 });
 
 test("freshness dates identify their data modules", async ({ page }) => {
@@ -196,9 +260,9 @@ test("refresh reloads the active module and retries only a failed module", async
 
   await page.getByRole("button", { name: "↻ 刷新数据" }).click();
   await expect.poll(() => metricRequests).toBeGreaterThan(beforeRefresh);
-  await expect(page.getByRole("button", { name: "重试 segments" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重试分部" })).toBeVisible();
 
-  await page.getByRole("button", { name: "重试 segments" }).click();
+  await page.getByRole("button", { name: "重试分部" }).click();
   await expect.poll(() => refreshBodies.length).toBe(5);
   expect(refreshBodies).toEqual([
     { modules: ["financials"] },
@@ -207,7 +271,99 @@ test("refresh reloads the active module and retries only a failed module", async
     { modules: ["quotes"] },
     { modules: ["segments"] },
   ]);
-  await expect(page.getByText(/segments:成功/)).toBeVisible();
+  await expect(page.getByTestId("refresh-module-financials")).toContainText("已更新");
+  await expect(page.getByTestId("refresh-module-segments")).toContainText("检查成功，暂无更新");
+  await expect(page.getByTestId("refresh-progress")).toContainText("4 / 4 完成");
+  await expect(page.getByText("刷新完成：分部暂无更新")).toBeVisible();
+});
+
+test("transport failure marks the active module failed and allows a focused retry", async ({ page }) => {
+  await stubShell(page);
+  const attempts: string[] = [];
+
+  await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
+    const body = route.request().postDataJSON() as { modules: string[] };
+    const selected = body.modules[0];
+    attempts.push(selected);
+    if (selected === "segments" && attempts.filter((item) => item === "segments").length === 1) {
+      return route.fulfill({ status: 503, json: { detail: { message: "上游服务暂时不可用" } } });
+    }
+    return route.fulfill({ json: {
+      refresh_id: `refresh-${selected}`,
+      status: "ok",
+      review_required: false,
+      modules: {
+        [selected]: {
+          status: "ok", retryable: false, changed: selected === "financials",
+          finished_at: "2026-09-25T02:03:04+00:00",
+        },
+      },
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+
+  await expect(page.getByTestId("refresh-module-financials")).toContainText("已更新");
+  await expect(page.getByTestId("refresh-module-segments")).toContainText("失败");
+  await expect(page.getByTestId("refresh-module-segments")).toContainText("上游服务暂时不可用");
+  await expect(page.getByTestId("refresh-module-management")).toContainText("检查成功，暂无更新");
+  await expect(page.getByTestId("refresh-module-quotes")).toContainText("检查成功，暂无更新");
+  await expect(page.getByTestId("refresh-progress").getByRole("progressbar")).toHaveAttribute("aria-valuenow", "75");
+  await expect(page.getByRole("button", { name: "重试分部" })).toBeVisible();
+
+  await page.getByRole("button", { name: "重试分部" }).click();
+  await expect.poll(() => attempts).toEqual(["financials", "segments", "management", "quotes", "segments"]);
+  await expect(page.getByTestId("refresh-module-financials")).toContainText("已更新");
+  await expect(page.getByTestId("refresh-module-segments")).toContainText("检查成功，暂无更新");
+});
+
+test("optional reload failures retain the last complete quote and freshness snapshot", async ({ page }) => {
+  await stubShell(page);
+  let quoteRequests = 0;
+  let freshnessRequests = 0;
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => {
+    quoteRequests += 1;
+    if (quoteRequests > 1) return route.fulfill({ status: 503, body: "temporary quote read failure" });
+    return route.fulfill({ json: {
+      status: "OK", configured: true, synced: true,
+      quote: {
+        price: 123.45, currency: "USD", observed_at: "2026-09-24",
+        provider: "test", provider_label: "TestFeed", source_label: "fixture",
+        source_url: "https://example.test/quote", fetched_at: "2026-09-25T01:00:00Z",
+      },
+    } });
+  });
+  await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => {
+    freshnessRequests += 1;
+    if (freshnessRequests > 1) return route.fulfill({ status: 503, body: "temporary freshness read failure" });
+    return route.fulfill({ json: {
+      modules: [{
+        key: "market_quote", label: "行情快照", as_of: "2026-09-24",
+        detail: "TestFeed $123.45", status: "ok", days_ago: 1,
+      }],
+      stale_modules: [], hint: null,
+    } });
+  });
+  await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
+    const selected = (route.request().postDataJSON() as { modules: string[] }).modules[0];
+    return route.fulfill({ json: {
+      refresh_id: `refresh-${selected}`, status: "ok", review_required: false,
+      modules: { [selected]: { status: "ok", retryable: false, changed: false } },
+    } });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
+  await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
+
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+  await expect(page.getByText("刷新完成：财务暂无更新、分部暂无更新、治理暂无更新、行情暂无更新")).toBeVisible();
+  expect(quoteRequests).toBeGreaterThan(1);
+  expect(freshnessRequests).toBeGreaterThan(1);
+  await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
+  await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
+  await expect(page.getByText("页面重新读取失败，已保留上次行情和数据新鲜度")).toBeVisible();
 });
 
 test("refresh automatically recalculates valuation with the preserved draft", async ({ page }) => {
@@ -251,20 +407,22 @@ test("refresh automatically recalculates valuation with the preserved draft", as
   await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
     const body = route.request().postDataJSON() as { modules: string[] };
     const selected = body.modules[0];
-    if (selected === "quotes") refreshCompleted = true;
+    if (selected === "financials") refreshCompleted = true;
     if (selected === "segments") segmentAttempts += 1;
     const failed = selected === "segments" && segmentAttempts === 1;
+    if (failed) {
+      return route.fulfill({ status: 503, json: { detail: { message: "retry me" } } });
+    }
     const modules = Object.fromEntries(["financials", "segments", "management", "quotes"].map(
       (moduleName) => [moduleName, {
-        status: moduleName === selected ? (failed ? "error" : "ok") : "skipped",
-        retryable: moduleName === selected && failed,
-        reason: moduleName === selected && failed ? "retry me" : undefined,
+        status: moduleName === selected ? "ok" : "skipped",
+        retryable: false,
         changed: moduleName === selected && selected === "financials",
       }],
     ));
     return route.fulfill({ json: {
       refresh_id: `refresh-${selected}-${segmentAttempts}`,
-      status: failed ? "partial" : "ok",
+      status: "ok",
       review_required: selected === "financials",
       modules,
     } });
@@ -310,12 +468,45 @@ test("refresh automatically recalculates valuation with the preserved draft", as
   await expect(growth).toHaveValue("11");
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
 
-  await page.getByRole("button", { name: "重试 segments" }).click();
-  await expect(page.getByText(/segments:成功/)).toBeVisible();
+  await page.getByRole("button", { name: "重试分部" }).click();
+  await expect(page.getByText("刷新完成：分部暂无更新")).toBeVisible();
   expect(valuationRunRequests).toBe(runsBeforeRefresh + 2);
   await expect(page.getByTestId("refresh-review-warning")).toBeHidden();
   await expect(growth).toHaveValue("11");
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
+});
+
+test("financial and quote changes each invalidate the valuation baseline", async ({ page }) => {
+  await stubShell(page);
+  let defaultRequests = 0;
+  await page.route("**/api/v1/companies/AAPL/valuation/default", (route) => {
+    defaultRequests += 1;
+    return route.fulfill({ json: valuationResponse() });
+  });
+  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+    route.fulfill({ json: { ticker: "AAPL", plans: [] } }));
+  await page.route("**/api/v1/companies/AAPL/valuation/run", (route) => {
+    const body = route.request().postDataJSON() as { assumptions: typeof inputs };
+    return route.fulfill({ json: valuationResponse(body.assumptions) });
+  });
+  await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
+    const selected = (route.request().postDataJSON() as { modules: string[] }).modules[0];
+    const valuationChanged = selected === "financials" || selected === "quotes";
+    return route.fulfill({ json: {
+      refresh_id: `refresh-${selected}`, status: "ok", review_required: valuationChanged,
+      modules: { [selected]: { status: "ok", retryable: false, changed: valuationChanged } },
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "估值" }).click();
+  await expect.poll(() => defaultRequests).toBeGreaterThan(0);
+  const beforeRefresh = defaultRequests;
+
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+
+  await expect(page.getByText("刷新完成：财务已更新、分部暂无更新、治理暂无更新、行情已更新")).toBeVisible();
+  await expect.poll(() => defaultRequests).toBe(beforeRefresh + 2);
 });
 
 test("refresh discards a default response started before the refresh", async ({ page }) => {
@@ -346,7 +537,7 @@ test("refresh discards a default response started before the refresh", async ({ 
   await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
     const body = route.request().postDataJSON() as { modules: string[] };
     const selected = body.modules[0];
-    if (selected === "quotes") refreshCompleted = true;
+    if (selected === "financials") refreshCompleted = true;
     return route.fulfill({ json: {
       refresh_id: `refresh-${selected}`,
       status: "ok",
@@ -400,7 +591,7 @@ test("retry after a refreshed default failure rebases before recalculating", asy
   await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
     const body = route.request().postDataJSON() as { modules: string[] };
     const selected = body.modules[0];
-    if (selected === "quotes") refreshCompleted = true;
+    if (selected === "financials") refreshCompleted = true;
     return route.fulfill({ json: {
       refresh_id: `refresh-${selected}`,
       status: "ok",
@@ -453,6 +644,6 @@ test("late refresh response cannot pollute a newly selected company", async ({ p
   await expect(page.getByRole("heading", { name: /Microsoft Corp/ })).toBeVisible();
 
   await page.waitForTimeout(700);
-  await expect(page.getByRole("button", { name: "重试 segments" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "重试分部" })).toHaveCount(0);
   await expect(page.getByText(/刷新完成：/)).toHaveCount(0);
 });
