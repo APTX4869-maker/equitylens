@@ -28,3 +28,4 @@ providers:
 symbols:
   AAPL: { nasdaq: AAPL, tencent: usAAPL }
   MSFT: { nasdaq: MSFT, tencent: usMSFT }
+  NVDA: { nasdaq: NVDA, tencent: usNVDA }

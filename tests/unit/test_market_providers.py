@@ -18,7 +18,7 @@ from equitylens.market.model import ProviderError
 from equitylens.market.providers import (
     NasdaqProvider, parse_nasdaq_snapshot, parse_tencent_body, snapshot_bytes,
 )
-from equitylens.market.service import _REPLAY
+from equitylens.market.service import _REPLAY, fetch_quote
 from equitylens.market.sources import get_config
 
 _FX = Path(__file__).parent.parent / "fixtures" / "market"
@@ -99,3 +99,26 @@ def test_nasdaq_missing_price_raises():
     respx.get(url=sum_url).mock(return_value=httpx.Response(200, json={"data": {}}))
     with pytest.raises(ProviderError):
         NasdaqProvider().fetch("AAPL", "AAPL")
+
+
+def test_nvda_uses_existing_primary_and_fallback_symbols():
+    cfg = get_config()
+    assert cfg.active_providers == ("nasdaq", "tencent")
+    assert cfg.symbols["NVDA"] == {"nasdaq": "NVDA", "tencent": "usNVDA"}
+
+
+def test_missing_ticker_configuration_has_actionable_error(monkeypatch):
+    cfg = get_config()
+    monkeypatch.setattr(
+        "equitylens.market.service.get_config",
+        lambda: type(cfg)(
+            version=cfg.version,
+            active_providers=cfg.active_providers,
+            stale_after_minutes=cfg.stale_after_minutes,
+            providers=cfg.providers,
+            symbols={},
+        ),
+    )
+
+    with pytest.raises(ProviderError, match="^QUOTE_CONFIG_MISSING:"):
+        fetch_quote("UNKNOWN")

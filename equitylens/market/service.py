@@ -83,6 +83,10 @@ def fetch_quote(ticker: str, provider_name: str | None = None) -> ProviderQuote:
     """Fetch one quote walking the configured provider chain."""
     cfg = get_config()
     order = [provider_name] if provider_name else list(cfg.active_providers)
+    if not any((cfg.symbols.get(ticker.upper()) or {}).get(name) for name in order):
+        raise ProviderError(
+            f"QUOTE_CONFIG_MISSING: no market symbol configured for {ticker}"
+        )
     last_err: str | None = None
     for name in order:
         provider = PROVIDERS.get(name)
