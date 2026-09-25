@@ -96,6 +96,10 @@ export default function Home() {
   const handlePublished = useCallback(() => {
     void loadCompanies();
   }, [loadCompanies]);
+  const handleValuationConfirmed = useCallback(async () => {
+    await loadCompanies();
+    setReloadKey((value) => value + 1);
+  }, [loadCompanies]);
   const handleOnboardingChanged = useCallback(() => {
     setAttentionRefresh((value) => value + 1);
   }, []);
@@ -366,6 +370,7 @@ export default function Home() {
                 gate={companies.find((item) => item.ticker === company)?.capabilities.find((capability) => capability.module === "valuation") ?? null}
                 refreshGeneration={valuationReviewGeneration[company] ?? 0}
                 refreshReviewRequired={(valuationReviewGeneration[company] ?? 0) > 0}
+                onConfirmed={handleValuationConfirmed}
               />
             </section>
           ) : null}

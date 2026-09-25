@@ -18,20 +18,59 @@ const inputs = {
 };
 
 function scenarios(fair = 200) {
+  const scenarioInputs = {
+    revenue_growth: inputs.revenue_growth,
+    op_margin_end: inputs.op_margin_end,
+    wacc: inputs.wacc,
+    terminal_growth: inputs.terminal_growth,
+    terminal_roic: inputs.terminal_roic,
+  };
   return {
-    bear: { label: "悲观", status: "OK", reason: null, result: { fair_value_per_share: fair * 0.7 } },
-    base: { label: "中性", status: "OK", reason: null, result: { fair_value_per_share: fair } },
-    bull: { label: "乐观", status: "OK", reason: null, result: { fair_value_per_share: fair * 1.3 } },
+    bear: { label: "悲观", status: "OK", reason: null, result: { fair_value_per_share: fair * 0.7 }, inputs: scenarioInputs },
+    base: { label: "中性", status: "OK", reason: null, result: { fair_value_per_share: fair }, inputs: scenarioInputs },
+    bull: { label: "乐观", status: "OK", reason: null, result: { fair_value_per_share: fair * 1.3 }, inputs: scenarioInputs },
   };
 }
 
-async function stubSetupPage(page: Page) {
+function readyValuation() {
+  return {
+    ticker: "NVDA",
+    input_fingerprint: "fp-nvda-ready",
+    model_version: "fcff_dcf.v2",
+    run_at: "2026-09-25T00:00:00Z",
+    valuation_run_id: null,
+    assumptions: { inputs, meta: {} },
+    result: {
+      fair_value_per_share: 200,
+      enterprise_value: 2100,
+      equity_value: 2000,
+      terminal_value: 1200,
+      pv_terminal: 800,
+      sum_pv_fcff: 1300,
+      net_cash: inputs.net_cash,
+      terminal_value_share: 0.4,
+      model_version: "fcff_dcf.v2",
+      terminal_forecast: {
+        year: 6, revenue: 1600, op_margin: 0.605, ebit: 968, nopat: 803,
+        terminal_roic: 0.2, reinvestment_rate: 0.125, reinvestment: 100,
+        fcff: 703, definition: "test terminal FCFF",
+      },
+      forecast: [{ year: 1, revenue: 1300, op_margin: 0.6, fcff: 400, pv_fcff: 360 }],
+      warnings: [],
+    },
+    scenarios: scenarios(),
+    sensitivity: { wacc_grid: [0.1], terminal_grid: [0.025], rows: [] },
+    market: { status: "UNAVAILABLE", reason: "test" },
+  };
+}
+
+async function stubSetupPage(page: Page, valuationReady: () => boolean) {
   await page.route("**/api/v1/companies?**", (route) => route.fulfill({ json: {
     items: [{
       company_id: "0001045810", security_id: "sec-nvda", ticker: "NVDA",
       name: "NVIDIA CORP", exchange: "NASDAQ", publication_id: "pub-nvda",
       quality_status: "VERIFIED",
-      capabilities: [{ module: "valuation", status: "NEEDS_CONFIGURATION", reason: "确认估值研究假设" }],
+      capabilities: [{ module: "valuation", status: valuationReady() ? "READY" : "NEEDS_CONFIGURATION", reason: valuationReady() ? null : "确认估值研究假设" }],
     }],
     next_cursor: null,
   } }));
@@ -76,13 +115,17 @@ async function stubSetupPage(page: Page) {
       result: { fair_value_per_share: body.assumptions.wacc === 0.12 ? 180 : 200 },
     } });
   });
+  await page.route("**/api/v1/companies/NVDA/valuation/default", (route) => route.fulfill({ json: readyValuation() }));
+  await page.route("**/api/v1/companies/NVDA/valuation/plans", (route) => route.fulfill({ json: { ticker: "NVDA", plans: [] } }));
 }
 
 test("reviews complete assumptions before confirming valuation", async ({ page }) => {
-  await stubSetupPage(page);
+  let ready = false;
+  await stubSetupPage(page, () => ready);
   let confirmation: Record<string, unknown> | null = null;
   await page.route("**/api/v1/companies/NVDA/valuation-profile", async (route) => {
     confirmation = route.request().postDataJSON() as Record<string, unknown>;
+    ready = true;
     await route.fulfill({ json: { status: "READY" } });
   });
 
@@ -99,7 +142,8 @@ test("reviews complete assumptions before confirming valuation", async ({ page }
   await page.getByRole("checkbox", { name: /我已审核/ }).check();
   await page.getByTestId("valuation-confirm").click();
 
-  await expect(setup).toContainText("配置已确认");
+  await expect(page.getByTestId("valuation-setup")).toHaveCount(0);
+  await expect(page.getByTestId("fair-value")).toHaveText("$200");
   expect(confirmation).toMatchObject({
     security_id: "sec-nvda",
     publication_id: "pub-nvda",
