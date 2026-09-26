@@ -17,7 +17,7 @@
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
-| T10 真实接入及完整验收 | 可独立部分已完成 | 最新 434 个全量后端测试、44 个浏览器测试通过；前端类型/lint/build 通过 | 三轮审查收口；旧版复核待最终整支审查 | KO/COST 仍缺官方 filing/iXBRL 行级证据；AAPL/MSFT 隔离演练真实命中现金桥、filing context、证券身份和分部 BLOCKER，四家公司均未冒进发布 |
+| T10 真实接入及完整验收 | 可独立部分已完成 | 最新 436 个全量后端测试、44 个浏览器测试通过；前端类型/lint/build 通过 | 旧版复核整支审查无 Critical，两项 Important 已修复 | KO/COST 仍缺官方 filing/iXBRL 行级证据；AAPL/MSFT 隔离演练真实命中现金桥、filing context、证券身份和分部 BLOCKER，四家公司均未冒进发布 |
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
@@ -435,6 +435,6 @@
 
 真实验收：先确认正式库无 writer，复制数据库和 181 个 raw 文件到 `/tmp/equitylens-legacy-rereview.dNlaWD`；副本与来源数据库 SHA-256 均为 `5eaa4a8626ef4a0da29d875bef4831d1d3637d88f884540f09a76dacb433cc1c`，raw 清单哈希均为 `c9bab267c2da4a9baa259524939ad4c4c95298b9c157d7f8415143cc937ffa81`。真实 SEC/API 流程分别创建 AAPL 任务 `fdbaff91-ff07-4ab0-9c4f-a31af16e50e6` 和 MSFT 任务 `f66d3a30-622d-47ff-ab4b-4021dd0709c3`；两者都完成 FETCH/BUILD/VALIDATE 后停在 `NEEDS_ADAPTATION`，质量报告均命中 `CASH_BRIDGE_INPUT_MISSING`、`FILING_CONTEXT_MISSING`、`SECURITY_EVIDENCE_MISSING` 和 `SEGMENTS.reconciliation` BLOCKER。没有生成 review 或新 publication，旧 active publication 仍可读。正式数据库和 raw 的哈希、文件数均未变化。
 
-最终验证：`.venv/bin/python -m pytest` 为 `434 passed, 1 warning in 125.50s`；TypeScript、ESLint、production build 均通过；全量 Playwright 为 `44 passed in 21.2s`。精确任务、产物、质量报告 ID 和命令见 `docs/reviews/2026-09-26-legacy-company-rereview-validation.md`。
+最终审查与验证：独立整支审查无 Critical；修复 CLI profile 导入遗漏幂等请求头，以及 ticker 在事务外解析后可能并发换绑的两项 Important，并以失败测试固定。`.venv/bin/python -m pytest` 为 `436 passed, 1 warning in 124.29s`；TypeScript、ESLint、production build 均通过；全量 Playwright 为 `44 passed in 21.9s`。一项只影响状态变化后错误码稳定性的 Minor 暂缓，路径仍安全失败。精确任务、产物、质量报告 ID 和命令见 `docs/reviews/2026-09-26-legacy-company-rereview-validation.md`。
 
 边界与下一步：复核工作流本身已完成，但不能把“流程可用”误写成“AAPL/MSFT 已通过新标准”。补齐现金桥、官方 iXBRL 行级 context、证券身份和分部对账证据后，必须从最新 active publication 创建新任务、重新生成质量报告并人工复核；在此之前 T10 真实发布项保持未勾选。KO/COST 的证据阻塞也仍未解除。

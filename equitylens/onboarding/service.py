@@ -202,16 +202,29 @@ class OnboardingService:
                         "idempotency key was used for another request",
                     )
                 return self.tasks.get(json.loads(prior[1])["onboarding_id"])
-            locked = self.store._conn.execute(
+            aliases = self.store._conn.execute(
                 """
-                SELECT c.active_publication_id, c.quality_status, s.status
-                FROM company c JOIN security s ON s.company_id=c.company_id
-                WHERE c.company_id=? AND s.security_id=?
+                SELECT s.security_id, s.company_id, c.active_publication_id,
+                       c.quality_status, s.status
+                FROM security_ticker_alias a
+                JOIN security s ON s.security_id=a.security_id
+                JOIN company c ON c.company_id=s.company_id
+                WHERE a.ticker=?
+                  AND a.valid_from <= CURRENT_DATE
+                  AND (a.valid_to IS NULL OR a.valid_to >= CURRENT_DATE)
+                  AND s.status='ACTIVE'
+                ORDER BY s.security_id
                 """,
-                [security.company_id, security.security_id],
-            ).fetchone()
-            expected = (base_publication_id, "LEGACY_UNREVIEWED", "ACTIVE")
-            if locked is None or tuple(locked) != expected:
+                [normalized],
+            ).fetchall()
+            expected = (
+                security.security_id,
+                security.company_id,
+                base_publication_id,
+                "LEGACY_UNREVIEWED",
+                "ACTIVE",
+            )
+            if len(aliases) != 1 or tuple(aliases[0]) != expected:
                 raise OnboardingConflict(
                     "TASK_CONFLICT", "公司身份或复核基线已变化，请重新发起"
                 )

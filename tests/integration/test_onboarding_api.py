@@ -335,6 +335,48 @@ def test_rereview_idempotency_key_rejects_different_company(db, monkeypatch):
     assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
+def test_rereview_revalidates_ticker_identity_inside_writer_transaction(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    original_resolve = CompanyRegistry.resolve
+    resolve_calls = 0
+
+    def race_alias(self, ticker, security_id=None):
+        nonlocal resolve_calls
+        resolve_calls += 1
+        resolved = original_resolve(self, ticker, security_id)
+        if resolve_calls == 1:
+            return resolved
+        self.store._conn.execute(
+            """
+            UPDATE security_ticker_alias SET valid_to=CURRENT_DATE - INTERVAL 1 DAY
+            WHERE ticker='AAPL' AND security_id=?
+            """,
+            [resolved.security_id],
+        )
+        msft_security = self.store._conn.execute(
+            "SELECT security_id FROM security WHERE company_id='0000789019'"
+        ).fetchone()[0]
+        self.store._conn.execute(
+            """
+            INSERT INTO security_ticker_alias
+              (alias_id, security_id, ticker, exchange, valid_from, valid_to)
+            VALUES ('raced-aapl-alias', ?, 'AAPL', 'NASDAQ', CURRENT_DATE, NULL)
+            """,
+            [msft_security],
+        )
+        return resolved
+
+    monkeypatch.setattr(CompanyRegistry, "resolve", race_alias)
+
+    response = _rereview(client, "AAPL", "raced-alias-rereview")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TASK_CONFLICT"
+    assert db.query_one(
+        "SELECT count(*) AS count FROM company_onboarding WHERE company_id='0000320193'"
+    )["count"] == 0
+
+
 def test_verified_or_unpublished_company_cannot_start_legacy_rereview(db, monkeypatch):
     client, _ = _client(db, monkeypatch)
     db._conn.execute(

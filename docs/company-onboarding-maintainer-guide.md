@@ -59,7 +59,8 @@ uv run equitylens onboarding rereview AAPL \
 ```bash
 uv run equitylens onboarding show TASK_ID
 uv run equitylens onboarding profile-import TASK_ID \
-  --file config/issuers/CIK/VERSION.yaml --revision REVISION
+  --file config/issuers/CIK/VERSION.yaml --revision REVISION \
+  --idempotency-key PROFILE_IMPORT_KEY
 uv run equitylens onboarding export TASK_ID --output /tmp/review-package.json
 uv run equitylens onboarding review TASK_ID \
   --fingerprint FINGERPRINT --revision REVISION --reviewer NAME \
@@ -67,7 +68,7 @@ uv run equitylens onboarding review TASK_ID \
   --note '已逐项核对 SEC 报表、单位、期间、分部抵销和证券身份'
 ```
 
-`TASK_ID` 来自建档中心地址/任务详情或任务列表 API；当前 `revision` 来自 `onboarding show`，`fingerprint` 来自刚导出的审查包。导出后检查 dataset/profile/quality 三个哈希、全部来源、关键数值和 BLOCKER。批准必须提交当前 revision 与 review package fingerprint，并显式选择 `--decision APPROVE`；API 只把任务原子转为 `PUBLISHING`，随后由持久化执行器作为唯一发布者完成 publication，页面会继续轮询。任何候选或质量重跑都会使旧 revision/fingerprint 失效。质量结果不是 PASS 时 API 必须拒绝批准。拒绝时改用 `--decision REJECT` 并写明证据缺口。
+`TASK_ID` 来自建档中心地址/任务详情或任务列表 API；当前 `revision` 来自 `onboarding show`，`fingerprint` 来自刚导出的审查包。`PROFILE_IMPORT_KEY` 是该次文件导入的稳定幂等键；请求结果不确定时使用原键重试，换文件必须换键。导出后检查 dataset/profile/quality 三个哈希、全部来源、关键数值和 BLOCKER。批准必须提交当前 revision 与 review package fingerprint，并显式选择 `--decision APPROVE`；API 只把任务原子转入 `PUBLISHING`，随后由持久化执行器作为唯一发布者完成 publication，页面会继续轮询。任何候选或质量重跑都会使旧 revision/fingerprint 失效。质量结果不是 PASS 时 API 必须拒绝批准。拒绝时改用 `--decision REJECT` 并写明证据缺口。
 
 ## Golden 与验收
 

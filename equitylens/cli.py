@@ -122,6 +122,7 @@ def _cmd_onboarding(args) -> int:
                 "expected_revision": args.revision,
                 "profile": profile.model_dump(mode="json", exclude={"content_sha256"}),
             },
+            headers={"Idempotency-Key": args.idempotency_key},
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.onboarding_command == "review":
@@ -201,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     profile_import.add_argument("onboarding_id")
     profile_import.add_argument("--file", required=True)
     profile_import.add_argument("--revision", required=True, type=int)
+    profile_import.add_argument("--idempotency-key", required=True)
     profile_import.set_defaults(func=_cmd_onboarding)
 
     review = onboarding_sub.add_parser("review", help="Approve or reject an exact candidate")

@@ -559,6 +559,53 @@ def test_cli_rereview_calls_local_api(monkeypatch):
     ]
 
 
+def test_cli_profile_import_sends_idempotency_header(monkeypatch):
+    from equitylens import cli
+
+    calls = []
+
+    class Profile:
+        def model_dump(self, **_kwargs):
+            return {"schema_version": 2, "company_id": "0000320193"}
+
+    monkeypatch.setattr(cli, "load_profile_yaml", lambda _path: Profile())
+    monkeypatch.setattr(
+        cli,
+        "_onboarding_request",
+        lambda method, path, **kwargs: calls.append((method, path, kwargs))
+        or {"onboarding_id": "task-aapl"},
+    )
+
+    result = cli.main(
+        [
+            "onboarding",
+            "profile-import",
+            "task-aapl",
+            "--file",
+            "aapl-v2.yaml",
+            "--revision",
+            "7",
+            "--idempotency-key",
+            "profile-aapl-v2",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        (
+            "POST",
+            "/company-onboardings/task-aapl/profile",
+            {
+                "json_body": {
+                    "expected_revision": 7,
+                    "profile": {"schema_version": 2, "company_id": "0000320193"},
+                },
+                "headers": {"Idempotency-Key": "profile-aapl-v2"},
+            },
+        )
+    ]
+
+
 def test_maintainer_review_command_requires_explicit_decision(monkeypatch):
     from equitylens import cli
 

@@ -62,7 +62,7 @@ EQUITYLENS_API_URL=http://127.0.0.1:18000/api/v1 \
 
 ```text
 .venv/bin/python -m pytest
-434 passed, 1 warning in 125.50s
+436 passed, 1 warning in 124.29s
 
 pnpm --dir apps/web exec tsc --noEmit
 passed
@@ -74,10 +74,16 @@ pnpm --dir apps/web build
 passed
 
 PLAYWRIGHT_CHROME_PATH=... pnpm --dir apps/web e2e
-44 passed in 21.2s
+44 passed in 21.9s
 ```
 
 唯一后端 warning 仍是 Starlette TestClient/httpx 的上游弃用提示。浏览器测试中对未启动真实 8000 API 的代理连接拒绝是确定性 mock 场景的预期日志，44 项测试全部通过。
+
+## 最终整支审查
+
+独立只读审查没有发现 Critical。两项 Important 已用 RED→GREEN 测试修复：`profile-import` CLI 现在强制并转发 API 所需的 `Idempotency-Key`；`rereview` 在 writer 事务内重新查询当前有效 ticker 别名，只允许唯一且仍指向原 security/company/基线的身份创建任务。新增聚焦回归为 `41 passed, 1 warning`，随后重新执行上述完整验证。
+
+一项 Minor 暂缓：同一幂等键在目标公司资格状态或 active publication 已变化后，可能返回资格/基线错误而不是 `IDEMPOTENCY_CONFLICT`。当前路径仍然安全失败，不会创建或发布任务；后续若要稳定错误码契约，应把历史 key 检查提前并补充状态变化测试。
 
 ## 后续条件
 
