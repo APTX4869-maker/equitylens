@@ -400,6 +400,7 @@ class PublicationRepository:
             profile_id=task["profile_id"],
             quality_report_id=task["quality_report_id"],
             review_id=task["review_id"],
+            expected_active_publication_id=task.get("base_publication_id"),
             fingerprint=fingerprint,
             onboarding_id=task_id,
             expected_task_revision=expected_revision,

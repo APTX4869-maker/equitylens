@@ -252,6 +252,101 @@ def test_review_package_is_fixed_and_does_not_export_arbitrary_paths(review_case
     assert "/private/should-not-be-exported" not in serialized
 
 
+def test_rereview_package_names_the_replaced_publication(review_case):
+    _, service, tasks, _, task_id, _ = review_case
+    baseline = tasks.store.query_one(
+        "SELECT active_publication_id FROM company WHERE company_id='0000320193'"
+    )["active_publication_id"]
+    tasks.store._conn.execute(
+        "UPDATE company_onboarding SET base_publication_id=? WHERE onboarding_id=?",
+        [baseline, task_id],
+    )
+
+    package = service.review_package(task_id)
+
+    assert package["base_publication_id"] == baseline
+
+
+def test_rereview_publish_rejects_changed_active_publication(review_case):
+    case, _, tasks, publications, task_id, _ = review_case
+    baseline = tasks.store.query_one(
+        "SELECT active_publication_id FROM company WHERE company_id='0000320193'"
+    )["active_publication_id"]
+    tasks.store._conn.execute(
+        "UPDATE company_onboarding SET base_publication_id=? WHERE onboarding_id=?",
+        [baseline, task_id],
+    )
+    approval = case.approve_current()
+    task = tasks.get(task_id)
+    other = publications.publish_dataset(
+        company_id=task.company_id,
+        dataset_id=task.dataset_id,
+        profile_id=task.profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+
+    with pytest.raises(ReviewConflict) as error:
+        case.publish_with(approval)
+
+    assert error.value.code == "PUBLICATION_CONFLICT"
+    assert publications.context(task.company_id).publication_id == other.publication_id
+    assert tasks.get(task_id).state.value == "PUBLISHING"
+
+
+def test_successful_rereview_preserves_old_publication_and_marks_plan_for_review(
+    review_case,
+):
+    _, service, tasks, publications, task_id, _ = review_case
+    service.publish_immediately = True
+    task = tasks.get(task_id)
+    baseline = publications.context(task.company_id)
+    security_id = tasks.store.query_one(
+        "SELECT security_id FROM security WHERE company_id=?", [task.company_id]
+    )["security_id"]
+    tasks.store._conn.execute(
+        "UPDATE company_onboarding SET base_publication_id=? WHERE onboarding_id=?",
+        [baseline.publication_id, task_id],
+    )
+    tasks.store._conn.execute(
+        """
+        INSERT INTO valuation_plan (
+          plan_id, company_id, security_id, publication_id, ticker, name,
+          review_status, created_at
+        ) VALUES ('current-plan', ?, ?, ?, 'AAPL', 'Current plan', 'current', now())
+        """,
+        [task.company_id, security_id, baseline.publication_id],
+    )
+    current = tasks.get(task_id)
+    fingerprint = publications.publication_fingerprint(
+        company_id=current.company_id,
+        dataset_id=current.dataset_id,
+        profile_id=current.profile_id,
+        quality_report_id=current.quality_report_id,
+    )
+
+    service.review(
+        task_id,
+        expected_revision=current.revision,
+        fingerprint=fingerprint,
+        decision="APPROVE",
+        reviewer="maintainer",
+        note="legacy rereview",
+    )
+
+    published = tasks.get(task_id)
+    assert published.state.value == "PUBLISHED"
+    assert published.publication_id != baseline.publication_id
+    assert publications.context(task.company_id, baseline.publication_id) == baseline
+    plan = tasks.store.query_one(
+        "SELECT review_status, review_reason FROM valuation_plan WHERE plan_id='current-plan'"
+    )
+    assert plan == {
+        "review_status": "needs_review",
+        "review_reason": "财务发布版本已更新",
+    }
+
+
 def test_approved_review_publishes_exact_candidate(review_case):
     _, service, tasks, publications, task_id, _ = review_case
     service.publish_immediately = True

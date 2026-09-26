@@ -113,6 +113,7 @@ class ReviewService:
         return {
             "onboarding_id": task.onboarding_id,
             "company_id": task.company_id,
+            "base_publication_id": task.base_publication_id,
             "revision": task.revision,
             "fingerprint": fingerprint,
             "dataset_id": task.dataset_id,
