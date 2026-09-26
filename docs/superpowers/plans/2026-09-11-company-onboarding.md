@@ -525,6 +525,8 @@ test('company appears only after publication', async ({ page }) => {
 
 T10 阻塞记录（2026-09-12）：KO/COST 配置、候选、golden 与复核路径已完成，但当前环境访问官方 SEC Archives iXBRL 返回 403。Company Facts 不包含真实报表行级 context/locator 或分部维度，质量正确保留 `LINEAGE.filing_context` 与 `SEGMENTS.reconciliation` BLOCKER；两家公司未批准、未发布。AAPL/MSFT 完成 profile v2 与新标准 golden，但正式库仍保持 `LEGACY_UNREVIEWED`。因此第三项按“任一证据不足保留阻塞”保持未勾选。
 
+T10 复核更新（2026-09-26）：已实现 AAPL/MSFT 专用旧版复核 API、CLI、任务基线和页面身份，并在正式数据隔离副本通过真实 SEC FETCH→BUILD→VALIDATE 流程。AAPL 任务 `fdbaff91-ff07-4ab0-9c4f-a31af16e50e6`、MSFT 任务 `f66d3a30-622d-47ff-ab4b-4021dd0709c3` 均被 `CASH_BRIDGE_INPUT_MISSING`、`FILING_CONTEXT_MISSING`、`SECURITY_EVIDENCE_MISSING` 与 `SEGMENTS.reconciliation` 四个 BLOCKER 正确阻断；未产生复核批准或新 publication，正式数据库/raw 哈希与文件数保持不变。因此第三项继续不勾选，完整证据见 `docs/reviews/2026-09-26-legacy-company-rereview-validation.md`。
+
 ## 15. 验证命令、审查和交付
 
 从仓库根目录执行（首先检查本机工具及锁文件；不自动更新依赖）：
