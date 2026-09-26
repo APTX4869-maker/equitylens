@@ -33,6 +33,7 @@ def test_market_quote_replay_uses_observation_time(db):
     mkt = next(m for m in d["modules"] if m["key"] == "market_quote")
     assert mkt["status"] == "stale"
     assert mkt["days_ago"] >= 29
+    assert mkt["fetched_at"] == now.isoformat()
 
 
 def test_new_form4_does_not_refresh_old_proxy(db):
@@ -103,8 +104,10 @@ def test_published_facts_supply_disclosure_date_for_older_dataset_envelopes(db):
     )
     assert financials["as_of"] == "2026-08-27"
     assert financials["status"] == "ok"
+    assert financials["fetched_at"] == "2026-09-19T00:00:00+00:00"
     segments = next(module for module in result["modules"] if module["key"] == "segments")
     assert segments["as_of"] == "2026-08-27"
+    assert segments["fetched_at"] == "2026-09-19T00:00:00+00:00"
 
 
 def test_quote_block_marks_stale_observation(db):

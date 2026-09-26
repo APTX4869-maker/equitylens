@@ -32,6 +32,20 @@ def _days_ago(ts) -> int | None:
     return max(0, (datetime.now(timezone.utc) - dt).days)
 
 
+def _utc_timestamp(value) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 def _status(days: int | None, threshold: int, missing_hint: str) -> dict:
     if days is None:
         return {"status": "missing", "detail": missing_hint, "days_ago": None}
@@ -54,7 +68,8 @@ def freshness(
     # ---- SEC financial facts: latest filing date + last ingest ----
     if source_documents is None:
         filings = store.query(
-            """SELECT form_type, MAX(COALESCE(filed_at, published_at)) AS latest FROM source_document
+            """SELECT form_type, MAX(COALESCE(filed_at, published_at)) AS latest,
+                      MAX(fetched_at) AS fetched_at FROM source_document
                WHERE company_id = ? AND form_type IN ('10-K', '10-Q', '10-K/A', '10-Q/A')
                GROUP BY form_type ORDER BY latest DESC""",
             [company_id],
@@ -64,16 +79,23 @@ def freshness(
             [company_id],
         )
     else:
-        grouped: dict[str, str] = {}
+        grouped: dict[str, dict[str, str | None]] = {}
         for document in source_documents:
             form_type = document.get("form_type")
             disclosed_at = document.get("filed_at") or document.get("published_at")
             if form_type in FINANCIAL_FORMS and disclosed_at:
-                latest = grouped.get(form_type)
-                grouped[form_type] = max(str(disclosed_at), latest or "")
+                current = grouped.setdefault(
+                    str(form_type), {"latest": None, "fetched_at": None}
+                )
+                current["latest"] = max(str(disclosed_at), current["latest"] or "")
+                fetched_at = document.get("fetched_at")
+                if fetched_at:
+                    current["fetched_at"] = max(
+                        str(fetched_at), current["fetched_at"] or ""
+                    )
         filings = [
-            {"form_type": form_type, "latest": latest}
-            for form_type, latest in grouped.items()
+            {"form_type": form_type, **values}
+            for form_type, values in grouped.items()
         ]
         if not filings and canonical_facts:
             disclosed_dates = [
@@ -91,6 +113,14 @@ def freshness(
                 filings.append({
                     "form_type": form_types[-1] if form_types else "SEC filing",
                     "latest": max(disclosed_dates),
+                    "fetched_at": max(
+                        (
+                            str(document["fetched_at"])
+                            for document in source_documents
+                            if document.get("fetched_at")
+                        ),
+                        default=None,
+                    ),
                 })
         filings.sort(key=lambda item: item["latest"], reverse=True)
         ingest = None
@@ -99,6 +129,10 @@ def freshness(
     # filing.
     latest_filing = filings[0] if filings else None
     base = latest_filing["latest"] if latest_filing else None
+    financials_fetched_at = max(
+        (str(filing["fetched_at"]) for filing in filings if filing.get("fetched_at")),
+        default=None,
+    )
     detail = (f"最近披露 {latest_filing['form_type']} "
               f"{str(latest_filing['latest'])[:10]}" if latest_filing else "未同步（运行 equitylens sync）")
     if ingest and ingest.get("at"):
@@ -106,17 +140,19 @@ def freshness(
     days = _days_ago(base)
     st = _status(days, STALE_AFTER_DAYS["sec_financials"], detail)
     modules.append({"key": "sec_financials", "label": "SEC 财务事实", "as_of": str(base)[:10] if base else None,
+                    "fetched_at": _utc_timestamp(financials_fetched_at),
                     "detail": detail, "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- segments ----
     if source_documents is None:
         seg_docs = store.query_one(
-            "SELECT MAX(COALESCE(filed_at, published_at)) AS at FROM source_document "
+            "SELECT MAX(COALESCE(filed_at, published_at)) AS at, MAX(fetched_at) AS fetched_at FROM source_document "
             "WHERE company_id = ? AND document_type = 'FILING_DOCUMENT' "
             "AND form_type IN ('10-K','10-Q','10-K/A','10-Q/A')",
             [company_id],
         )
         seg_at = seg_docs["at"] if seg_docs and seg_docs.get("at") else None
+        seg_fetched_at = seg_docs["fetched_at"] if seg_docs and seg_docs.get("fetched_at") else None
     else:
         fact_dates_by_document: dict[str, list[str]] = {}
         for fact in canonical_facts or []:
@@ -137,15 +173,26 @@ def freshness(
             if disclosed_at
         ]
         seg_at = max(segment_dates) if segment_dates else None
+        seg_fetched_at = max(
+            (
+                str(document["fetched_at"])
+                for document in source_documents
+                if document.get("document_type") == "FILING_DOCUMENT"
+                and document.get("form_type") in FINANCIAL_FORMS
+                and document.get("fetched_at")
+            ),
+            default=None,
+        )
     st = _status(_days_ago(seg_at), STALE_AFTER_DAYS["segments"],
                  "无分部 filing 文档（运行 equitylens sync-segments）")
     modules.append({"key": "segments", "label": "分部数据", "as_of": str(seg_at)[:10] if seg_at else None,
+                    "fetched_at": _utc_timestamp(seg_fetched_at),
                     "detail": st["detail"], "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- management: governance is driven by the annual proxy (DEF 14A), not by
     # frequent Form 4 insider filings — a new Form 4 must not mask an old proxy.
     proxy = store.query_one(
-        "SELECT MAX(filed_at) AS at FROM source_document WHERE company_id = ? AND form_type = 'DEF 14A'",
+        "SELECT MAX(filed_at) AS at, MAX(fetched_at) AS fetched_at FROM source_document WHERE company_id = ? AND form_type = 'DEF 14A'",
         [company_id],
     )
     f4 = store.query_one(
@@ -160,6 +207,7 @@ def freshness(
     if f4_at is not None:
         detail += f"（最新 Form 4 {str(f4_at)[:10]}）"
     modules.append({"key": "management", "label": "管理层/治理", "as_of": str(proxy_at)[:10] if proxy_at else None,
+                    "fetched_at": _utc_timestamp(proxy.get("fetched_at") if proxy else None),
                     "detail": detail, "status": st["status"], "days_ago": st["days_ago"]})
 
     # ---- market quote ----
@@ -179,11 +227,13 @@ def freshness(
         age = quote_observation_status(str(quote.get("observed_at") or ""))
         module_status = "ok" if age["status"] == "ok" else "stale"
         modules.append({"key": "market_quote", "label": "行情快照", "as_of": age["as_of"],
+                        "fetched_at": _utc_timestamp(quote.get("fetched_at")),
                         "detail": (f"{provider_label} ${quote['price']:.2f} · "
                                    f"{quote['observed_at']} · {age['detail']}"),
                         "status": module_status, "days_ago": age["days_ago"]})
     else:
         modules.append({"key": "market_quote", "label": "行情快照", "as_of": None,
+                        "fetched_at": None,
                         "detail": "行情未同步（运行 equitylens sync-quotes）",
                         "status": "missing", "days_ago": None})
 

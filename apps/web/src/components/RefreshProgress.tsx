@@ -6,11 +6,12 @@ export type RefreshProgressItem = {
   phase: RefreshProgressPhase;
   changed?: boolean;
   checkedAt?: string | null;
+  pageUpdatedAt?: string | null;
   reason?: string | null;
   retryable?: boolean;
 };
 
-type FreshnessItem = { key: string; as_of: string | null };
+type FreshnessItem = { key: string; as_of: string | null; fetched_at?: string | null };
 
 const ORDER = ["financials", "segments", "management", "quotes"] as const;
 export const REFRESH_MODULE_LABELS: Record<(typeof ORDER)[number], string> = {
@@ -26,7 +27,7 @@ const FRESHNESS_KEYS: Record<(typeof ORDER)[number], string> = {
   quotes: "market_quote",
 };
 
-function checkedAt(value?: string | null) {
+export function formatLocalTimestamp(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 19).replace("T", " ");
@@ -47,9 +48,25 @@ export function RefreshProgress({
   const successful = visible.filter((key) => items[key].phase === "success").length;
   const percent = Math.round((successful / visible.length) * 100);
   const byKey = new Map(freshness.map((item) => [item.key, item]));
+  const statusFor = (key: (typeof ORDER)[number]) => {
+    const item = items[key];
+    return item.phase === "pending"
+      ? "等待"
+      : item.phase === "running"
+        ? "进行中"
+        : item.phase === "error"
+          ? "失败"
+          : item.changed
+            ? "已更新"
+            : "检查成功，暂无更新";
+  };
+  const liveSummary = visible
+    .map((key) => `${REFRESH_MODULE_LABELS[key]}${statusFor(key)}`)
+    .join("；");
 
   return (
     <section className="refresh-progress" data-testid="refresh-progress" aria-label="数据刷新进度">
+      <p className="sr-only" role="status" aria-live="polite">{liveSummary}</p>
       <div className="refresh-progress-head">
         <div>
           <strong>数据刷新进度</strong>
@@ -71,15 +88,8 @@ export function RefreshProgress({
         {visible.map((key) => {
           const item = items[key];
           const dataDate = byKey.get(FRESHNESS_KEYS[key])?.as_of?.slice(0, 10) ?? "未同步";
-          const status = item.phase === "pending"
-            ? "等待"
-            : item.phase === "running"
-              ? "进行中"
-              : item.phase === "error"
-                ? "失败"
-                : item.changed
-                  ? "已更新"
-                  : "检查成功，暂无更新";
+          const sourceFetchedAt = byKey.get(FRESHNESS_KEYS[key])?.fetched_at;
+          const status = statusFor(key);
           return (
             <article
               key={key}
@@ -91,7 +101,9 @@ export function RefreshProgress({
                 <span className="refresh-module-status">{status}</span>
               </div>
               <p>数据日期 {dataDate}</p>
-              <p>本次检查 {checkedAt(item.checkedAt)}</p>
+              <p>来源抓取 {formatLocalTimestamp(sourceFetchedAt)}</p>
+              <p>本次检查 {formatLocalTimestamp(item.checkedAt)}</p>
+              <p>页面更新 {formatLocalTimestamp(item.pageUpdatedAt)}</p>
               {item.reason ? <p className="refresh-module-error">{item.reason}</p> : null}
             </article>
           );

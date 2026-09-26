@@ -1344,8 +1344,15 @@ def company_refresh(ticker: str, payload: dict | None = None):
     from equitylens.refresh.service import RefreshBusy, refresh_company
 
     company = _resolve_company(ticker)
+    body = payload or {}
     try:
-        return refresh_company(_store(), company.ticker, modules=(payload or {}).get("modules"))
+        return refresh_company(
+            _store(),
+            company.ticker,
+            modules=body.get("modules"),
+            operation_id=body.get("operation_id"),
+            operation_finished=body.get("operation_finished", True),
+        )
     except RefreshBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:

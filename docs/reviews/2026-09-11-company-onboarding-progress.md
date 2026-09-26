@@ -421,10 +421,10 @@
 
 ## 后续优先级 P1：行情刷新与公司页面原地更新（2026-09-25）
 
-实际改动：公司页刷新新增财务、分部、治理、行情四模块可视进度。等待和进行中保留红色未完成区，成功模块即时转绿并在返回后原地重载页面数据；成功但没有新披露或新行情时明确显示“检查成功，暂无更新”。进度卡分别显示数据日期和本次检查时间，本次检查时间按浏览器本地时区呈现，顶部来源信息继续显示 SEC 抓取时间。模块错误不会抹掉此前成功结果或旧完整快照，结构化错误与网络级错误均显示失败原因并可只重试该模块；单模块网络失败不会阻断后续模块，重试也不会重置其他模块状态。财务或行情变化一经返回即使后续模块失败也会立即触发估值复核。页面重新读取行情或新鲜度偶发失败时保留上次完整快照并明确提示，而不是清空成未同步。公司切换会清空旧进度，既有请求代次继续阻止迟到响应污染新公司。
+实际改动：公司页刷新新增财务、分部、治理、行情四模块可视进度。等待和进行中保留红色未完成区，成功模块即时转绿并在返回后原地重载页面数据；成功但没有新披露或新行情时明确显示“检查成功，暂无更新”。同一轮四次模块请求共享后端操作令牌，阻止另一标签页插入整轮刷新；令牌有 15 分钟失联过期保护，未取得公司锁时立即回收。进度卡明确分列披露/行情观察日期、来源抓取时间、本次检查时间和页面成功更新时间，UTC 来源时间按浏览器本地时区呈现，页面重新读取失败时不写入虚假的更新时间。模块错误不会抹掉此前成功结果或旧完整快照，结构化错误与网络级错误均显示失败原因并可只重试该模块；单模块网络失败不会阻断后续模块，重试也不会重置其他模块状态。财务或行情变化一经返回即使后续模块失败也会立即触发估值复核。页面重新读取行情或新鲜度偶发失败时保留上次完整快照并明确提示，而不是清空成未同步。公司切换会清空旧进度，请求代次和当前公司身份共同阻止迟到响应污染新公司；动态状态通过 `aria-live` 播报。
 
-测试过程：先以浏览器反例确认页面没有进度组件、重试会重置已有成功状态、中文摘要缺失、网络失败停留在进行中以及 UTC 时间被直接显示；再逐项实现并复跑。专项 Playwright 覆盖顺序请求、实时进度、无更新、即时重载、部分失败、单模块重试、估值自动重算、旧估值响应隔离和公司切换隔离。Python Playwright 独立启动真实 Next.js 页面并使用确定性 API 响应完成桌面/移动视觉验收，移动端 `scrollWidth - clientWidth = 0`；截图为 `/tmp/equitylens-refresh-desktop.png`、`/tmp/equitylens-refresh-mobile.png`。
+测试过程：先以浏览器和 API 反例确认页面没有进度组件、重试会重置已有成功状态、中文摘要缺失、网络失败停留在进行中、UTC 时间被直接显示、跨模块请求没有整轮互斥、抓取/页面更新时间缺失，以及未取得公司锁时操作令牌残留；再逐项实现并复跑。专项 Playwright 覆盖顺序请求与共享操作令牌、实时进度、四类时间、无更新、即时重载、部分失败、单模块重试、估值自动重算、旧估值响应隔离和公司切换隔离。Python Playwright 独立启动真实 Next.js 页面并使用确定性 API 响应完成桌面/移动视觉验收，移动端 `scrollWidth - clientWidth = 0`；截图为 `/tmp/equitylens-refresh-desktop.png`、`/tmp/equitylens-refresh-mobile.png`。
 
-最终验证：`pnpm --dir apps/web exec tsc --noEmit`、`pnpm --dir apps/web lint`、`pnpm --dir apps/web build` 均通过；系统 Chrome 全量 `pnpm --dir apps/web e2e` 为 `41 passed in 36.3s`；相关后端回归 `uv run pytest tests/unit/test_freshness.py tests/unit/test_replay_paths.py tests/integration/test_api.py -q` 为 `68 passed, 1 warning in 52.19s`，唯一 warning 仍为 Starlette TestClient/httpx 上游弃用提示；`git diff --check` 通过。
+最终验证：`pnpm --dir apps/web exec tsc --noEmit`、`pnpm --dir apps/web lint`、`pnpm --dir apps/web build` 均通过；系统 Chrome 全量 `pnpm --dir apps/web e2e` 为 `43 passed in 32.9s`；全量后端 `pytest tests/unit tests/integration tests/golden -q` 为 `425 passed, 1 warning in 134.97s`，唯一 warning 仍为 Starlette TestClient/httpx 上游弃用提示；刷新相关后端回归为 `69 passed, 1 warning`，`git diff --check` 通过。
 
 边界与下一步：本阶段改造的是刷新过程和页面更新体验，不把“检查成功但无新数据”伪装成数据日期变化，也不改变财务/行情来源本身的可用性。下一优先级为补齐 NVDA 的行情、治理与估值数据能力；AAPL/MSFT 旧版本复核和 KO/COST 官方 iXBRL 证据仍按既定顺序随后处理。

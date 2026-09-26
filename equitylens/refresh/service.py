@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 from equitylens.config import DB_PATH, RAW_DIR
 from equitylens.domain.companies import get_company
@@ -19,6 +20,8 @@ from equitylens.storage.writer import WriterBusy, writer_for
 
 MODULES = ("financials", "segments", "management", "quotes")
 _COMPANY_LOCKS: dict[str, threading.Lock] = {}
+_COMPANY_OPERATIONS: dict[str, tuple[str, float]] = {}
+_OPERATION_TTL_SECONDS = 15 * 60
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -33,6 +36,31 @@ def _now() -> str:
 def _company_lock(ticker: str) -> threading.Lock:
     with _LOCKS_GUARD:
         return _COMPANY_LOCKS.setdefault(ticker, threading.Lock())
+
+
+def _claim_operation(ticker: str, operation_id: str | None) -> bool:
+    """Reserve a company across a sequence of module-level HTTP requests."""
+    now = monotonic()
+    with _LOCKS_GUARD:
+        active = _COMPANY_OPERATIONS.get(ticker)
+        if active and now - active[1] >= _OPERATION_TTL_SECONDS:
+            _COMPANY_OPERATIONS.pop(ticker, None)
+            active = None
+        if active and active[0] != operation_id:
+            raise RefreshBusy(f"{ticker} 正在刷新中，请稍后")
+        claimed_new = active is None and bool(operation_id)
+        if operation_id:
+            _COMPANY_OPERATIONS[ticker] = (operation_id, now)
+        return claimed_new
+
+
+def _release_operation(ticker: str, operation_id: str | None) -> None:
+    if not operation_id:
+        return
+    with _LOCKS_GUARD:
+        active = _COMPANY_OPERATIONS.get(ticker)
+        if active and active[0] == operation_id:
+            _COMPANY_OPERATIONS.pop(ticker, None)
 
 
 @contextmanager
@@ -131,25 +159,41 @@ def _run_module(store, ticker: str, module: str, raw_dir: Path):
     return {"reports": [report.line() for report in reports]}
 
 
-def refresh_company(store, ticker: str, modules: list[str] | None = None,
-                    raw_dir: Path | None = None) -> dict:
+def refresh_company(
+    store,
+    ticker: str,
+    modules: list[str] | None = None,
+    raw_dir: Path | None = None,
+    *,
+    operation_id: str | None = None,
+    operation_finished: bool = True,
+) -> dict:
     raw_dir = raw_dir or (RAW_DIR if store.path == DB_PATH else store.path.parent / "raw")
     selected = list(dict.fromkeys(modules or MODULES))
     invalid = [module for module in selected if module not in MODULES]
     if invalid:
         raise ValueError(f"unknown refresh modules: {', '.join(invalid)}")
+    if operation_id is not None and (
+        not isinstance(operation_id, str) or not operation_id or len(operation_id) > 128
+    ):
+        raise ValueError("operation_id must be a non-empty string of at most 128 characters")
+    if not isinstance(operation_finished, bool):
+        raise ValueError("operation_finished must be a boolean")
     company = get_company(ticker, store=store)
+    claimed_new_operation = _claim_operation(company.ticker, operation_id)
     company_lock = _company_lock(company.ticker)
     if not company_lock.acquire(blocking=False):
+        if claimed_new_operation:
+            _release_operation(company.ticker, operation_id)
         raise RefreshBusy(f"{ticker} 正在刷新中，请稍后")
     writer_guard = writer_for(store).serialized(blocking=False)
+    writer_entered = False
     try:
-        writer_guard.__enter__()
-    except WriterBusy:
-        company_lock.release()
-        raise RefreshBusy("另一个公司正在写入 DuckDB，请稍后")
-
-    try:
+        try:
+            writer_guard.__enter__()
+            writer_entered = True
+        except WriterBusy as exc:
+            raise RefreshBusy("另一个公司正在写入 DuckDB，请稍后") from exc
         before = _identity_snapshot(store, company.cik)
         results = {module: {"status": "skipped", "retryable": False} for module in MODULES}
         for module in selected:
@@ -196,5 +240,8 @@ def refresh_company(store, ticker: str, modules: list[str] | None = None,
             "review_required": review_required,
         }
     finally:
-        writer_guard.__exit__(None, None, None)
+        if writer_entered:
+            writer_guard.__exit__(None, None, None)
         company_lock.release()
+        if operation_finished:
+            _release_operation(company.ticker, operation_id)

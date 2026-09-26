@@ -705,6 +705,90 @@ def test_refresh_retries_only_selected_failed_module(client, monkeypatch):
     assert response.json()["modules"]["financials"]["status"] == "skipped"
 
 
+def test_refresh_operation_token_blocks_interleaving_and_releases_on_final_request(
+    client, monkeypatch
+):
+    import equitylens.refresh.service as refresh_service
+
+    monkeypatch.setattr(refresh_service, "_run_module", lambda *args, **kwargs: {})
+
+    first = client.post(
+        "/api/v1/companies/AAPL/refresh",
+        json={
+            "modules": ["financials"],
+            "operation_id": "refresh-op-a",
+            "operation_finished": False,
+        },
+    )
+    assert first.status_code == 200
+
+    blocked = client.post(
+        "/api/v1/companies/AAPL/refresh",
+        json={
+            "modules": ["segments"],
+            "operation_id": "refresh-op-b",
+            "operation_finished": True,
+        },
+    )
+    assert blocked.status_code == 409
+
+    final = client.post(
+        "/api/v1/companies/AAPL/refresh",
+        json={
+            "modules": ["segments"],
+            "operation_id": "refresh-op-a",
+            "operation_finished": True,
+        },
+    )
+    assert final.status_code == 200
+
+    released = client.post(
+        "/api/v1/companies/AAPL/refresh",
+        json={
+            "modules": ["quotes"],
+            "operation_id": "refresh-op-b",
+            "operation_finished": True,
+        },
+    )
+    assert released.status_code == 200
+
+
+def test_failed_operation_claim_does_not_block_the_next_refresh(client, monkeypatch):
+    import threading
+    import equitylens.refresh.service as refresh_service
+
+    held_lock = threading.Lock()
+    held_lock.acquire()
+    monkeypatch.setattr(refresh_service, "_company_lock", lambda _ticker: held_lock)
+    monkeypatch.setattr(refresh_service, "_run_module", lambda *args, **kwargs: {})
+
+    try:
+        busy = client.post(
+            "/api/v1/companies/AAPL/refresh",
+            json={
+                "modules": ["financials"],
+                "operation_id": "refresh-never-started",
+                "operation_finished": False,
+            },
+        )
+        assert busy.status_code == 409
+        held_lock.release()
+
+        next_refresh = client.post(
+            "/api/v1/companies/AAPL/refresh",
+            json={
+                "modules": ["financials"],
+                "operation_id": "refresh-next",
+                "operation_finished": True,
+            },
+        )
+        assert next_refresh.status_code == 200
+    finally:
+        if held_lock.locked():
+            held_lock.release()
+        refresh_service._COMPANY_OPERATIONS.pop("AAPL", None)
+
+
 def test_refresh_rolls_back_failed_module_writes(client, company_db, monkeypatch):
     import equitylens.ingestion.sec.sync as sec_sync
 

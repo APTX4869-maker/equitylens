@@ -20,6 +20,7 @@ import { OnboardingAttentionButton } from "@/components/companies/OnboardingAtte
 import {
   REFRESH_MODULE_LABELS,
   RefreshProgress,
+  formatLocalTimestamp,
   type RefreshProgressItem,
 } from "@/components/RefreshProgress";
 
@@ -27,6 +28,7 @@ type Cached = { info: CompanyInfo; overview: OverviewResponse };
 type FreshnessModule = {
   key: string; label: string; as_of: string | null;
   detail: string; status: "ok" | "stale" | "missing"; days_ago: number | null;
+  fetched_at?: string | null;
 };
 type Freshness = { modules: FreshnessModule[]; stale_modules: string[]; hint: string | null };
 type RefreshModule = {
@@ -78,6 +80,7 @@ export default function Home() {
   const companyListRequestSeq = useRef(0);
   const refreshRequestSeq = useRef(0);
   const dataRequestSeq = useRef(0);
+  const pendingPageUpdateModules = useRef(new Set<string>());
 
   const loadCompanies = useCallback(async () => {
     const controller = new AbortController();
@@ -123,6 +126,7 @@ export default function Home() {
   const selectCompany = useCallback((next: string) => {
     companyRef.current = next;
     refreshRequestSeq.current += 1;
+    pendingPageUpdateModules.current.clear();
     setRefreshing(false);
     setMetricKey(null);
     setMetricFact(null);
@@ -163,7 +167,7 @@ export default function Home() {
         api.marketQuote(company, identity, controller.signal),
         api.fetchJson<Freshness>(`/api/v1/companies/${company}/freshness?security_id=${encodeURIComponent(selected.security_id)}&publication_id=${encodeURIComponent(selected.publication_id ?? "")}`, { signal: controller.signal }),
       ]);
-      if (cancelled || requestSeq !== dataRequestSeq.current) return;
+      if (cancelled || requestSeq !== dataRequestSeq.current || companyRef.current !== company) return;
       if (infoR.status === "fulfilled" && overviewR.status === "fulfilled") {
         setCache((prev) => ({ ...prev, [company]: { info: infoR.value, overview: overviewR.value } }));
         setError(null);
@@ -183,6 +187,25 @@ export default function Home() {
       setReloadWarning(failedOptionalReads.length
         ? `页面重新读取失败，已保留上次${failedOptionalReads.join("和")}`
         : null);
+      const completedPageUpdates = [...pendingPageUpdateModules.current].filter((moduleName) => {
+        const coreReloaded = infoR.status === "fulfilled" && overviewR.status === "fulfilled";
+        const freshnessReloaded = freshR.status === "fulfilled";
+        const moduleReloaded = moduleName !== "quotes" || mqR.status === "fulfilled";
+        return coreReloaded && freshnessReloaded && moduleReloaded;
+      });
+      if (completedPageUpdates.length) {
+        const pageUpdatedAt = new Date().toISOString();
+        completedPageUpdates.forEach((moduleName) => pendingPageUpdateModules.current.delete(moduleName));
+        setRefreshProgress((previous) => {
+          const next = { ...previous };
+          completedPageUpdates.forEach((moduleName) => {
+            if (next[moduleName]?.phase === "success") {
+              next[moduleName] = { ...next[moduleName], pageUpdatedAt };
+            }
+          });
+          return next;
+        });
+      }
     })();
     return () => {
       cancelled = true;
@@ -203,6 +226,8 @@ export default function Home() {
   const refresh = useCallback(async (modules?: string[]) => {
     const requestCompany = company;
     const requestSeq = ++refreshRequestSeq.current;
+    const operationId = `refresh-${crypto.randomUUID()}`;
+    if (!modules?.length) pendingPageUpdateModules.current.clear();
     setRefreshing(true);
     setRefreshMsg(null);
     const requested = modules?.length
@@ -238,7 +263,11 @@ export default function Home() {
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ modules: batch }),
+              body: JSON.stringify({
+                modules: batch,
+                operation_id: operationId,
+                operation_finished: batchIndex === batches.length - 1,
+              }),
             }
           );
         } catch (reason) {
@@ -274,7 +303,10 @@ export default function Home() {
           if (nextModule) next[nextModule] = { ...next[nextModule], phase: "running" };
           return next;
         });
-        if (completed?.status === "ok") setReloadKey((key) => key + 1);
+        if (completed?.status === "ok") {
+          pendingPageUpdateModules.current.add(completedModule);
+          setReloadKey((key) => key + 1);
+        }
         if (response.review_required) {
           setValuationReviewGeneration((previous) => ({
             ...previous,
@@ -355,7 +387,7 @@ export default function Home() {
                 <span className="tool-label">数据源</span>
                 <span className="tool-value">
                   {entry?.info?.source_freshness?.COMPANYFACTS_SNAPSHOT
-                    ? `SEC EDGAR · 抓取于 ${entry.info.source_freshness.COMPANYFACTS_SNAPSHOT.fetched_at.slice(0, 10)}`
+                    ? `SEC EDGAR · 抓取于 ${formatLocalTimestamp(entry.info.source_freshness.COMPANYFACTS_SNAPSHOT.fetched_at)}`
                     : "SEC EDGAR"}
                 </span>
               </div>

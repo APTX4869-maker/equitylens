@@ -48,6 +48,7 @@ function valuationResponse(overrides: Partial<typeof inputs> = {}) {
 async function stubShell(page: Page, freshnessModules: Array<{
   key: string; label: string; as_of: string | null; detail: string;
   status: "ok" | "stale" | "missing"; days_ago: number | null;
+  fetched_at?: string | null;
 }> = []) {
   await page.route("**/api/v1/companies/AAPL?**", (route) => route.fulfill({ json: {
     ticker: "AAPL", cik: "0000320193", name: "Apple Inc.", exchange: "NASDAQ",
@@ -80,15 +81,19 @@ async function stubMicrosoftShell(page: Page) {
   }}));
 }
 
-test("full refresh uses bounded sequential module requests", async ({ page }) => {
+test("full refresh uses one operation token across bounded sequential module requests", async ({ page }) => {
   await stubShell(page);
-  const refreshBodies: Array<{ modules?: string[] }> = [];
+  const refreshBodies: Array<{
+    modules?: string[];
+    operation_id?: string;
+    operation_finished?: boolean;
+  }> = [];
   const refreshUrls: string[] = [];
   const moduleNames = ["financials", "segments", "management", "quotes"];
 
   await page.route("**/api/v1/companies/AAPL/refresh", async (route) => {
     refreshUrls.push(route.request().url());
-    const body = route.request().postDataJSON() as { modules?: string[] };
+    const body = route.request().postDataJSON() as typeof refreshBodies[number];
     refreshBodies.push(body);
     const selected = body.modules?.[0];
     return route.fulfill({ json: {
@@ -110,7 +115,15 @@ test("full refresh uses bounded sequential module requests", async ({ page }) =>
   await page.getByRole("button", { name: "↻ 刷新数据" }).click();
 
   await expect.poll(() => refreshBodies.length).toBe(4);
-  expect(refreshBodies).toEqual(moduleNames.map((moduleName) => ({ modules: [moduleName] })));
+  const operationIds = new Set(refreshBodies.map((body) => body.operation_id));
+  expect(operationIds.size).toBe(1);
+  expect([...operationIds][0]).toMatch(/^refresh-/);
+  expect(refreshBodies.map(({ modules, operation_finished }) => ({ modules, operation_finished }))).toEqual(
+    moduleNames.map((moduleName, index) => ({
+      modules: [moduleName],
+      operation_finished: index === moduleNames.length - 1,
+    })),
+  );
   expect(refreshUrls.every((url) => url.startsWith("http://127.0.0.1:8000/"))).toBe(true);
   await expect(page.getByText("刷新完成：财务已更新、分部暂无更新、治理暂无更新、行情暂无更新")).toBeVisible();
 });
@@ -120,6 +133,7 @@ test("refresh shows live module progress and explains successful checks without 
     {
       key: "sec_financials", label: "SEC 财务事实", as_of: "2026-07-29",
       detail: "最近披露 10-Q 2026-07-29", status: "ok", days_ago: 58,
+      fetched_at: "2026-09-25T01:02:03+00:00",
     },
     {
       key: "segments", label: "分部数据", as_of: "2026-07-29",
@@ -168,13 +182,17 @@ test("refresh shows live module progress and explains successful checks without 
   await expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("检查成功，暂无更新");
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("数据日期 2026-07-29");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText("来源抓取 2026-09-25 09:02:03");
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("本次检查 2026-09-25 10:03:04");
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText(/页面更新 20\d\d-/);
   await expect(progress.getByTestId("refresh-module-segments")).toContainText("进行中");
+
+  await expect(progress.getByRole("status")).toContainText("财务检查成功，暂无更新");
 
   releaseSegments();
   await expect(progress.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
   await expect(progress).toContainText("4 / 4 完成");
-  await expect(progress.getByText("检查成功，暂无更新")).toHaveCount(4);
+  await expect(progress.locator(".refresh-module-status").getByText("检查成功，暂无更新")).toHaveCount(4);
 });
 
 test("freshness dates identify their data modules", async ({ page }) => {
@@ -264,12 +282,18 @@ test("refresh reloads the active module and retries only a failed module", async
 
   await page.getByRole("button", { name: "重试分部" }).click();
   await expect.poll(() => refreshBodies.length).toBe(5);
-  expect(refreshBodies).toEqual([
-    { modules: ["financials"] },
-    { modules: ["segments"] },
-    { modules: ["management"] },
-    { modules: ["quotes"] },
-    { modules: ["segments"] },
+  const typedBodies = refreshBodies as Array<{
+    modules: string[];
+    operation_id: string;
+    operation_finished: boolean;
+  }>;
+  expect(typedBodies.map((body) => body.modules)).toEqual([
+    ["financials"], ["segments"], ["management"], ["quotes"], ["segments"],
+  ]);
+  expect(new Set(typedBodies.slice(0, 4).map((body) => body.operation_id)).size).toBe(1);
+  expect(typedBodies[4].operation_id).not.toBe(typedBodies[0].operation_id);
+  expect(typedBodies.map((body) => body.operation_finished)).toEqual([
+    false, false, false, true, true,
   ]);
   await expect(page.getByTestId("refresh-module-financials")).toContainText("已更新");
   await expect(page.getByTestId("refresh-module-segments")).toContainText("检查成功，暂无更新");
@@ -364,6 +388,7 @@ test("optional reload failures retain the last complete quote and freshness snap
   await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
   await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
   await expect(page.getByText("页面重新读取失败，已保留上次行情和数据新鲜度")).toBeVisible();
+  await expect(page.getByTestId("refresh-module-quotes")).toContainText("页面更新 —");
 });
 
 test("refresh automatically recalculates valuation with the preserved draft", async ({ page }) => {
@@ -646,4 +671,38 @@ test("late refresh response cannot pollute a newly selected company", async ({ p
   await page.waitForTimeout(700);
   await expect(page.getByRole("button", { name: "重试分部" })).toHaveCount(0);
   await expect(page.getByText(/刷新完成：/)).toHaveCount(0);
+});
+
+test("late page-data reload cannot leak an old-company warning after selection changes", async ({ page }) => {
+  await stubShell(page);
+  await stubMicrosoftShell(page);
+  let freshnessRequests = 0;
+  let releaseOldReload!: () => void;
+  const oldReloadGate = new Promise<void>((resolve) => { releaseOldReload = resolve; });
+  await page.route("**/api/v1/companies/AAPL/freshness?**", async (route) => {
+    freshnessRequests += 1;
+    if (freshnessRequests === 1) {
+      return route.fulfill({ json: { modules: [], stale_modules: [], hint: null } });
+    }
+    await oldReloadGate;
+    return route.fulfill({ status: 503, body: "old AAPL reload failed" });
+  });
+  await page.route("**/api/v1/companies/AAPL/refresh", (route) => {
+    const selected = (route.request().postDataJSON() as { modules: string[] }).modules[0];
+    return route.fulfill({ json: {
+      refresh_id: `refresh-${selected}`, status: "ok", review_required: false,
+      modules: { [selected]: { status: "ok", retryable: false, changed: false } },
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "↻ 刷新数据" }).click();
+  await expect.poll(() => freshnessRequests).toBeGreaterThan(1);
+
+  const selectingMicrosoft = page.getByRole("button", { name: /MSFT Microsoft/ }).click();
+  releaseOldReload();
+  await selectingMicrosoft;
+  await expect(page.getByRole("heading", { name: /Microsoft Corp/ })).toBeVisible();
+  await expect(page.getByText(/页面重新读取失败/)).toHaveCount(0);
+  await expect(page.getByText(/公司或财务总览加载失败/)).toHaveCount(0);
 });
