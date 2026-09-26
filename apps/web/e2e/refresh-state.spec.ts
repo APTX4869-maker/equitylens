@@ -184,7 +184,7 @@ test("refresh shows live module progress and explains successful checks without 
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("数据日期 2026-07-29");
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("来源抓取 2026-09-25 09:02:03");
   await expect(progress.getByTestId("refresh-module-financials")).toContainText("本次检查 2026-09-25 10:03:04");
-  await expect(progress.getByTestId("refresh-module-financials")).toContainText(/页面更新 20\d\d-/);
+  await expect(progress.getByTestId("refresh-module-financials")).toContainText(/页面摘要更新 20\d\d-/);
   await expect(progress.getByTestId("refresh-module-segments")).toContainText("进行中");
 
   await expect(progress.getByRole("status")).toContainText("财务检查成功，暂无更新");
@@ -331,6 +331,7 @@ test("transport failure marks the active module failed and allows a focused retr
   await expect(page.getByTestId("refresh-module-financials")).toContainText("已更新");
   await expect(page.getByTestId("refresh-module-segments")).toContainText("失败");
   await expect(page.getByTestId("refresh-module-segments")).toContainText("上游服务暂时不可用");
+  await expect(page.getByTestId("refresh-progress").getByRole("status")).toContainText("分部失败：上游服务暂时不可用");
   await expect(page.getByTestId("refresh-module-management")).toContainText("检查成功，暂无更新");
   await expect(page.getByTestId("refresh-module-quotes")).toContainText("检查成功，暂无更新");
   await expect(page.getByTestId("refresh-progress").getByRole("progressbar")).toHaveAttribute("aria-valuenow", "75");
@@ -388,7 +389,7 @@ test("optional reload failures retain the last complete quote and freshness snap
   await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
   await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
   await expect(page.getByText("页面重新读取失败，已保留上次行情和数据新鲜度")).toBeVisible();
-  await expect(page.getByTestId("refresh-module-quotes")).toContainText("页面更新 —");
+  await expect(page.getByTestId("refresh-module-quotes")).toContainText("页面摘要更新 —");
 });
 
 test("refresh automatically recalculates valuation with the preserved draft", async ({ page }) => {

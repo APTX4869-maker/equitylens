@@ -61,7 +61,11 @@ export function RefreshProgress({
             : "检查成功，暂无更新";
   };
   const liveSummary = visible
-    .map((key) => `${REFRESH_MODULE_LABELS[key]}${statusFor(key)}`)
+    .map((key) => {
+      const item = items[key];
+      const reason = item.phase === "error" && item.reason ? `：${item.reason}` : "";
+      return `${REFRESH_MODULE_LABELS[key]}${statusFor(key)}${reason}`;
+    })
     .join("；");
 
   return (
@@ -103,7 +107,7 @@ export function RefreshProgress({
               <p>数据日期 {dataDate}</p>
               <p>来源抓取 {formatLocalTimestamp(sourceFetchedAt)}</p>
               <p>本次检查 {formatLocalTimestamp(item.checkedAt)}</p>
-              <p>页面更新 {formatLocalTimestamp(item.pageUpdatedAt)}</p>
+              <p>页面摘要更新 {formatLocalTimestamp(item.pageUpdatedAt)}</p>
               {item.reason ? <p className="refresh-module-error">{item.reason}</p> : null}
             </article>
           );
