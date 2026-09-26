@@ -119,6 +119,7 @@ export type OnboardingTask = {
   quality_report_id?: string | null;
   review_id?: string | null;
   publication_id?: string | null;
+  base_publication_id?: string | null;
   error?: { code?: string; message?: string; [key: string]: unknown } | null;
   created_at: string;
   updated_at: string;

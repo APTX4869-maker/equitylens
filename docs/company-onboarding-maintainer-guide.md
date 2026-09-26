@@ -47,6 +47,15 @@ profile 位于 `config/issuers/<10位CIK>/<version>.yaml`，必须通过严格 d
 
 ## CLI 复核闭环
 
+正式库中 `quality_status=LEGACY_UNREVIEWED`、已有 active publication 且没有进行中建档任务的公司，必须先通过专用命令创建“旧版公司新标准复核”任务：
+
+```bash
+uv run equitylens onboarding rereview AAPL \
+  --idempotency-key legacy-aapl-v2
+```
+
+该命令只提交 ticker，并把幂等键放在 `Idempotency-Key` 请求头；同一键重试会返回同一任务，不同键也会收敛到同一进行中任务。它不会直接替换当前发布版本，旧版本会作为任务详情中的“基线发布版本”持续可用。任务之后使用下面的通用 profile 导入、导出和审核命令推进。如果发布时出现 `PUBLICATION_CONFLICT`，表示 active publication 已在复核期间变化；取消旧任务并重新运行 `rereview`，让新任务从最新基线开始，不要绕过冲突或手工切换 publication。
+
 ```bash
 uv run equitylens onboarding show TASK_ID
 uv run equitylens onboarding profile-import TASK_ID \

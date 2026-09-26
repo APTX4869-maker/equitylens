@@ -300,6 +300,44 @@ test("adaptation-required task pauses polling and explains the required action",
   expect(detailRequests).toBe(settledRequestCount);
 });
 
+test("legacy rereview task identifies its baseline publication", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  const rereviewTask = {
+    onboarding_id: "onboarding-aapl-rereview",
+    company_id: "0000320193",
+    ticker: "AAPL",
+    company_name: "Apple Inc.",
+    state: "NEEDS_ADAPTATION",
+    current_step: "BUILD",
+    revision: 2,
+    cancel_requested: false,
+    input_fingerprint: "rereview-aapl",
+    base_publication_id: "legacy-publication-aapl-v1",
+    profile_id: null,
+    dataset_id: null,
+    quality_report_id: null,
+    review_id: null,
+    publication_id: null,
+    error: { code: "PROFILE_REQUIRED", message: "reviewed profile required" },
+    created_at: "2026-09-26T01:00:00Z",
+    updated_at: "2026-09-26T01:01:00Z",
+    actions: ["CANCEL", "PROFILE_IMPORT"],
+  };
+  await page.route("**/api/v1/company-onboardings?**", (route) => route.fulfill({
+    json: { items: [rereviewTask], next_cursor: null, attention_count: 1 },
+  }));
+  await page.route("**/api/v1/company-onboardings/onboarding-aapl-rereview", (route) => route.fulfill({
+    json: { ...rereviewTask, steps: [], checks: [], blocking_reasons: [] },
+  }));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "建档中心" }).click();
+
+  await expect(page.getByText("旧版公司新标准复核")).toBeVisible();
+  await expect(page.getByText("基线发布版本")).toBeVisible();
+  await expect(page.getByText("legacy-publication-aapl-v1")).toBeVisible();
+});
+
 test("adaptation workbench shows five-stage progress, evidence, and resumes after YAML upload", async ({ page }) => {
   await installOnboardingApiFixture(page);
   const stages = ["IDENTITY", "FETCH", "ADAPTATION", "BUILD_VALIDATE", "REVIEW_PUBLISH"];

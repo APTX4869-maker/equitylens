@@ -525,6 +525,40 @@ def test_maintainer_review_command_calls_api_without_database_fallback(monkeypat
     ]
 
 
+def test_cli_rereview_calls_local_api(monkeypatch):
+    from equitylens import cli
+
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "_onboarding_request",
+        lambda method, path, **kwargs: calls.append((method, path, kwargs))
+        or {"onboarding_id": "task-aapl"},
+    )
+
+    result = cli.main(
+        [
+            "onboarding",
+            "rereview",
+            "AAPL",
+            "--idempotency-key",
+            "legacy-aapl-v2",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        (
+            "POST",
+            "/company-onboardings/rereview",
+            {
+                "json_body": {"ticker": "AAPL"},
+                "headers": {"Idempotency-Key": "legacy-aapl-v2"},
+            },
+        )
+    ]
+
+
 def test_maintainer_review_command_requires_explicit_decision(monkeypatch):
     from equitylens import cli
 

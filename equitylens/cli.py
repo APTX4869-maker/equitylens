@@ -69,13 +69,20 @@ def cmd_sync(args) -> int:
     return 0
 
 
-def _onboarding_request(method: str, path: str, *, json_body: dict | None = None):
+def _onboarding_request(
+    method: str,
+    path: str,
+    *,
+    json_body: dict | None = None,
+    headers: dict[str, str] | None = None,
+):
     base = os.environ.get("EQUITYLENS_API_URL", "http://127.0.0.1:8000/api/v1")
     try:
         response = httpx.request(
             method,
             f"{base.rstrip('/')}{path}",
             json=json_body,
+            headers=headers,
             timeout=30,
         )
         response.raise_for_status()
@@ -87,6 +94,16 @@ def _onboarding_request(method: str, path: str, *, json_body: dict | None = None
 
 
 def _cmd_onboarding(args) -> int:
+    if args.onboarding_command == "rereview":
+        result = _onboarding_request(
+            "POST",
+            "/company-onboardings/rereview",
+            json_body={"ticker": args.ticker},
+            headers={"Idempotency-Key": args.idempotency_key},
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     path = f"/company-onboardings/{args.onboarding_id}"
     if args.onboarding_command == "show":
         print(json.dumps(_onboarding_request("GET", path), ensure_ascii=False, indent=2))
@@ -162,6 +179,13 @@ def main(argv: list[str] | None = None) -> int:
     onboarding_sub = onboarding.add_subparsers(
         dest="onboarding_command", required=True
     )
+    rereview = onboarding_sub.add_parser(
+        "rereview", help="Re-evaluate one legacy company against current standards"
+    )
+    rereview.add_argument("ticker")
+    rereview.add_argument("--idempotency-key", required=True)
+    rereview.set_defaults(func=_cmd_onboarding)
+
     show = onboarding_sub.add_parser("show", help="Show one onboarding task")
     show.add_argument("onboarding_id")
     show.set_defaults(func=_cmd_onboarding)
