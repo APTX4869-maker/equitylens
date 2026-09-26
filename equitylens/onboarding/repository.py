@@ -53,6 +53,7 @@ def _step_input_hash(task: TaskView) -> str:
         "dataset_id": task.dataset_id,
         "quality_report_id": task.quality_report_id,
         "review_id": task.review_id,
+        "base_publication_id": task.base_publication_id,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -64,7 +65,12 @@ class OnboardingRepository:
         self.writer = writer_for(store)
 
     def create_task(
-        self, *, company_id: str, security_id: str, input_fingerprint: str
+        self,
+        *,
+        company_id: str,
+        security_id: str,
+        input_fingerprint: str,
+        base_publication_id: str | None = None,
     ) -> TaskView:
         with self.writer.transaction(self.store):
             placeholders = ",".join("?" for _ in ACTIVE_STATES)
@@ -88,11 +94,11 @@ class OnboardingRepository:
                     """
                     INSERT INTO company_onboarding (
                       onboarding_id, company_id, state, current_step, revision,
-                      cancel_requested, input_fingerprint, error_json,
+                      cancel_requested, input_fingerprint, base_publication_id, error_json,
                       next_attempt_at, created_at, updated_at
-                    ) VALUES (?, ?, 'QUEUED', 'FETCH', 1, false, ?, NULL, NULL, now(), now())
+                    ) VALUES (?, ?, 'QUEUED', 'FETCH', 1, false, ?, ?, NULL, NULL, now(), now())
                     """,
-                    [task_id, company_id, input_fingerprint],
+                    [task_id, company_id, input_fingerprint, base_publication_id],
                 )
                 self.store._conn.execute(
                     "INSERT INTO onboarding_security VALUES (?, ?)",
@@ -148,6 +154,7 @@ class OnboardingRepository:
             quality_report_id=row.get("quality_report_id"),
             review_id=row.get("review_id"),
             publication_id=row.get("publication_id"),
+            base_publication_id=row.get("base_publication_id"),
             error=error,
             created_at=row["created_at"],
             updated_at=row["updated_at"],

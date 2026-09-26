@@ -600,6 +600,13 @@ def _onboarding_closure_artifacts(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(statement)
 
 
+def _legacy_rereview_baseline(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "ALTER TABLE company_onboarding "
+        "ADD COLUMN IF NOT EXISTS base_publication_id VARCHAR"
+    )
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -652,6 +659,12 @@ MIGRATIONS = (
         name="onboarding_closure_artifacts",
         signature="onboarding:+fetch_bundle,+profile_candidate;fetch_document:v1;profile_candidate:v1;onboarding_event:v1;profile_import_idempotency:v1",
         apply=lambda conn: _onboarding_closure_artifacts(conn),
+    ),
+    Migration(
+        version=8,
+        name="legacy_rereview_baseline",
+        signature="company_onboarding:+base_publication_id",
+        apply=lambda conn: _legacy_rereview_baseline(conn),
     ),
 )
 

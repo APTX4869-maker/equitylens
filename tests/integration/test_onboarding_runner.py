@@ -168,6 +168,51 @@ def test_same_issuer_reuses_active_task(db):
     assert second.onboarding_id == first.onboarding_id
 
 
+def test_rereview_task_persists_baseline_without_rewriting_active_task(db):
+    repository = OnboardingRepository(db)
+    aapl_security = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000320193'"
+    )["security_id"]
+    msft_security = db.query_one(
+        "SELECT security_id FROM security WHERE company_id='0000789019'"
+    )["security_id"]
+
+    rereview = repository.create_task(
+        company_id="0000320193",
+        security_id=aapl_security,
+        input_fingerprint="same-input",
+        base_publication_id="legacy-publication-aapl-v1",
+    )
+    normal = repository.create_task(
+        company_id="0000789019",
+        security_id=msft_security,
+        input_fingerprint="same-input",
+    )
+    reused = repository.create_task(
+        company_id="0000320193",
+        security_id=aapl_security,
+        input_fingerprint="same-input",
+        base_publication_id="must-not-replace-the-active-task-baseline",
+    )
+
+    assert rereview.base_publication_id == "legacy-publication-aapl-v1"
+    assert normal.base_publication_id is None
+    assert reused.onboarding_id == rereview.onboarding_id
+    assert reused.base_publication_id == rereview.base_publication_id
+
+    rereview_attempt = repository.begin_attempt(rereview)
+    normal_attempt = repository.begin_attempt(normal)
+    hashes = {
+        row["attempt_id"]: row["input_hash"]
+        for row in db.query(
+            "SELECT attempt_id, input_hash FROM onboarding_step_attempt "
+            "WHERE attempt_id IN (?, ?)",
+            [rereview_attempt, normal_attempt],
+        )
+    }
+    assert hashes[rereview_attempt] != hashes[normal_attempt]
+
+
 def test_fetch_bundle_is_immutable_and_bound_atomically(db):
     repository = OnboardingRepository(db)
     security_id = db.query_one(

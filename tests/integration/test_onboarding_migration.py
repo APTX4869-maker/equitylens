@@ -133,7 +133,7 @@ def test_onboarding_closure_migration_is_additive_and_idempotent(tmp_path):
         row[1] for row in conn.execute("PRAGMA table_info('company_onboarding')").fetchall()
     }
 
-    assert first == [1, 2, 3, 4, 5, 6, 7]
+    assert first == [1, 2, 3, 4, 5, 6, 7, 8]
     assert second == []
     assert {
         "onboarding_fetch_bundle",
@@ -142,6 +142,6 @@ def test_onboarding_closure_migration_is_additive_and_idempotent(tmp_path):
         "onboarding_event",
         "profile_import_idempotency",
     } <= tables
-    assert {"fetch_bundle_id", "profile_candidate_id"} <= task_columns
+    assert {"fetch_bundle_id", "profile_candidate_id", "base_publication_id"} <= task_columns
     assert conn.execute("SELECT count(*) FROM company").fetchone() == (2,)
     conn.close()

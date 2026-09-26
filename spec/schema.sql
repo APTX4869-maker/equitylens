@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS company_onboarding (
   quality_report_id VARCHAR,
   review_id VARCHAR,
   publication_id VARCHAR,
+  base_publication_id VARCHAR,
   error_json JSON,
   next_attempt_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL,

@@ -141,6 +141,7 @@ class TaskView(BaseModel):
     quality_report_id: str | None = None
     review_id: str | None = None
     publication_id: str | None = None
+    base_publication_id: str | None = None
     error: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
