@@ -155,6 +155,88 @@ class OnboardingService:
     def retry(self, task_id: str, expected_revision: int):
         return self.tasks.retry(task_id, expected_revision=expected_revision)
 
+    def rereview(self, ticker: str, idempotency_key: str):
+        normalized = ticker.strip().upper()
+        security = self.registry.resolve(normalized)
+        company = self.store.query_one(
+            "SELECT active_publication_id, quality_status FROM company WHERE company_id=?",
+            [security.company_id],
+        )
+        if company is None or not company["active_publication_id"]:
+            raise OnboardingConflict(
+                "NO_ACTIVE_PUBLICATION", "该公司没有可作为复核基线的发布版本"
+            )
+        if company["quality_status"] != "LEGACY_UNREVIEWED":
+            raise OnboardingConflict(
+                "REREVIEW_NOT_ALLOWED", "只有旧版待复核公司可以启动新标准复核"
+            )
+        base_publication_id = company["active_publication_id"]
+        request = {
+            "operation": "REREVIEW",
+            "ticker": normalized,
+            "security_id": security.security_id,
+            "base_publication_id": base_publication_id,
+        }
+        request_hash = sha256_json(request)
+        prior = self.store.query_one(
+            "SELECT request_hash, response_json FROM api_idempotency WHERE key=?",
+            [idempotency_key],
+        )
+        if prior:
+            if prior["request_hash"] != request_hash:
+                raise OnboardingConflict(
+                    "IDEMPOTENCY_CONFLICT",
+                    "idempotency key was used for another request",
+                )
+            return self.tasks.get(json.loads(prior["response_json"])["onboarding_id"])
+
+        with writer_for(self.store).transaction(self.store):
+            prior = self.store._conn.execute(
+                "SELECT request_hash, response_json FROM api_idempotency WHERE key=?",
+                [idempotency_key],
+            ).fetchone()
+            if prior:
+                if prior[0] != request_hash:
+                    raise OnboardingConflict(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was used for another request",
+                    )
+                return self.tasks.get(json.loads(prior[1])["onboarding_id"])
+            locked = self.store._conn.execute(
+                """
+                SELECT c.active_publication_id, c.quality_status, s.status
+                FROM company c JOIN security s ON s.company_id=c.company_id
+                WHERE c.company_id=? AND s.security_id=?
+                """,
+                [security.company_id, security.security_id],
+            ).fetchone()
+            expected = (base_publication_id, "LEGACY_UNREVIEWED", "ACTIVE")
+            if locked is None or tuple(locked) != expected:
+                raise OnboardingConflict(
+                    "TASK_CONFLICT", "公司身份或复核基线已变化，请重新发起"
+                )
+            task = self.tasks.create_task(
+                company_id=security.company_id,
+                security_id=security.security_id,
+                input_fingerprint=request_hash,
+                base_publication_id=base_publication_id,
+            )
+            if task.base_publication_id != base_publication_id:
+                raise OnboardingConflict(
+                    "TASK_CONFLICT", "已有任务绑定了不同的复核基线"
+                )
+            self.store._conn.execute(
+                "INSERT INTO api_idempotency VALUES (?, ?, ?, now())",
+                [
+                    idempotency_key,
+                    request_hash,
+                    canonical_json({"onboarding_id": task.onboarding_id}),
+                ],
+            )
+        if self.wake is not None:
+            self.wake()
+        return self.tasks.get(task.onboarding_id)
+
     def cancel(self, task_id: str, expected_revision: int):
         return self.tasks.cancel(task_id, expected_revision=expected_revision)
 

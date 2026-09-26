@@ -297,6 +297,100 @@ def test_published_security_cannot_start_a_second_onboarding(db, monkeypatch):
     assert task_count["count"] == 1
 
 
+def _rereview(client, ticker: str, key: str):
+    return client.post(
+        "/api/v1/company-onboardings/rereview",
+        headers={"Idempotency-Key": key},
+        json={"ticker": ticker},
+    )
+
+
+def test_legacy_company_can_start_idempotent_rereview(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+
+    first = _rereview(client, " aapl ", "rereview-aapl-v2")
+    replay = _rereview(client, "AAPL", "rereview-aapl-v2")
+    other_key = _rereview(client, "AAPL", "rereview-aapl-other-key")
+
+    assert first.status_code == 202
+    assert first.json()["state"] == "QUEUED"
+    assert first.json()["base_publication_id"] == "legacy-publication-0000320193-v1"
+    assert replay.status_code == 202
+    assert replay.json()["onboarding_id"] == first.json()["onboarding_id"]
+    assert replay.json()["existing"] is True
+    assert other_key.status_code == 202
+    assert other_key.json()["onboarding_id"] == first.json()["onboarding_id"]
+    assert db.query_one(
+        "SELECT count(*) AS count FROM company_onboarding WHERE company_id='0000320193'"
+    )["count"] == 1
+
+
+def test_rereview_idempotency_key_rejects_different_company(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    assert _rereview(client, "AAPL", "one-rereview-request").status_code == 202
+
+    conflict = _rereview(client, "MSFT", "one-rereview-request")
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_verified_or_unpublished_company_cannot_start_legacy_rereview(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    db._conn.execute(
+        "UPDATE company SET quality_status='VERIFIED' WHERE company_id='0000789019'"
+    )
+    verified = _rereview(client, "MSFT", "verified-rereview")
+    db._conn.execute(
+        "UPDATE company SET active_publication_id=NULL WHERE company_id='0000320193'"
+    )
+    unpublished = _rereview(client, "AAPL", "unpublished-rereview")
+
+    assert verified.status_code == 409
+    assert verified.json()["detail"]["code"] == "REREVIEW_NOT_ALLOWED"
+    assert unpublished.status_code == 409
+    assert unpublished.json()["detail"]["code"] == "NO_ACTIVE_PUBLICATION"
+
+
+def test_rereview_rejects_missing_inactive_and_ambiguous_security(db, monkeypatch):
+    client, _ = _client(db, monkeypatch)
+    missing = _rereview(client, "UNKNOWN", "missing-rereview")
+    db._conn.execute(
+        "UPDATE security SET status='INACTIVE' WHERE company_id='0000320193'"
+    )
+    inactive = _rereview(client, "AAPL", "inactive-rereview")
+
+    registry = CompanyRegistry(db)
+    registry.register_company(
+        CompanyIdentity(
+            company_id="0000000099",
+            cik="0000000099",
+            legal_name="Ambiguous Legacy Inc.",
+            quality_status="LEGACY_UNREVIEWED",
+        ),
+        legacy_ticker="AMB",
+    )
+    for suffix, exchange in (("one", "NYSE"), ("two", "NASDAQ")):
+        registry.register_security(
+            SecurityIdentity(
+                security_id=f"ambiguous-{suffix}",
+                company_id="0000000099",
+                ticker="AMB",
+                exchange=exchange,
+                currency="USD",
+                instrument_type="COMMON_STOCK",
+            )
+        )
+    ambiguous = _rereview(client, "AMB", "ambiguous-rereview")
+
+    assert missing.status_code == 409
+    assert missing.json()["detail"]["code"] == "SECURITY_NOT_FOUND"
+    assert inactive.status_code == 409
+    assert inactive.json()["detail"]["code"] == "SECURITY_NOT_FOUND"
+    assert ambiguous.status_code == 409
+    assert ambiguous.json()["detail"]["code"] == "AMBIGUOUS_SECURITY"
+
+
 def test_company_directory_pagination_does_not_skip_a_second_active_alias(db, monkeypatch):
     client, _ = _client(db, monkeypatch)
     apple_security = db.query_one(

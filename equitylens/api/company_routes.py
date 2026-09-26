@@ -19,6 +19,7 @@ from equitylens.api.company_schemas import (
     ProfileYamlImportRequest,
     ReviewRequest,
     RevisionRequest,
+    RereviewRequest,
     ValuationProfileRequest,
 )
 from equitylens.companies.discovery import CompanyDiscovery, DiscoveryError
@@ -264,6 +265,47 @@ def create_onboarding(
         ).create(**body.model_dump(), idempotency_key=idempotency_key)
         return _task_payload(task, store=store, existing=existing)
     except (DiscoveryError, OnboardingConflict, CompanyRegistryError) as exc:
+        _raise_service_error(exc)
+
+
+@router.post(
+    "/company-onboardings/rereview",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_rereview(
+    body: RereviewRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1),
+):
+    store = _store()
+    normalized = body.ticker.strip().upper()
+    try:
+        security = CompanyRegistry(store).resolve(normalized)
+        company = store.query_one(
+            "SELECT active_publication_id FROM company WHERE company_id=?",
+            [security.company_id],
+        )
+        request_hash = sha256_json(
+            {
+                "operation": "REREVIEW",
+                "ticker": normalized,
+                "security_id": security.security_id,
+                "base_publication_id": company and company["active_publication_id"],
+            }
+        )
+        prior = store.query_one(
+            "SELECT request_hash FROM api_idempotency WHERE key=?",
+            [idempotency_key],
+        )
+        existing = prior is not None and prior["request_hash"] == request_hash
+        task = OnboardingService(
+            CompanyDiscovery(store),
+            CompanyRegistry(store),
+            OnboardingRepository(store),
+            wake=lambda: _wake(request),
+        ).rereview(normalized, idempotency_key)
+        return _task_payload(task, store=store, existing=existing)
+    except (OnboardingConflict, CompanyRegistryError) as exc:
         _raise_service_error(exc)
 
 

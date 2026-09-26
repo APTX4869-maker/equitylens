@@ -21,6 +21,10 @@ class CreateOnboardingRequest(StrictRequest):
     candidate_id: str
 
 
+class RereviewRequest(StrictRequest):
+    ticker: str
+
+
 class RevisionRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
 
