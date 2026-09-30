@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T10 已按顺序执行，T10 的 KO/COST 真实发布子项仍在收口。扩展 C01—C10 已完成；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。2026-09-25 的 N01 补齐 NVDA 行情、管理层/Form 4 和估值审核，在正式数据库副本完成真实验收。2026-09-30 补齐 AAPL/MSFT profile v2 行级证据及 iXBRL 单位解析，在隔离库和完整 API 副本中均验证为 `PASS`/0 BLOCKER，完成无 writer 检查和正式备份后已顺序发布为 `VERIFIED`。桌面闭环通过，移动端替代导航仍待方案确认。
+状态：T01—T10 已按顺序全部完成。扩展 C01—C10 已完成；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。2026-09-25 的 N01 补齐 NVDA 行情、管理层/Form 4 和估值审核，在正式数据库副本完成真实验收。2026-09-30 完成 AAPL/MSFT 新标准复核，以及 KO/COST 真实官方 iXBRL、专属 profile、固定 bundle、质量审核与正式页面发布；四家公司均为 `VERIFIED`。桌面闭环通过，移动端替代导航仍待方案确认。
 
 扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。NVDA 研究补全计划：`docs/superpowers/plans/2026-09-25-nvda-completion.md`。
 
@@ -17,7 +17,7 @@
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
-| T10 真实接入及完整验收 | AAPL/MSFT 已完成；KO/COST 待完成 | 补强后完整后端 `442 passed, 1 warning`；clean checkout 完整 11-filings bundle 回放 PASS；v5 页面/API 读取均为 200 | 独立审查无 Critical；两轮 Important 和 Minor 均已修复 | AAPL `2a09e38d-c8f5-4a46-8e52-076b322c8da2`、MSFT `cfaea199-58c8-42cc-a3d9-f47028d7bff3` 已以精确证券证据 v5 发布；KO/COST 尚待官方 filing 行级证据、复核与页面发布 |
+| T10 真实接入及完整验收 | 已完成 | 完整后端最终回归通过；KO/COST v3 完整 bundle 回放 PASS；正式 overview/freshness 均为 200 | 独立审查无 Critical；分部证据语义与人工 golden 两项 Important 已修复并复核关闭 | AAPL `2a09e38d-c8f5-4a46-8e52-076b322c8da2`、MSFT `cfaea199-58c8-42cc-a3d9-f47028d7bff3`、KO `04df30fc-e9ba-4fc2-a9ff-be65642fd61c`、COST `be258aac-5991-4a1b-9359-14fb4832d493` 均已发布为 `VERIFIED`；详见 `docs/reviews/2026-09-30-ko-cost-onboarding-validation.md` |
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
@@ -456,3 +456,13 @@ TDD 与隔离验证：单位解析测试先得到 `U_USD != USD` 的预期失败
 提交前审查补强：独立审查发现 clean checkout 不能复核 v4 原文，且证券身份只引用整文档根节点。以 RED→GREEN 新增真实 locator 解析与 ticker/交易所/股类 claim 门禁，随后再收紧为 XPath 必须返回非空元素节点集（拒绝 `true()`/`count()` 标量），每个 metric evidence 节点的 `name` 必须属于配置 concept。仓库固定两家公司全部 3×10-K + 8×10-Q bundle、submissions、Company Facts 和 history 原始字节，clean checkout 会解压、逐文档验 SHA-256、实际 BUILD 并重跑质量引擎，两家都必须 PASS/0 BLOCKER。单位解析回归也补齐 divide `USD/shares`、`fact_catalog()` 和残缺声明回退。已发布 v4 不被覆盖，新增 v5；版本化复核现允许 `VERIFIED` 公司从当前 publication 建立基线。二次备份后，AAPL 任务 `3e4fb2e4-ba77-4a0f-b083-e5540608f711` 发布为 `2a09e38d-c8f5-4a46-8e52-076b322c8da2`；MSFT 任务 `05777c34-886e-4f23-8f18-4d9c5781b1f4` 发布为 `cfaea199-58c8-42cc-a3d9-f47028d7bff3`；两者质量均 PASS/0 BLOCKER，overview/freshness 均 200。
 
 补强后全量后端回归为 `442 passed, 1 warning in 133.44s`，唯一 warning 仍为 Starlette TestClient/httpx 上游弃用提示。
+
+## T10 收尾：KO/COST 正式建档（2026-09-30）
+
+实际改动：为分部成员增加 `segment`、`unallocated`、`elimination` 等行级角色覆盖，KO 的 Corporate 与 Consolidation Eliminations 因而能按披露语义参与精确对账。canonical mapping 升至 v5，增加 KO 使用的含资本租赁债务标签并以边界测试防止流动/非流动组成重复。KO/COST profile v2 均绑定最新年度 10-K 的真实哈希、XPath、证券、核心指标、现金桥、债务与分部证据；完整 SEC bundle 固定在受控压缩 fixture 中。
+
+独立审查发现“质量 PASS 仍可能内部自洽”和“分部 evidence 可能指向无关节点”两项 Important。修复后 golden 从 sealed dataset 逐项核对人工抄录的最新 canonical 值、债务/短投、分部值、成员 kind 与精确加总；BUILD 同时要求分部 evidence 的收入/利润节点确实属于声明轴下的已配置成员。更严格规则最初对 AAPL/MSFT 代表性成员证据做了过度约束并触发 4 个回归，随后收敛为验证证据声明真实性而非要求单个 axis evidence 穷举全部成员；AAPL/MSFT v5 固定 bundle 与 KO/COST v3 bundle 全部通过。
+
+隔离库的 KO/COST 均完成 FETCH→BUILD→VALIDATE→REVIEW→PUBLISH，质量 `PASS`、0 BLOCKER。正式写入前确认无 writer，并备份数据库及 238 个 raw 文件至 `/Users/vincent/.local/share/equitylens-backups/20260930T142331Z-ko-cost-onboarding/`，源与备份摘要一致。正式抓取遭遇同 accession 字节漂移时，哈希门禁正确暂停；创建不可变 profile/bundle v3 后重新构建和审核，没有覆盖 v2 或复用旧指纹。最终 KO 发布 `04df30fc-e9ba-4fc2-a9ff-be65642fd61c`，COST 发布 `be258aac-5991-4a1b-9359-14fb4832d493`；两者目录状态均为 `VERIFIED`，overview/freshness 均返回 200。
+
+最终验证：`uv run pytest -q` 为 `447 passed, 1 warning in 137.53s`；唯一 warning 是既有 Starlette TestClient/httpx 上游弃用提示。`git diff --check` 通过，独立复核无 Critical/Important 遗留。完整记录见 `docs/reviews/2026-09-30-ko-cost-onboarding-validation.md`。T10 完成，没有公司建档待定项；移动端替代导航仍是独立产品事项。

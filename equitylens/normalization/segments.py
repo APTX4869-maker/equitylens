@@ -31,7 +31,7 @@ STATUS_NOT_DISCLOSED = "NOT_DISCLOSED"
 @dataclass(frozen=True)
 class SegmentAxis:
     name: str
-    kind: str  # segment | product | geo
+    kind: str  # default row kind; a reviewed member may override it
     label: str
     members: dict  # member -> {label, aggregate?}
 
@@ -171,7 +171,8 @@ def extract_segments(
                 continue
             if axis.members[member].get("aggregate"):
                 continue  # keep out of the mix view (hardware total etc.)
-            add(axis.name, member, "REVENUE", config.revenue_concept, fact, axis.kind,
+            member_kind = axis.members[member].get("kind") or axis.kind
+            add(axis.name, member, "REVENUE", config.revenue_concept, fact, member_kind,
                 config.member_label(axis.name, member))
         # profit (only when the issuer discloses it)
         if config.profit_concept:
@@ -181,7 +182,8 @@ def extract_segments(
                     continue
                 if axis.members[member].get("aggregate"):
                     continue
-                add(axis.name, member, "OPERATING_INCOME", config.profit_concept, fact, axis.kind,
+                member_kind = axis.members[member].get("kind") or axis.kind
+                add(axis.name, member, "OPERATING_INCOME", config.profit_concept, fact, member_kind,
                     config.member_label(axis.name, member))
 
     return rows, warnings

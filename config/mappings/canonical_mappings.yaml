@@ -6,7 +6,9 @@
 #     SHORT_TERM_DEBT's LongTermDebtCurrent); add separate Depreciation and
 #     AmortizationOfIntangibleAssets concepts for issuers that do not report a
 #     single combined D&A line (MSFT).
-version: 4
+# v5: recognize the current and noncurrent long-term debt-and-capital-lease
+#     tags used as separate balance-sheet rows by KO.
+version: 5
 canonical_facts:
   REVENUE:
     type: duration
@@ -120,6 +122,7 @@ canonical_facts:
       # Current portion of long-term debt (distinct component, summed in the
       # net-debt bridge; must never be lumped with a "total long-term debt" tag).
       - us-gaap:LongTermDebtCurrent
+      - us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent
   SHORT_TERM_BORROWINGS:
     type: instant
     unit_family: currency
@@ -138,6 +141,7 @@ canonical_facts:
       # TOTAL (including the current portion), which would double-count against
       # LONG_TERM_DEBT_CURRENT when summed in the net-debt bridge.
       - us-gaap:LongTermDebtNoncurrent
+      - us-gaap:LongTermDebtAndCapitalLeaseObligations
   STOCKHOLDERS_EQUITY:
     type: instant
     unit_family: currency

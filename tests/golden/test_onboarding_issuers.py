@@ -36,6 +36,48 @@ from equitylens.storage.raw_store import sha256_bytes
 ROOT = Path(__file__).parents[2]
 CASES = ["0000021344", "0000909832", "0000320193", "0000789019"]
 LEGACY_REREVIEW_CASES = ["0000320193", "0000789019"]
+NEW_ISSUER_FORMAL_CASES = ["0000021344", "0000909832"]
+NEW_ISSUER_MANUAL_EXPECTATIONS = {
+    "0000021344": {
+        "period_end": "2025-12-31",
+        "accession": "0001628280-26-010047",
+        "canonical": {
+            "REVENUE": 47_941_000_000.0,
+            "OPERATING_INCOME": 13_762_000_000.0,
+            "NET_INCOME": 13_107_000_000.0,
+            "TOTAL_ASSETS": 104_816_000_000.0,
+            "LONG_TERM_DEBT_CURRENT": 1_822_000_000.0,
+            "LONG_TERM_DEBT": 42_119_000_000.0,
+        },
+        "segments": {
+            "EuropeMiddleEastAfricaMember": ("segment", 11_513_000_000.0),
+            "LatinAmericaSegmentMember": ("segment", 6_334_000_000.0),
+            "NorthAmericaSegmentMember": ("segment", 19_586_000_000.0),
+            "A.PacificMember": ("segment", 5_638_000_000.0),
+            "BottlingInvestmentsMember": ("segment", 5_735_000_000.0),
+            "CorporateNonSegmentMember": ("unallocated", 144_000_000.0),
+            "ConsolidationEliminationsMember": ("elimination", -1_009_000_000.0),
+        },
+    },
+    "0000909832": {
+        "period_end": "2025-08-31",
+        "accession": "0000909832-25-000101",
+        "canonical": {
+            "REVENUE": 275_235_000_000.0,
+            "OPERATING_INCOME": 10_383_000_000.0,
+            "NET_INCOME": 8_099_000_000.0,
+            "TOTAL_ASSETS": 77_099_000_000.0,
+            "SHORT_TERM_INVESTMENTS": 1_123_000_000.0,
+            "LONG_TERM_DEBT_CURRENT": 75_000_000.0,
+            "LONG_TERM_DEBT": 5_713_000_000.0,
+        },
+        "segments": {
+            "UnitedStatesMember": ("segment", 200_046_000_000.0),
+            "CanadaMember": ("segment", 36_923_000_000.0),
+            "OtherInternationalMember": ("segment", 38_266_000_000.0),
+        },
+    },
+}
 REQUIRED_METRICS = {
     "REVENUE", "OPERATING_INCOME", "NET_INCOME", "BASIC_EPS", "DILUTED_EPS",
     "BASIC_WEIGHTED_AVG_SHARES", "DILUTED_WEIGHTED_AVG_SHARES", "TOTAL_ASSETS",
@@ -215,6 +257,134 @@ def test_legacy_rereview_full_fixed_bundle_builds_quality_pass(db, tmp_path, cik
     report = QualityEngine(db).validate(built["dataset_id"])
 
     assert len([item for item in documents if item.document_type == "FILING_DOCUMENT"]) == 11
+    assert report.result == "PASS"
+    assert not [
+        check for check in report.checks
+        if check.severity.value == "BLOCKER"
+        and check.status.value in {"FAIL", "UNSUPPORTED"}
+    ]
+
+
+@pytest.mark.parametrize("cik", NEW_ISSUER_FORMAL_CASES)
+def test_new_issuer_full_fixed_bundle_builds_quality_pass(db, tmp_path, cik):
+    directory = ROOT / "tests" / "fixtures" / "onboarding" / cik
+    manifest_path = max(
+        directory.glob("filing_bundle_v*.json"),
+        key=lambda path: int(path.stem.rsplit("v", 1)[1]),
+    )
+    manifest = json.loads(manifest_path.read_text())
+    archive = directory / manifest["archive"]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest["archive_sha256"]
+    raw_dir = tmp_path / "raw"
+    with tarfile.open(archive, "r:gz") as bundle_archive:
+        bundle_archive.extractall(raw_dir, filter="data")
+
+    documents = [FetchDocument.model_validate(item) for item in manifest["documents"]]
+    for document in documents:
+        content = (raw_dir / document.raw_locator).read_bytes()
+        assert hashlib.sha256(content).hexdigest() == document.content_sha256
+
+    profile_dir = ROOT / "config" / "issuers" / cik
+    profile = load_profile_yaml(
+        max(profile_dir.glob("*.yaml"), key=lambda path: int(path.stem))
+    )
+    expected_source_document_id = next(
+        item.source_document_id
+        for item in profile.evidence
+        if f"filing:{NEW_ISSUER_MANUAL_EXPECTATIONS[cik]['accession']}:" in item.source_document_id
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id=f"fixture-{cik}",
+        onboarding_id=f"fixture-{cik}",
+        fetcher_version=manifest["fetcher_version"],
+        parser_version=manifest["parser_version"],
+        content_sha256="0" * 64,
+        documents=documents,
+        created_at="2026-09-30T00:00:00Z",
+    )
+    validate_profile_v2_evidence_documents(profile, bundle, raw_dir)
+
+    ticker = profile.securities[0].ticker
+    issuer_manifest = json.loads((directory / "manifest.json").read_text())
+    registry = CompanyRegistry(db)
+    registry.register_company(
+        CompanyIdentity(
+            company_id=cik,
+            cik=cik,
+            legal_name=issuer_manifest["company_name"],
+            reporting_template=profile.template,
+            quality_status="PENDING",
+        ),
+        legacy_ticker=ticker,
+    )
+    security_id = seed_security_id(cik, ticker, profile.securities[0].exchange)
+    registry.register_security(
+        SecurityIdentity(
+            security_id=security_id,
+            company_id=cik,
+            ticker=ticker,
+            exchange=profile.securities[0].exchange,
+            currency=profile.securities[0].currency,
+            instrument_type=profile.securities[0].instrument_type,
+            identity_evidence={"manifest": str(manifest_path)},
+        )
+    )
+    repository = OnboardingRepository(db)
+    task = repository.create_task(
+        company_id=cik,
+        security_id=security_id,
+        input_fingerprint=f"full-bundle-v2-{cik}",
+    )
+    repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=task.revision,
+        fetcher_version=manifest["fetcher_version"],
+        parser_version=manifest["parser_version"],
+        documents=documents,
+    )
+    pipeline = OnboardingPipeline(db, repository, raw_dir=raw_dir, fetcher=lambda url: None)
+    built = pipeline.build(repository.get(task.onboarding_id))
+    report = QualityEngine(db).validate(built["dataset_id"])
+
+    expected = NEW_ISSUER_MANUAL_EXPECTATIONS[cik]
+    canonical_rows = [
+        json.loads(row["payload_json"])
+        if isinstance(row["payload_json"], str) else row["payload_json"]
+        for row in db.query(
+            "SELECT payload_json FROM dataset_row WHERE dataset_id=? AND entity_type='canonical_fact'",
+            [built["dataset_id"]],
+        )
+    ]
+    for metric, value in expected["canonical"].items():
+        matching = {
+            row["value"]
+            for row in canonical_rows
+            if row["canonical_metric"] == metric
+            and (row.get("period_end") or row.get("instant_date")) == expected["period_end"]
+            and row["source_document_id"] == expected_source_document_id
+        }
+        assert matching == {value}, metric
+
+    segment_rows = [
+        json.loads(row["payload_json"])
+        if isinstance(row["payload_json"], str) else row["payload_json"]
+        for row in db.query(
+            "SELECT payload_json FROM dataset_row WHERE dataset_id=? AND entity_type='segment_fact'",
+            [built["dataset_id"]],
+        )
+    ]
+    actual_segments = {
+        row["segment_name_reported"]: (row["segment_kind"], row["value"])
+        for row in segment_rows
+        if row["metric_name"] == "REVENUE"
+        and row["period_type"] == "FY"
+        and row["period_end"] == expected["period_end"]
+        and row["source_document_id"] == expected_source_document_id
+    }
+    assert actual_segments == expected["segments"]
+    assert sum(value for _, value in actual_segments.values()) == expected["canonical"]["REVENUE"]
+
+    assert len([item for item in documents if item.document_type == "FILING_DOCUMENT"]) >= 11
     assert report.result == "PASS"
     assert not [
         check for check in report.checks

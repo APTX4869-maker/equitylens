@@ -21,7 +21,7 @@ from equitylens.normalization.ixbrl import IxbrlDocument, normalize_profiled_ixb
 from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 from equitylens.onboarding.pipeline import ProfileMappingRegistry
-from equitylens.normalization.segments import segment_config_from_profile
+from equitylens.normalization.segments import extract_segments, segment_config_from_profile
 
 
 def valid_profile() -> dict:
@@ -425,6 +425,90 @@ def test_profile_v2_evidence_locators_and_security_claims_are_verified(tmp_path)
         validate_profile_v2_evidence_documents(root_security, bundle, tmp_path)
 
 
+def test_profile_v2_segment_evidence_must_match_declared_axis_members(tmp_path):
+    content = b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+      xmlns:xbrli='http://www.xbrl.org/2003/instance'
+      xmlns:xbrldi='http://xbrl.org/2006/xbrldi'>
+      <xbrli:context id='compute'><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember dimension='us-gaap:StatementBusinessSegmentsAxis'>custom:ComputeMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+      <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+      <xbrli:context id='gaming'><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember dimension='us-gaap:StatementBusinessSegmentsAxis'>custom:GamingMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+      <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+      <xbrli:context id='other'><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember dimension='us-gaap:StatementBusinessSegmentsAxis'>custom:OtherMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+      <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+      <body><table><tr id='security'><td>Common Stock</td><td>EXAMPLE</td><td>NYSE</td></tr></table>
+      <ix:nonFraction id='compute-revenue' name='us-gaap:Revenues' contextRef='compute' unitRef='USD'>60</ix:nonFraction>
+      <ix:nonFraction id='gaming-revenue' name='us-gaap:Revenues' contextRef='gaming' unitRef='USD'>40</ix:nonFraction>
+      <ix:nonFraction id='other-revenue' name='us-gaap:Revenues' contextRef='other' unitRef='USD'>1</ix:nonFraction>
+      </body></html>"""
+    digest = __import__("hashlib").sha256(content).hexdigest()
+    raw_path = tmp_path / "sec" / "one" / "primary.html"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(content)
+    document = FetchDocument(
+        document_id=f"filing:one:{digest}", document_type="FILING_DOCUMENT",
+        accession_number="one", form_type="10-K", filed_at="2026-01-01",
+        report_date="2025-12-31", fetched_at="2026-01-01T00:00:00Z",
+        source_url="https://www.sec.gov/example", content_sha256=digest,
+        raw_locator="sec/one/primary.html",
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id="bundle", onboarding_id="task", fetcher_version="v1",
+        parser_version="v1", content_sha256="b" * 64, documents=[document],
+        created_at="2026-01-01T00:00:00Z",
+    )
+    raw = valid_profile_v2()
+    raw["segments"] = {
+        "parser": "ixbrl_segments_v1",
+        "axes": [{
+            "name": "StatementBusinessSegmentsAxis", "kind": "segment",
+            "label": "Business segments",
+            "members": {
+                "ComputeMember": {"label": "Compute"},
+                "GamingMember": {"label": "Gaming"},
+            },
+            "evidence": ["segment-evidence"],
+        }],
+        "reconciliation": "explicit_eliminations",
+        "revenue_concept": "us-gaap:Revenues", "profit_concept": None,
+        "evidence": ["segment-evidence"],
+    }
+    raw["applicability"]["SEGMENTS"] = "required"
+    raw["applicability_evidence"] = {}
+    raw["evidence"][0].update({
+        "source_document_id": document.document_id,
+        "content_sha256": digest,
+        "locator": "//*[@id='compute-revenue']",
+    })
+    raw["evidence"].extend([
+        {
+            "evidence_id": "segment-evidence",
+            "source_document_id": document.document_id,
+            "content_sha256": digest,
+            "locator": "//*[@id='other-revenue']",
+        },
+        {
+            "evidence_id": "security-evidence",
+            "source_document_id": document.document_id,
+            "content_sha256": digest,
+            "locator": "//*[@id='security']",
+        },
+    ])
+    raw["securities"][0]["evidence"] = ["security-evidence"]
+    profile = IssuerProfileV2.model_validate(raw)
+
+    with pytest.raises(ProfileEvidenceError, match="segment evidence does not substantiate"):
+        validate_profile_v2_evidence_documents(profile, bundle, tmp_path)
+
+    profile.evidence[1].locator = "//*[@id='compute-revenue']"
+    validate_profile_v2_evidence_documents(profile, bundle, tmp_path)
+
+
 def test_ixbrl_numeric_fact_retains_real_context_and_locator():
     document = IxbrlDocument.parse(
         b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
@@ -492,6 +576,68 @@ def test_segment_config_is_derived_from_reviewed_profile_v2():
     config = segment_config_from_profile(profile)
     assert config.axes[0].members["ComputeMember"]["label"] == "Compute"
     assert config.revenue_concept == "us-gaap:Revenues"
+
+
+def test_segment_member_kind_can_mark_unallocated_and_elimination_rows():
+    raw = valid_profile_v2()
+    raw["segments"] = {
+        "parser": "ixbrl_segments_v1",
+        "axes": [
+            {
+                "name": "ConsolidationItemsAxis",
+                "kind": "segment",
+                "label": "Reconciliation",
+                "members": {
+                    "CorporateNonSegmentMember": {
+                        "label": "Corporate",
+                        "kind": "unallocated",
+                    },
+                    "ConsolidationEliminationsMember": {
+                        "label": "Eliminations",
+                        "kind": "elimination",
+                    },
+                },
+                "evidence": ["filing-evidence"],
+            }
+        ],
+        "reconciliation": "explicit_eliminations",
+        "revenue_concept": "us-gaap:Revenues",
+        "profit_concept": None,
+        "evidence": ["filing-evidence"],
+    }
+    raw["applicability"]["SEGMENTS"] = "required"
+    raw["applicability_evidence"] = {}
+    profile = IssuerProfileV2.model_validate(raw)
+    document = IxbrlDocument.parse(
+        b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+        xmlns:xbrli='http://www.xbrl.org/2003/instance'
+        xmlns:xbrldi='http://xbrl.org/2006/xbrldi'>
+        <xbrli:context id='corporate'><xbrli:entity><xbrli:segment>
+          <xbrldi:explicitMember dimension='us-gaap:ConsolidationItemsAxis'>us-gaap:CorporateNonSegmentMember</xbrldi:explicitMember>
+        </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+        <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+        <xbrli:context id='eliminations'><xbrli:entity><xbrli:segment>
+          <xbrldi:explicitMember dimension='us-gaap:ConsolidationItemsAxis'>us-gaap:ConsolidationEliminationsMember</xbrldi:explicitMember>
+        </xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+        <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='corporate' unitRef='USD'>5</ix:nonFraction>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='eliminations' unitRef='USD' sign='-'>2</ix:nonFraction>
+        </html>"""
+    )
+
+    rows, warnings = extract_segments(
+        "EXAMPLE",
+        document,
+        segment_config_from_profile(profile),
+        FiscalCalendar({}, {}, fallback_mm_dd="12-31"),
+        "filing:one",
+    )
+
+    assert warnings == []
+    assert [(row["segment_name_canonical"], row["segment_kind"], row["value"]) for row in rows] == [
+        ("Corporate", "unallocated", 5.0),
+        ("Eliminations", "elimination", -2.0),
+    ]
 
 
 def test_profiled_ixbrl_normalization_preserves_context_and_locator():

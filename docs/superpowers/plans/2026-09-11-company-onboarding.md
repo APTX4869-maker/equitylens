@@ -518,7 +518,7 @@ test('company appears only after publication', async ({ page }) => {
 
 - [x] 核实 KO/COST 当前身份和来源，固定官方快照、覆盖期间及独立手工预期值。
 - [x] 建立 golden 测试，逐个核心指标比较值、期间、单位和原始证据引用；先让未适配案例失败。
-- [ ] 顺序完成 KO、COST 配置、复核与页面发布，再完成 AAPL/MSFT 新标准复核；任一证据不足保留阻塞。
+- [x] 顺序完成 KO、COST 配置、复核与页面发布，再完成 AAPL/MSFT 新标准复核；任一证据不足保留阻塞。
 - [x] 执行 `uv run pytest tests/golden/test_onboarding_issuers.py -q`，新旧公司关键数值独立核对通过。
 - [x] 在副本完整迁移、故障回滚与恢复演练；真实迁移仅使用已验证流程，保留备份地址和摘要；先确认服务已停止写入，不能覆盖用户新增数据。
 - [x] 完成第 15 节全量验证、审查和两份教程；记录截图/报告位置及提交号，提交 `test: verify issuer onboarding end to end`。
@@ -532,6 +532,8 @@ T10 证据适配更新（2026-09-30）：确认旧 profile 仍为 schema v1，�
 T10 正式复核更新（2026-09-30）：完整 API 副本演练通过后，先完成无 writer 检查并把数据库/raw 备份至 `/Users/vincent/.local/share/equitylens-backups/20260930T023000Z-aapl-msft-rereview/`，再顺序正式发布 AAPL `1d3d7c88-60c3-4195-913a-70a323543741` 与 MSFT `0805471a-f420-4473-815c-631814cb9c72`。两项独立审查包均为 PASS、0 BLOCKER，两家公司状态均已升级为 `VERIFIED`，旧 publication 保留为基线。完整后端 `439 passed, 1 warning`；AAPL/MSFT 子目标完成。第三项仍不勾选，仅因同一项中的 KO/COST 仍缺正式 filing 复核与页面发布。
 
 T10 证据门禁补强（2026-09-30）：提交前独立审查无 Critical，发现官方原文未纳入可复现 fixture，以及证券身份错用整文档根 locator 的两项 Important。现在 BUILD 必须对每个 evidence XPath 真实求值且只接受非空元素节点集，metric evidence 节点必须声明配置 concept；证券证据还必须在精确 filing 节点同时证明 ticker、交易所和股类。受控压缩 fixture 固定两家各自完整 3×10-K + 8×10-Q 及配套 SEC 文档，clean checkout 必须逐文档校验哈希、实际 BUILD 并重跑质量引擎至 PASS/0 BLOCKER。已发布 v4 保持不变，精确证据使用 profile v5；版本化复核入口同时扩展到 `VERIFIED` 公司，仍重验 active publication 基线。备份后正式发布 AAPL `2a09e38d-c8f5-4a46-8e52-076b322c8da2` 与 MSFT `cfaea199-58c8-42cc-a3d9-f47028d7bff3`，两项均 PASS/0 BLOCKER 并保持 `VERIFIED`。最终后端回归 `442 passed, 1 warning`。KO/COST 仍是 T10 唯一未完成的公司接入项。
+
+T10 完成记录（2026-09-30）：补齐成员级分部角色，使 KO 的 Corporate/Eliminations 分别以 `unallocated`/`elimination` 参与对账；canonical mapping v5 增加 KO 实际债务标签并用边界测试防止流动/非流动重复。KO/COST profile v2 在隔离库均完成真实 FETCH→BUILD→VALIDATE→REVIEW→PUBLISH，质量 PASS、0 BLOCKER；独立审查后进一步要求分部 evidence 以收入/利润节点证明声明轴下的已配置成员，并把最新 canonical、债务、短投、分部值与 kind 和人工抄录逐项锁入 golden。正式抓取遇到同 accession 字节漂移时，系统按设计暂停并创建不可变 profile/bundle v3，没有覆盖 v2 或复用旧指纹。无 writer 检查及数据库/raw 备份后，正式 KO 任务 `9a730f85-a712-43db-934b-2a0ef2045240` 发布为 `04df30fc-e9ba-4fc2-a9ff-be65642fd61c`，COST 任务 `918b1191-df46-41a3-8403-fc1eb4b1e9ef` 发布为 `be258aac-5991-4a1b-9359-14fb4832d493`；均为 `VERIFIED`，overview/freshness 为 200。T10 全部完成。
 
 ## 15. 验证命令、审查和交付
 

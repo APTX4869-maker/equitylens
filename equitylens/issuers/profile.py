@@ -110,6 +110,7 @@ class MetricConfigV2(MetricConfig):
 class SegmentMemberV2(StrictModel):
     label: str = Field(min_length=1)
     aggregate: bool = False
+    kind: Literal["segment", "product", "geo", "elimination", "unallocated"] | None = None
 
 
 class SegmentAxisV2(StrictModel):
@@ -294,6 +295,55 @@ def validate_profile_v2_evidence_documents(
             raise ProfileEvidenceError(
                 f"metric evidence does not substantiate configured concepts: {metric_name}"
             )
+
+    if profile.segments.parser == "ixbrl_segments_v1":
+        allowed_concepts = {
+            item for item in (
+                profile.segments.revenue_concept,
+                profile.segments.profit_concept,
+            ) if item
+        }
+        for axis in profile.segments.axes:
+            matched = False
+            for evidence_id in axis.evidence:
+                evidence, nodes = resolved[evidence_id]
+                ixbrl = parsed[(evidence.source_document_id, evidence.content_sha256)]
+                for node in nodes:
+                    if node.get("name") not in allowed_concepts:
+                        continue
+                    member = ixbrl.context_axis_members(
+                        node.get("contextRef")
+                    ).get(axis.name)
+                    if member in axis.members:
+                        matched = True
+            if not matched:
+                raise ProfileEvidenceError(
+                    "segment evidence does not substantiate configured axis members: "
+                    f"{axis.name}"
+                )
+
+        configured = {
+            (axis.name, member)
+            for axis in profile.segments.axes
+            for member in axis.members
+        }
+        for evidence_id in profile.segments.evidence:
+            evidence, nodes = resolved[evidence_id]
+            ixbrl = parsed[(evidence.source_document_id, evidence.content_sha256)]
+            if not any(
+                node.get("name") in allowed_concepts
+                and any(
+                    (axis_name, member) in configured
+                    for axis_name, member in ixbrl.context_axis_members(
+                        node.get("contextRef")
+                    ).items()
+                )
+                for node in nodes
+            ):
+                raise ProfileEvidenceError(
+                    "segment evidence does not substantiate configured concepts and dimensions: "
+                    f"{evidence_id}"
+                )
 
     exchange_terms = {
         "nasdaq": ("nasdaq",),

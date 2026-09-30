@@ -8,6 +8,17 @@ from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.taxonomy.mappings import MappingRegistry
 
 
+def test_long_term_debt_and_capital_lease_tags_map_to_non_overlapping_components():
+    mappings = MappingRegistry()
+
+    assert mappings.find(
+        "us-gaap", "LongTermDebtAndCapitalLeaseObligationsCurrent"
+    ).canonical_metric == "LONG_TERM_DEBT_CURRENT"
+    assert mappings.find(
+        "us-gaap", "LongTermDebtAndCapitalLeaseObligations"
+    ).canonical_metric == "LONG_TERM_DEBT"
+
+
 def test_same_day_overlapping_revenue_concepts_are_order_independent():
     """D05: concept iteration order cannot change the one selected FY value."""
     entries = {

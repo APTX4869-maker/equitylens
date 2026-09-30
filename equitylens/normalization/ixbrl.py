@@ -147,6 +147,14 @@ class IxbrlDocument:
         """Facts of `concept` that carry an explicit member on `axis`."""
         return [f for f in self.facts(concept) if axis in f.axis_members]
 
+    def context_axis_members(self, context_ref: str | None) -> dict[str, str]:
+        """Return short axis/member names for one reviewed fact context."""
+        context = self._contexts.get(context_ref or "", {})
+        return {
+            dimension.rsplit(":", 1)[-1]: member.rsplit(":", 1)[-1]
+            for dimension, member in context.get("dims", [])
+        }
+
     def fact_catalog(self) -> list[dict]:
         """Evidence locators available for issuer-profile candidate generation."""
         out = []
