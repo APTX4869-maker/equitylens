@@ -10,17 +10,23 @@ import hashlib
 import gzip
 import json
 from pathlib import Path
+import tarfile
 
 import pytest
 
 from equitylens.companies.models import CompanyIdentity, SecurityIdentity
 from equitylens.companies.registry import CompanyRegistry, seed_security_id
-from equitylens.issuers.profile import load_profile_yaml
+from equitylens.issuers.profile import (
+    load_profile_yaml,
+    validate_profile_v2_evidence_documents,
+)
 from equitylens.normalization.fiscal_periods import FiscalCalendar
 from equitylens.normalization.ixbrl import IxbrlDocument
 from equitylens.normalization.normalize import normalize_companyfacts
 from equitylens.normalization.segments import extract_segments, segment_config_from_profile
-from equitylens.onboarding.pipeline import ProfileMappingRegistry
+from equitylens.onboarding.pipeline import OnboardingPipeline, ProfileMappingRegistry
+from equitylens.onboarding.models import FetchBundle, FetchDocument
+from equitylens.onboarding.repository import OnboardingRepository
 from equitylens.publication.builder import DatasetBuilder
 from equitylens.publication.repository import PublicationRepository
 from equitylens.quality.engine import QualityEngine
@@ -29,6 +35,7 @@ from equitylens.storage.raw_store import sha256_bytes
 
 ROOT = Path(__file__).parents[2]
 CASES = ["0000021344", "0000909832", "0000320193", "0000789019"]
+LEGACY_REREVIEW_CASES = ["0000320193", "0000789019"]
 REQUIRED_METRICS = {
     "REVENUE", "OPERATING_INCOME", "NET_INCOME", "BASIC_EPS", "DILUTED_EPS",
     "BASIC_WEIGHTED_AVG_SHARES", "DILUTED_WEIGHTED_AVG_SHARES", "TOTAL_ASSETS",
@@ -122,6 +129,98 @@ def _case(cik: str):
     manifest = json.loads((directory / "manifest.json").read_text())
     profile = load_profile_yaml(ROOT / manifest["profile_path"])
     return directory, manifest, profile
+
+
+@pytest.mark.parametrize("cik", LEGACY_REREVIEW_CASES)
+def test_legacy_rereview_profiles_use_fixed_ixbrl_evidence(tmp_path, cik):
+    profile_dir = ROOT / "config" / "issuers" / cik
+    latest = max(profile_dir.glob("*.yaml"), key=lambda path: int(path.stem))
+    profile = load_profile_yaml(latest)
+    fixture = ROOT / "tests" / "fixtures" / "onboarding" / cik / "annual_filing_v4.html.gz"
+    content = gzip.decompress(fixture.read_bytes())
+    digest = hashlib.sha256(content).hexdigest()
+    annual_evidence = next(
+        item for item in profile.evidence if item.content_sha256 == digest
+    )
+    accession = annual_evidence.source_document_id.split(":", 2)[1]
+    raw_path = tmp_path / cik / "annual.html"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(content)
+    document = FetchDocument(
+        document_id=annual_evidence.source_document_id,
+        document_type="FILING_DOCUMENT",
+        accession_number=accession,
+        form_type="10-K",
+        filed_at="2026-09-30",
+        report_date="2026-06-30",
+        fetched_at="2026-09-30T00:00:00Z",
+        source_url="https://www.sec.gov/Archives/edgar/data/fixture",
+        content_sha256=digest,
+        raw_locator=f"{cik}/annual.html",
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id=f"fixture-{cik}",
+        onboarding_id=f"fixture-{cik}",
+        fetcher_version="fixture",
+        parser_version="fixture",
+        content_sha256="0" * 64,
+        documents=[document],
+        created_at="2026-09-30T00:00:00Z",
+    )
+
+    assert profile.schema_version == 2
+    assert profile.segments.parser == "ixbrl_segments_v1"
+    assert profile.segments.axes
+    assert all(
+        item.source_document_id.startswith("filing:")
+        and item.content_sha256 == item.source_document_id.rsplit(":", 1)[1]
+        for item in profile.evidence
+    )
+    validate_profile_v2_evidence_documents(profile, bundle, tmp_path)
+
+
+@pytest.mark.parametrize("cik", LEGACY_REREVIEW_CASES)
+def test_legacy_rereview_full_fixed_bundle_builds_quality_pass(db, tmp_path, cik):
+    directory = ROOT / "tests" / "fixtures" / "onboarding" / cik
+    manifest = json.loads((directory / "filing_bundle_v5.json").read_text())
+    archive = directory / manifest["archive"]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest["archive_sha256"]
+    raw_dir = tmp_path / "raw"
+    with tarfile.open(archive, "r:gz") as bundle_archive:
+        bundle_archive.extractall(raw_dir, filter="data")
+
+    profile_dir = ROOT / "config" / "issuers" / cik
+    profile = load_profile_yaml(
+        max(profile_dir.glob("*.yaml"), key=lambda path: int(path.stem))
+    )
+    ticker = profile.securities[0].ticker
+    registry = CompanyRegistry(db)
+    security_id = registry.resolve(ticker).security_id
+    repository = OnboardingRepository(db)
+    task = repository.create_task(
+        company_id=cik,
+        security_id=security_id,
+        input_fingerprint=f"full-bundle-v5-{cik}",
+    )
+    documents = [FetchDocument.model_validate(item) for item in manifest["documents"]]
+    repository.create_fetch_bundle(
+        task.onboarding_id,
+        expected_revision=task.revision,
+        fetcher_version=manifest["fetcher_version"],
+        parser_version=manifest["parser_version"],
+        documents=documents,
+    )
+    pipeline = OnboardingPipeline(db, repository, raw_dir=raw_dir, fetcher=lambda url: None)
+    built = pipeline.build(repository.get(task.onboarding_id))
+    report = QualityEngine(db).validate(built["dataset_id"])
+
+    assert len([item for item in documents if item.document_type == "FILING_DOCUMENT"]) == 11
+    assert report.result == "PASS"
+    assert not [
+        check for check in report.checks
+        if check.severity.value == "BLOCKER"
+        and check.status.value in {"FAIL", "UNSUPPORTED"}
+    ]
 
 
 @pytest.mark.parametrize("cik", CASES)

@@ -527,6 +527,12 @@ T10 阻塞记录（2026-09-12）：KO/COST 配置、候选、golden 与复核路
 
 T10 复核更新（2026-09-26）：已实现 AAPL/MSFT 专用旧版复核 API、CLI、任务基线和页面身份，并在正式数据隔离副本通过真实 SEC FETCH→BUILD→VALIDATE 流程。AAPL 任务 `fdbaff91-ff07-4ab0-9c4f-a31af16e50e6`、MSFT 任务 `f66d3a30-622d-47ff-ab4b-4021dd0709c3` 均被 `CASH_BRIDGE_INPUT_MISSING`、`FILING_CONTEXT_MISSING`、`SECURITY_EVIDENCE_MISSING` 与 `SEGMENTS.reconciliation` 四个 BLOCKER 正确阻断；未产生复核批准或新 publication，正式数据库/raw 哈希与文件数保持不变。因此第三项继续不勾选，完整证据见 `docs/reviews/2026-09-26-legacy-company-rereview-validation.md`。
 
+T10 证据适配更新（2026-09-30）：确认旧 profile 仍为 schema v1，导致完整 filing bundle 未被使用；新增证据绑定的 AAPL/MSFT profile v3，并修复 MSFT `U_USD` 等任意 iXBRL unit ID 的声明解析。使用此前真实 FETCH 的完整 11 份 filing 在全新临时库重建后，两家公司质量均为 `PASS`、0 BLOCKER，聚焦回归 `75 passed in 68.90s`。该结果尚未包含完整 API 审核/发布副本演练和正式 publication 切换，第三项继续不勾选；不得因本次数据级 PASS 直接修改正式状态。
+
+T10 正式复核更新（2026-09-30）：完整 API 副本演练通过后，先完成无 writer 检查并把数据库/raw 备份至 `/Users/vincent/.local/share/equitylens-backups/20260930T023000Z-aapl-msft-rereview/`，再顺序正式发布 AAPL `1d3d7c88-60c3-4195-913a-70a323543741` 与 MSFT `0805471a-f420-4473-815c-631814cb9c72`。两项独立审查包均为 PASS、0 BLOCKER，两家公司状态均已升级为 `VERIFIED`，旧 publication 保留为基线。完整后端 `439 passed, 1 warning`；AAPL/MSFT 子目标完成。第三项仍不勾选，仅因同一项中的 KO/COST 仍缺正式 filing 复核与页面发布。
+
+T10 证据门禁补强（2026-09-30）：提交前独立审查无 Critical，发现官方原文未纳入可复现 fixture，以及证券身份错用整文档根 locator 的两项 Important。现在 BUILD 必须对每个 evidence XPath 真实求值且只接受非空元素节点集，metric evidence 节点必须声明配置 concept；证券证据还必须在精确 filing 节点同时证明 ticker、交易所和股类。受控压缩 fixture 固定两家各自完整 3×10-K + 8×10-Q 及配套 SEC 文档，clean checkout 必须逐文档校验哈希、实际 BUILD 并重跑质量引擎至 PASS/0 BLOCKER。已发布 v4 保持不变，精确证据使用 profile v5；版本化复核入口同时扩展到 `VERIFIED` 公司，仍重验 active publication 基线。备份后正式发布 AAPL `2a09e38d-c8f5-4a46-8e52-076b322c8da2` 与 MSFT `cfaea199-58c8-42cc-a3d9-f47028d7bff3`，两项均 PASS/0 BLOCKER 并保持 `VERIFIED`。最终后端回归 `442 passed, 1 warning`。KO/COST 仍是 T10 唯一未完成的公司接入项。
+
 ## 15. 验证命令、审查和交付
 
 从仓库根目录执行（首先检查本机工具及锁文件；不自动更新依赖）：

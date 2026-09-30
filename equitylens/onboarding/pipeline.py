@@ -25,6 +25,7 @@ from equitylens.issuers.profile import (
     load_profile_yaml,
     parse_profile,
     validate_profile_v2_against_bundle,
+    validate_profile_v2_evidence_documents,
 )
 from equitylens.issuers.candidate import build_candidate_artifact
 from equitylens.issuers.review import ReviewService
@@ -421,6 +422,15 @@ class OnboardingPipeline:
             raise RuntimeError("a fixed SEC fetch bundle is required")
         bundle = self.repository.get_fetch_bundle(task.fetch_bundle_id)
         validate_profile_v2_against_bundle(profile, bundle)
+        try:
+            validate_profile_v2_evidence_documents(profile, bundle, self.raw_dir)
+        except ProfileEvidenceError as exc:
+            raise OnboardingPause(
+                TaskState.NEEDS_ADAPTATION,
+                OnboardingStep.BUILD,
+                "reviewed profile evidence locator or security claim is invalid; import a revised profile",
+                candidate_artifact=self.candidate_artifact(task),
+            ) from exc
         submissions_document = next(
             (item for item in bundle.documents if item.document_type == "SUBMISSIONS"), None
         )

@@ -12,6 +12,7 @@ from equitylens.issuers.profile import (
     ProfileEvidenceError,
     load_profile_yaml,
     validate_profile_v2_against_bundle,
+    validate_profile_v2_evidence_documents,
 )
 from equitylens.issuers.yaml_loader import load_strict_profile_yaml
 from equitylens.issuers.candidate import build_candidate_artifact, build_candidate_profile
@@ -354,6 +355,76 @@ def test_profile_v2_evidence_must_resolve_to_current_bundle_document():
         validate_profile_v2_against_bundle(profile, wrong_bundle)
 
 
+def test_profile_v2_evidence_locators_and_security_claims_are_verified(tmp_path):
+    content = b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'>
+      <body><table><tr id='security'><td>Common Stock</td><td>
+      <ix:nonNumeric name='dei:TradingSymbol'>EXAMPLE</ix:nonNumeric></td>
+      <td>New York Stock Exchange</td></tr></table>
+      <ix:nonFraction id='revenue' name='us-gaap:Revenues'>100</ix:nonFraction></body>
+    </html>"""
+    digest = __import__("hashlib").sha256(content).hexdigest()
+    raw_path = tmp_path / "sec" / "one" / "primary.html"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(content)
+    document = FetchDocument(
+        document_id=f"filing:one:{digest}",
+        document_type="FILING_DOCUMENT",
+        accession_number="one",
+        form_type="10-K",
+        filed_at="2025-03-01",
+        report_date="2025-01-31",
+        fetched_at="2025-03-01T00:00:00Z",
+        source_url="https://www.sec.gov/example",
+        content_sha256=digest,
+        raw_locator="sec/one/primary.html",
+    )
+    bundle = FetchBundle(
+        fetch_bundle_id="bundle",
+        onboarding_id="task",
+        fetcher_version="v1",
+        parser_version="v1",
+        content_sha256="b" * 64,
+        documents=[document],
+        created_at="2025-03-01T00:00:00Z",
+    )
+    raw = valid_profile_v2()
+    raw["evidence"][0].update({
+        "source_document_id": document.document_id,
+        "content_sha256": digest,
+        "locator": "//*[@id='revenue']",
+    })
+    raw["evidence"].append({
+        "evidence_id": "security-evidence",
+        "source_document_id": document.document_id,
+        "content_sha256": digest,
+        "locator": "//*[@id='security']",
+    })
+    raw["securities"][0]["evidence"] = ["security-evidence"]
+    profile = IssuerProfileV2.model_validate(raw)
+
+    validate_profile_v2_evidence_documents(profile, bundle, tmp_path)
+
+    bad_locator = profile.model_copy(deep=True)
+    bad_locator.evidence[0].locator = "/missing"
+    with pytest.raises(ProfileEvidenceError, match="locator"):
+        validate_profile_v2_evidence_documents(bad_locator, bundle, tmp_path)
+
+    scalar_locator = profile.model_copy(deep=True)
+    scalar_locator.evidence[0].locator = "true()"
+    with pytest.raises(ProfileEvidenceError, match="element nodes"):
+        validate_profile_v2_evidence_documents(scalar_locator, bundle, tmp_path)
+
+    unrelated_metric = profile.model_copy(deep=True)
+    unrelated_metric.evidence[0].locator = "//*[@id='security']"
+    with pytest.raises(ProfileEvidenceError, match="metric evidence"):
+        validate_profile_v2_evidence_documents(unrelated_metric, bundle, tmp_path)
+
+    root_security = profile.model_copy(deep=True)
+    root_security.evidence[1].locator = "/"
+    with pytest.raises(ProfileEvidenceError, match="security evidence"):
+        validate_profile_v2_evidence_documents(root_security, bundle, tmp_path)
+
+
 def test_ixbrl_numeric_fact_retains_real_context_and_locator():
     document = IxbrlDocument.parse(
         b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
@@ -368,6 +439,32 @@ def test_ixbrl_numeric_fact_retains_real_context_and_locator():
     assert fact.context_ref == "ctx"
     assert fact.locator.startswith("/")
     assert fact.value == -100
+
+
+def test_ixbrl_resolves_arbitrary_unit_ids_to_declared_measure():
+    document = IxbrlDocument.parse(
+        b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
+        xmlns:xbrli='http://www.xbrl.org/2003/instance'
+        xmlns:iso4217='http://www.xbrl.org/2003/iso4217'>
+        <xbrli:unit id='U_USD'><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+        <xbrli:unit id='U_USD_SHARES'><xbrli:divide>
+          <xbrli:unitNumerator><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unitNumerator>
+          <xbrli:unitDenominator><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unitDenominator>
+        </xbrli:divide></xbrli:unit>
+        <xbrli:unit id='U_BROKEN'></xbrli:unit>
+        <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
+        <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
+        <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='U_USD'>100</ix:nonFraction>
+        <ix:nonFraction name='us-gaap:EarningsPerShareDiluted' contextRef='ctx' unitRef='U_USD_SHARES'>2</ix:nonFraction>
+        <ix:nonFraction name='custom:Unknown' contextRef='ctx' unitRef='U_BROKEN'>3</ix:nonFraction>
+        </html>"""
+    )
+
+    assert document.facts("us-gaap:Revenues")[0].unit_ref == "USD"
+    assert document.facts("us-gaap:EarningsPerShareDiluted")[0].unit_ref == "USD/shares"
+    catalog = {item["concept"]: item["unit_ref"] for item in document.fact_catalog()}
+    assert catalog["us-gaap:EarningsPerShareDiluted"] == "USD/shares"
+    assert catalog["custom:Unknown"] == "U_BROKEN"
 
 
 def test_segment_config_is_derived_from_reviewed_profile_v2():

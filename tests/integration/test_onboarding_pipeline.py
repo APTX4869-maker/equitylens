@@ -76,16 +76,21 @@ def _profile_v2_for_bundle(bundle, version: int) -> dict:
         "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": evidence},
         "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": evidence},
         "eps_method": "reported_diluted", "eps_method_evidence": evidence,
-        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": evidence}],
+        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": ["security-evidence"]}],
         "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
         "applicability_evidence": {"SEGMENTS": evidence},
-        "evidence": [{"evidence_id": "filing-evidence", "source_document_id": filing.document_id, "content_sha256": filing.content_sha256, "locator": "//*[@name='us-gaap:Revenues']"}],
+        "evidence": [
+            {"evidence_id": "filing-evidence", "source_document_id": filing.document_id, "content_sha256": filing.content_sha256, "locator": "//*[@name='us-gaap:Revenues']"},
+            {"evidence_id": "security-evidence", "source_document_id": filing.document_id, "content_sha256": filing.content_sha256, "locator": "//*[@id='security']"},
+        ],
     }
 
 
 def _ixbrl_revenue() -> bytes:
     return b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
     xmlns:xbrli='http://www.xbrl.org/2003/instance'>
+    <table><tr id='security'><td>Common Stock</td><td>ONE</td>
+    <td>New York Stock Exchange</td></tr></table>
     <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
     <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
     <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
@@ -233,12 +238,7 @@ def test_profile_v2_build_uses_filing_context_instead_of_companyfacts(db, tmp_pa
         "cik": int(CIK),
         "facts": {"us-gaap": {"Revenues": {"units": {"USD": [{"val": 999}]}}}},
     }
-    ixbrl = b"""<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'
-    xmlns:xbrli='http://www.xbrl.org/2003/instance'>
-    <xbrli:context id='ctx'><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>
-    <xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>
-    <ix:nonFraction name='us-gaap:Revenues' contextRef='ctx' unitRef='USD'>100</ix:nonFraction>
-    </html>"""
+    ixbrl = _ixbrl_revenue()
 
     def fetch(url: str):
         if "submissions" in url:
@@ -266,6 +266,12 @@ def test_profile_v2_build_uses_filing_context_instead_of_companyfacts(db, tmp_pa
         "content_sha256": filing.content_sha256,
         "locator": "//*[@name='us-gaap:Revenues']",
     }
+    security_evidence = {
+        "evidence_id": "security-evidence",
+        "source_document_id": filing.document_id,
+        "content_sha256": filing.content_sha256,
+        "locator": "//*[@id='security']",
+    }
     profile = {
         "schema_version": 2, "company_id": CIK, "version": 2,
         "template": "us_gaap_operating_v1", "template_evidence": ["filing-evidence"],
@@ -274,9 +280,9 @@ def test_profile_v2_build_uses_filing_context_instead_of_companyfacts(db, tmp_pa
         "segments": {"parser": "not_applicable", "axes": [], "reconciliation": "not_applicable", "revenue_concept": None, "profit_concept": None, "evidence": ["filing-evidence"]},
         "cash_debt": {"cash_components": ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], "debt_components": ["us-gaap:LongTermDebtNoncurrent"], "restricted_cash_policy": "separate", "evidence": ["filing-evidence"]},
         "eps_method": "reported_diluted", "eps_method_evidence": ["filing-evidence"],
-        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": ["filing-evidence"]}],
+        "securities": [{"ticker": "ONE", "exchange": "NYSE", "currency": "USD", "instrument_type": "COMMON_STOCK", "evidence": ["security-evidence"]}],
         "applicability": {"EPS": "required", "SEGMENTS": "not_applicable", "VALUATION": "required"},
-        "applicability_evidence": {"SEGMENTS": ["filing-evidence"]}, "evidence": [evidence],
+        "applicability_evidence": {"SEGMENTS": ["filing-evidence"]}, "evidence": [evidence, security_evidence],
     }
     profile_id = PublicationRepository(db).create_profile(
         CIK, version=2, schema_version=2, content=profile

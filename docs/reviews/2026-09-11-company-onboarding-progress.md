@@ -2,7 +2,7 @@
 
 主文档：`docs/superpowers/plans/2026-09-11-company-onboarding.md`
 
-状态：T01—T10 已按顺序执行；当时 KO/COST 官方 iXBRL 证据不可取得，真实发布未冒进。扩展 C01—C10 已按顺序开发；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。2026-09-25 的 N01 补齐 NVDA 行情、管理层/Form 4 和估值审核，在正式数据库副本完成真实验收。2026-09-26 已补齐 AAPL/MSFT 旧版公司专用复核入口、旧发布基线保护、CLI 和页面身份，并在正式数据隔离副本完成真实演练；两家公司都被四项真实质量 BLOCKER 正确阻断，正式库未修改。桌面闭环通过，移动端替代导航仍待方案确认。
+状态：T01—T10 已按顺序执行，T10 的 KO/COST 真实发布子项仍在收口。扩展 C01—C10 已完成；C10 先在独立数据库完成真实 NVDA SEC iXBRL→审核→质量 PASS→原子发布，再备份、迁移正式库并对旧 NVDA 任务重新抓取、适配、审核和发布。2026-09-25 的 N01 补齐 NVDA 行情、管理层/Form 4 和估值审核，在正式数据库副本完成真实验收。2026-09-30 补齐 AAPL/MSFT profile v2 行级证据及 iXBRL 单位解析，在隔离库和完整 API 副本中均验证为 `PASS`/0 BLOCKER，完成无 writer 检查和正式备份后已顺序发布为 `VERIFIED`。桌面闭环通过，移动端替代导航仍待方案确认。
 
 扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。NVDA 研究补全计划：`docs/superpowers/plans/2026-09-25-nvda-completion.md`。
 
@@ -17,7 +17,7 @@
 | T07 API 与版本读取 | 已完成 | 7 passed；T01—T07 回归 54 passed | 已自检 | 幂等、分页、超期、歧义、publication 隔离、能力门禁及完整 API 闭环 |
 | T08 估值门禁 | 已完成 | 6 passed；T01—T08 回归 66 passed；现有 API 56 passed | 已自检 | 确认指纹、模型/币种/ADR/股类门禁、证券行情隔离与旧运行保真 |
 | T09 页面流程 | 已完成 | 6 个新增浏览器路径、18 个全量浏览器路径、类型和 lint 均通过 | 已自检并视觉巡检 | 动态公司目录、固定版本请求、防迟到覆盖、质量门禁、移动端与焦点恢复 |
-| T10 真实接入及完整验收 | 可独立部分已完成 | 最新 436 个全量后端测试、44 个浏览器测试通过；前端类型/lint/build 通过 | 旧版复核整支审查无 Critical，两项 Important 已修复 | KO/COST 仍缺官方 filing/iXBRL 行级证据；AAPL/MSFT 隔离演练真实命中现金桥、filing context、证券身份和分部 BLOCKER，四家公司均未冒进发布 |
+| T10 真实接入及完整验收 | AAPL/MSFT 已完成；KO/COST 待完成 | 补强后完整后端 `442 passed, 1 warning`；clean checkout 完整 11-filings bundle 回放 PASS；v5 页面/API 读取均为 200 | 独立审查无 Critical；两轮 Important 和 Minor 均已修复 | AAPL `2a09e38d-c8f5-4a46-8e52-076b322c8da2`、MSFT `cfaea199-58c8-42cc-a3d9-f47028d7bff3` 已以精确证券证据 v5 发布；KO/COST 尚待官方 filing 行级证据、复核与页面发布 |
 | C01 不可变 FETCH 持久化 | 已完成 | RED 2 failed；GREEN 2 passed；聚焦回归 13 passed；compileall/diff-check 通过 | 已自检 | migration v7、任务 bundle/candidate 指针、不可变 bundle/document、candidate/event/idempotency 表 |
 | C02 固定 SEC 申报包 | 已完成 | RED 覆盖缺模块/未绑定 bundle/缺 history/SHA 错误；GREEN 聚焦 14 passed | 已自检 | 3 年 10-K、8 季 10-Q、适用修订及主文档均按 attempt as-of 固定 |
 | C03 Profile v2 与申报证据 | 已完成 | RED 覆盖缺 v2、bundle 证据、locator 和 profile 分部配置；GREEN 聚焦 31 passed | 已自检 | v1 只读兼容；v2 BUILD 只用固定 iXBRL 生成正式事实 |
@@ -438,3 +438,21 @@
 最终审查与验证：独立整支审查无 Critical；修复 CLI profile 导入遗漏幂等请求头，以及 ticker 在事务外解析后可能并发换绑的两项 Important，并以失败测试固定。`.venv/bin/python -m pytest` 为 `436 passed, 1 warning in 124.29s`；TypeScript、ESLint、production build 均通过；全量 Playwright 为 `44 passed in 21.9s`。一项只影响状态变化后错误码稳定性的 Minor 暂缓，路径仍安全失败。精确任务、产物、质量报告 ID 和命令见 `docs/reviews/2026-09-26-legacy-company-rereview-validation.md`。
 
 边界与下一步：复核工作流本身已完成，但不能把“流程可用”误写成“AAPL/MSFT 已通过新标准”。补齐现金桥、官方 iXBRL 行级 context、证券身份和分部对账证据后，必须从最新 active publication 创建新任务、重新生成质量报告并人工复核；在此之前 T10 真实发布项保持未勾选。KO/COST 的证据阻塞也仍未解除。
+
+## P2 续作：AAPL/MSFT iXBRL 证据适配（2026-09-30）
+
+根因确认：原 `2.yaml` 虽命名为第二版配置，但仍是 `schema_version: 1`，BUILD 因而继续走 Company Facts 旧路径，已固定的 filing 文档没有参与规范化。新增不可变 profile v3（schema v2），把核心指标、现金桥、现金/债务组件、证券股类和经营分部绑定到最新官方 10-K 的真实哈希与 XPath；同时修复 iXBRL 解析器把任意 `unitRef` ID（如 MSFT 的 `U_USD`）误当作计量单位的问题，现按 `<xbrli:unit>` 声明解析为 `USD`、`shares` 或复合单位。
+
+TDD 与隔离验证：单位解析测试先得到 `U_USD != USD` 的预期失败，最小修复后通过。随后使用 `/tmp/equitylens-legacy-rereview.dNlaWD/data/raw` 中此前真实 FETCH 固定的每家公司 3 份 10-K、8 份 10-Q，在新建临时 DuckDB `/tmp/equitylens-rereview-full-v3.DOtNnY` 重建数据集。AAPL 生成 638 条 raw/canonical、370 条 segment；MSFT 生成 665 条 raw/canonical、222 条 segment。两家公司质量结果均为 `PASS`、BLOCKER 数为 0；覆盖、filing context、资产负债、分部、现金债务组件和证券身份均 PASS，AAPL 现金桥 PASS，MSFT 的披露口径按既有规则形成非阻断 cash rollforward。聚焦回归 `75 passed in 68.90s`。
+
+边界与下一步：这是数据与质量引擎隔离验收，不等于已切换正式 publication。下一步必须在正式库副本完成完整 API 任务、复核批准和发布切换演练，并在正式写入前重新核验 writer、备份及摘要。KO/COST 仍等待可固定的官方 filing/iXBRL，不降低门禁。
+
+正式闭环：先复制正式数据库与 181 个 raw 文件到 `/tmp/equitylens-rereview-api-v3.Pg5EVk`，通过真实 API 顺序完成 AAPL、MSFT 的 FETCH→profile-import→BUILD→VALIDATE→review→PUBLISH；两项副本任务均 `PUBLISHED` 且 quality `PASS`。本次 SEC 返回字节与 9 月快照不同，但 fact catalog/locator 完全一致，哈希门禁正确暂停；因此新增不可变 profile v4 绑定当前字节，而非覆盖 v3 或跳过证据校验。
+
+正式写入前 `lsof` 无 writer；备份目录 `/Users/vincent/.local/share/equitylens-backups/20260930T023000Z-aapl-msft-rereview/` 的数据库 SHA-256 与来源一致，均为 `5eaa4a8626ef4a0da29d875bef4831d1d3637d88f884540f09a76dacb433cc1c`，raw 均为 181 个文件且清单哈希均为 `c18cc29330b66dacb8560d5fb33c17432fa9d01c8980a677de8234383077da31`。随后正式 AAPL 任务 `c55d43bc-097c-4bb9-8ad1-d4a28821784d`、质量报告 `2cbb670a-3df5-46dc-b007-dc6eb1b4bb33` 发布为 `1d3d7c88-60c3-4195-913a-70a323543741`；正式 MSFT 任务 `cf06bf00-77cc-4825-ac20-3fad7dda3cb5`、质量报告 `41b8b565-c987-4ab9-8cb5-ef73774b3e8b` 发布为 `0805471a-f420-4473-815c-631814cb9c72`。两家公司最终均为 `VERIFIED`，旧 legacy publication 保留为任务基线；目录、overview 和 freshness 在线读取均成功。
+
+最终验证：完整后端 `439 passed, 1 warning in 127.43s`，唯一 warning 为既有 Starlette/httpx 弃用提示；配置与 iXBRL 聚焦回归 `48 passed in 57.85s`，`git diff --check` 通过。AAPL/MSFT 新标准复核已经完成；T10 合并复选项仍保留未勾选，只因为 KO/COST 尚未完成真实 filing 发布。
+
+提交前审查补强：独立审查发现 clean checkout 不能复核 v4 原文，且证券身份只引用整文档根节点。以 RED→GREEN 新增真实 locator 解析与 ticker/交易所/股类 claim 门禁，随后再收紧为 XPath 必须返回非空元素节点集（拒绝 `true()`/`count()` 标量），每个 metric evidence 节点的 `name` 必须属于配置 concept。仓库固定两家公司全部 3×10-K + 8×10-Q bundle、submissions、Company Facts 和 history 原始字节，clean checkout 会解压、逐文档验 SHA-256、实际 BUILD 并重跑质量引擎，两家都必须 PASS/0 BLOCKER。单位解析回归也补齐 divide `USD/shares`、`fact_catalog()` 和残缺声明回退。已发布 v4 不被覆盖，新增 v5；版本化复核现允许 `VERIFIED` 公司从当前 publication 建立基线。二次备份后，AAPL 任务 `3e4fb2e4-ba77-4a0f-b083-e5540608f711` 发布为 `2a09e38d-c8f5-4a46-8e52-076b322c8da2`；MSFT 任务 `05777c34-886e-4f23-8f18-4d9c5781b1f4` 发布为 `cfaea199-58c8-42cc-a3d9-f47028d7bff3`；两者质量均 PASS/0 BLOCKER，overview/freshness 均 200。
+
+补强后全量后端回归为 `442 passed, 1 warning in 133.44s`，唯一 warning 仍为 Starlette TestClient/httpx 上游弃用提示。

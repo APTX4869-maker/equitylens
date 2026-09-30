@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Literal
 import hashlib
+import re
 import uuid
 
 import yaml
@@ -219,6 +220,110 @@ def validate_profile_v2_against_bundle(
         raise ProfileEvidenceError(
             f"profile evidence is not in the current fetch bundle: {', '.join(missing)}"
         )
+
+
+def _normalized_evidence_text(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
+
+
+def validate_profile_v2_evidence_documents(
+    profile: IssuerProfileV2,
+    bundle: "FetchBundle",
+    raw_dir: Path,
+) -> None:
+    """Resolve every reviewed locator and substantiate each security identity.
+
+    Hash binding alone proves which bytes were reviewed, but not that a locator
+    still addresses those bytes or that a broad document root supports a
+    security claim.  BUILD calls this against the immutable fetch bundle before
+    any candidate rows are sealed.
+    """
+    from lxml import etree
+
+    from equitylens.normalization.ixbrl import IxbrlDocument, NS
+    from equitylens.onboarding.fetch_bundle import load_bundle_document
+
+    documents = {
+        (item.document_id, item.content_sha256): item for item in bundle.documents
+    }
+    parsed: dict[tuple[str, str], IxbrlDocument] = {}
+    resolved: dict[str, tuple[EvidenceConfig, list[object]]] = {}
+    for evidence in profile.evidence:
+        key = (evidence.source_document_id, evidence.content_sha256)
+        document = documents.get(key)
+        if document is None:
+            raise ProfileEvidenceError(
+                f"profile evidence is not in the current fetch bundle: {evidence.evidence_id}"
+            )
+        if document.document_type != "FILING_DOCUMENT":
+            raise ProfileEvidenceError(
+                f"profile evidence must resolve to a filing document: {evidence.evidence_id}"
+            )
+        ixbrl = parsed.get(key)
+        if ixbrl is None:
+            ixbrl = IxbrlDocument.parse(load_bundle_document(raw_dir, document))
+            parsed[key] = ixbrl
+        try:
+            nodes = (
+                [ixbrl.root]
+                if evidence.locator.strip() == "/"
+                else ixbrl.root.xpath(evidence.locator, namespaces=NS)
+            )
+        except Exception as exc:
+            raise ProfileEvidenceError(
+                f"profile evidence locator is invalid: {evidence.evidence_id}"
+            ) from exc
+        if (
+            not isinstance(nodes, list)
+            or not nodes
+            or any(not isinstance(node, etree._Element) for node in nodes)
+        ):
+            raise ProfileEvidenceError(
+                f"profile evidence locator must resolve to non-empty element nodes: {evidence.evidence_id}"
+            )
+        resolved[evidence.evidence_id] = (evidence, nodes)
+
+    for metric_name, metric in profile.metrics.items():
+        nodes = [
+            node
+            for evidence_id in metric.evidence
+            for node in resolved[evidence_id][1]
+        ]
+        allowed = set(metric.concepts)
+        if not nodes or any(node.get("name") not in allowed for node in nodes):
+            raise ProfileEvidenceError(
+                f"metric evidence does not substantiate configured concepts: {metric_name}"
+            )
+
+    exchange_terms = {
+        "nasdaq": ("nasdaq",),
+        "nyse": ("nyse", "new york stock exchange"),
+    }
+    for security in profile.securities:
+        referenced = [resolved[item] for item in security.evidence if item in resolved]
+        if not referenced or any(evidence.locator.strip() == "/" for evidence, _ in referenced):
+            raise ProfileEvidenceError(
+                f"security evidence must use a precise filing locator: {security.ticker}"
+            )
+        text = _normalized_evidence_text(
+            " ".join(
+                " ".join(str(part) for part in node.itertext())
+                for _, nodes in referenced
+                for node in nodes
+                if hasattr(node, "itertext")
+            )
+        )
+        ticker = _normalized_evidence_text(security.ticker)
+        class_label = _normalized_evidence_text(security.class_label or "")
+        exchange = _normalized_evidence_text(security.exchange)
+        aliases = exchange_terms.get(exchange, (exchange,))
+        ticker_ok = bool(re.search(rf"(?:^| )({re.escape(ticker)})(?: |$)", text))
+        class_ok = not class_label or class_label in text
+        exchange_ok = any(alias and alias in text for alias in aliases)
+        if not (ticker_ok and class_ok and exchange_ok):
+            raise ProfileEvidenceError(
+                f"security evidence does not substantiate ticker, exchange, and class: {security.ticker}"
+            )
 
 
 def parse_profile(data: dict) -> IssuerProfile | IssuerProfileV2:

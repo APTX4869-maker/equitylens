@@ -377,7 +377,7 @@ def test_rereview_revalidates_ticker_identity_inside_writer_transaction(db, monk
     )["count"] == 0
 
 
-def test_verified_or_unpublished_company_cannot_start_legacy_rereview(db, monkeypatch):
+def test_verified_company_can_start_versioned_rereview_but_unpublished_cannot(db, monkeypatch):
     client, _ = _client(db, monkeypatch)
     db._conn.execute(
         "UPDATE company SET quality_status='VERIFIED' WHERE company_id='0000789019'"
@@ -388,8 +388,8 @@ def test_verified_or_unpublished_company_cannot_start_legacy_rereview(db, monkey
     )
     unpublished = _rereview(client, "AAPL", "unpublished-rereview")
 
-    assert verified.status_code == 409
-    assert verified.json()["detail"]["code"] == "REREVIEW_NOT_ALLOWED"
+    assert verified.status_code == 202
+    assert verified.json()["base_publication_id"] == "legacy-publication-0000789019-v1"
     assert unpublished.status_code == 409
     assert unpublished.json()["detail"]["code"] == "NO_ACTIVE_PUBLICATION"
 

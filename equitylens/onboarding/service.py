@@ -166,9 +166,9 @@ class OnboardingService:
             raise OnboardingConflict(
                 "NO_ACTIVE_PUBLICATION", "该公司没有可作为复核基线的发布版本"
             )
-        if company["quality_status"] != "LEGACY_UNREVIEWED":
+        if company["quality_status"] not in {"LEGACY_UNREVIEWED", "VERIFIED"}:
             raise OnboardingConflict(
-                "REREVIEW_NOT_ALLOWED", "只有旧版待复核公司可以启动新标准复核"
+                "REREVIEW_NOT_ALLOWED", "只有待复核或已验证公司可以启动版本化复核"
             )
         base_publication_id = company["active_publication_id"]
         request = {
@@ -221,7 +221,7 @@ class OnboardingService:
                 security.security_id,
                 security.company_id,
                 base_publication_id,
-                "LEGACY_UNREVIEWED",
+                company["quality_status"],
                 "ACTIVE",
             )
             if len(aliases) != 1 or tuple(aliases[0]) != expected:

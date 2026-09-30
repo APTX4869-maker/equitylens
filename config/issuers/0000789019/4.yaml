@@ -1,0 +1,76 @@
+schema_version: 2
+company_id: "0000789019"
+version: 4
+template: us_gaap_operating_v1
+template_evidence: [ev-root]
+fiscal_calendar: {year_end: "06-30", week_based: false, evidence: [ev-root]}
+metrics:
+  REVENUE: {concepts: ["us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-revenue]}
+  OPERATING_INCOME: {concepts: ["us-gaap:OperatingIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-operating-income]}
+  NET_INCOME: {concepts: ["us-gaap:NetIncomeLoss"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-net-income]}
+  BASIC_EPS: {concepts: ["us-gaap:EarningsPerShareBasic"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-basic-eps]}
+  DILUTED_EPS: {concepts: ["us-gaap:EarningsPerShareDiluted"], unit: USD/shares, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-diluted-eps]}
+  BASIC_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfSharesOutstandingBasic"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-basic-shares]}
+  DILUTED_WEIGHTED_AVG_SHARES: {concepts: ["us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding"], unit: shares, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-diluted-shares]}
+  TOTAL_ASSETS: {concepts: ["us-gaap:Assets"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-assets]}
+  TOTAL_LIABILITIES: {concepts: ["us-gaap:Liabilities"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-liabilities]}
+  STOCKHOLDERS_EQUITY: {concepts: ["us-gaap:StockholdersEquity"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-equity]}
+  CASH_AND_EQUIVALENTS: {concepts: ["us-gaap:CashAndCashEquivalentsAtCarryingValue"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-cash]}
+  CASH_AND_RESTRICTED_CASH: {concepts: ["us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-restricted-cash]}
+  OPERATING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInOperatingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-operating-cash]}
+  INVESTING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInInvestingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-investing-cash]}
+  FINANCING_CASH_FLOW: {concepts: ["us-gaap:NetCashProvidedByUsedInFinancingActivities"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-financing-cash]}
+  NET_CHANGE_IN_CASH_INCLUDING_FX: {concepts: ["us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-net-cash-change]}
+  CAPITAL_EXPENDITURES: {concepts: ["us-gaap:PaymentsToAcquirePropertyPlantAndEquipment"], unit: USD, context: consolidated, period: duration, selection: latest_filed_same_basis, evidence: [ev-capex]}
+  SHORT_TERM_INVESTMENTS: {concepts: ["us-gaap:ShortTermInvestments"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-short-investments]}
+  LONG_TERM_DEBT_CURRENT: {concepts: ["us-gaap:LongTermDebtCurrent"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-current-debt]}
+  LONG_TERM_DEBT: {concepts: ["us-gaap:LongTermDebtNoncurrent"], unit: USD, context: consolidated, period: instant, selection: latest_filed_same_basis, evidence: [ev-long-debt]}
+segments:
+  parser: ixbrl_segments_v1
+  axes:
+    - name: StatementBusinessSegmentsAxis
+      kind: segment
+      label: Operating segments
+      members:
+        ProductivityAndBusinessProcessesMember: {label: Productivity and Business Processes}
+        IntelligentCloudMember: {label: Intelligent Cloud}
+        MorePersonalComputingMember: {label: More Personal Computing}
+      evidence: [ev-segments]
+  reconciliation: explicit_eliminations
+  revenue_concept: "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
+  profit_concept: "us-gaap:OperatingIncomeLoss"
+  evidence: [ev-segments]
+cash_debt:
+  cash_components: ["us-gaap:CashAndCashEquivalentsAtCarryingValue", "us-gaap:ShortTermInvestments"]
+  debt_components: ["us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtNoncurrent"]
+  restricted_cash_policy: separate
+  evidence: [ev-cash, ev-short-investments, ev-current-debt, ev-long-debt]
+eps_method: reported_diluted
+eps_method_evidence: [ev-diluted-eps]
+securities:
+  - {ticker: MSFT, exchange: Nasdaq, currency: USD, instrument_type: COMMON_STOCK, class_label: Common Stock, evidence: [ev-root]}
+applicability: {EPS: required, SEGMENTS: required, VALUATION: required}
+applicability_evidence: {}
+evidence:
+  - {evidence_id: ev-root, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/"}
+  - {evidence_id: ev-revenue, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[12]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-operating-income, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[29]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-net-income, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[37]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-basic-eps, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[41]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-diluted-eps, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[42]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-basic-shares, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[45]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-diluted-shares, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[199]/*[4]/*[46]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-assets, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[28]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-liabilities, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[50]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-equity, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[60]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-cash, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[9]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-restricted-cash, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[58]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-operating-cash, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[26]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-investing-cash, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[51]/*[4]/*/*[2]/ix:nonFraction"}
+  - {evidence_id: ev-financing-cash, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[39]/*[4]/*/*[2]/ix:nonFraction"}
+  - {evidence_id: ev-net-cash-change, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[57]/*[4]/*/*[2]/ix:nonFraction"}
+  - {evidence_id: ev-capex, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[211]/*[3]/*[43]/*[4]/*/*[2]/ix:nonFraction"}
+  - {evidence_id: ev-short-investments, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[10]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-current-debt, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[34]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-long-debt, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[207]/*[3]/*[42]/*[4]/*/*/ix:nonFraction"}
+  - {evidence_id: ev-segments, source_document_id: "filing:0001193125-26-323660:368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01", content_sha256: 368eb900d0d04e98c549afd8455f8f30de48188bdae3b72daeef44cfc5972d01, locator: "/*/*[2]/*[335]/*/ix:continuation/*[3]/ix:nonNumeric/*[3]/*[9]/*[4]/*/*/ix:nonFraction"}

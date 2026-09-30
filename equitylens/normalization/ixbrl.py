@@ -61,7 +61,9 @@ class IxbrlDocument:
     def __init__(self, root: etree._Element):
         self.root = root
         self._contexts: dict[str, dict] = {}
+        self._units: dict[str, str] = {}
         self._parse_contexts()
+        self._parse_units()
 
     @classmethod
     def parse(cls, content: bytes) -> "IxbrlDocument":
@@ -86,6 +88,32 @@ class IxbrlDocument:
                 "dims": dims,
             }
 
+    @staticmethod
+    def _measure_name(value: str | None) -> str | None:
+        if not value:
+            return None
+        return value.rsplit(":", 1)[-1]
+
+    def _parse_units(self) -> None:
+        for unit in self.root.findall(".//xbrli:unit", NS):
+            unit_id = unit.get("id")
+            if not unit_id:
+                continue
+            measure = self._measure_name(unit.findtext("./xbrli:measure", namespaces=NS))
+            numerator = self._measure_name(
+                unit.findtext(".//xbrli:unitNumerator/xbrli:measure", namespaces=NS)
+            )
+            denominator = self._measure_name(
+                unit.findtext(".//xbrli:unitDenominator/xbrli:measure", namespaces=NS)
+            )
+            if measure:
+                self._units[unit_id] = measure
+            elif numerator and denominator:
+                self._units[unit_id] = f"{numerator}/{denominator}"
+
+    def _resolved_unit(self, unit_ref: str | None) -> str | None:
+        return self._units.get(unit_ref, unit_ref)
+
     def facts(self, name: str) -> list[IxbrlFact]:
         """All numeric facts with the exact prefixed concept name."""
         out: list[IxbrlFact] = []
@@ -101,7 +129,7 @@ class IxbrlDocument:
                 IxbrlFact(
                     name=name,
                     context_ref=cref,
-                    unit_ref=el.get("unitRef"),
+                    unit_ref=self._resolved_unit(el.get("unitRef")),
                     text=el.text,
                     scale=scale_int,
                     sign=-1 if el.get("sign") == "-" else 1,
@@ -131,7 +159,7 @@ class IxbrlDocument:
                 {
                     "concept": name,
                     "context_ref": context_ref,
-                    "unit_ref": el.get("unitRef"),
+                    "unit_ref": self._resolved_unit(el.get("unitRef")),
                     "decimals": el.get("decimals"),
                     "locator": self.root.getroottree().getpath(el),
                 }
