@@ -169,21 +169,21 @@ Commit message: `fix: expose research periods and quote age`
 - Test: `tests/integration/test_api.py`
 - Test: `tests/integration/test_onboarding_valuation.py`
 
-- [ ] **Step 1: Write failing assistant-gate tests**
+- [x] **Step 1: Write failing assistant-gate tests**
 
 For a publication without confirmation, ask about valuation and assert no fair value/range is returned. For confirmed identity, assert the answer uses that confirmation, publication, model version and evidence. Cover missing config, stale quote and changed active publication separately.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/integration/test_api.py tests/integration/test_onboarding_valuation.py -k 'research_valuation_gate' -q`
 
 Expected: assistant currently calls `default_valuation` and publishes an unconfirmed conclusion.
 
-- [ ] **Step 3: Reuse the formal confirmation gate**
+- [x] **Step 3: Reuse the formal confirmation gate**
 
 Call `require_valuation_confirmation` with the context security/publication/model identity. If unavailable, return a structured `needs_review` answer and a valuation-page action; do not compute a default conclusion.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `fix: apply valuation gate to research assistant`
 
