@@ -56,14 +56,23 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
     def record_check(key, fn):
         """Run one risk module and record its coverage/failure explicitly.
 
-        A module returns (status, reason, evidence_ids); an exception is a module
+        A module returns (status, reason, evidence_ids[, next_evidence]); an exception is a module
         ERROR and must never be silently swallowed as "checked".
         """
         try:
-            status, reason, evidence_ids = fn()
+            result = fn()
+            status, reason, evidence_ids = result[:3]
+            next_evidence = result[3] if len(result) > 3 else None
         except Exception as exc:  # noqa: BLE001 - per-module isolation is the point
             status, reason, evidence_ids = "ERROR", str(exc), []
-        checks.append({"key": key, "status": status, "reason": reason, "evidence_ids": evidence_ids})
+            next_evidence = "修复模块错误后重新运行检查"
+        checks.append({
+            "key": key,
+            "status": status,
+            "reason": reason,
+            "evidence_ids": evidence_ids,
+            "next_evidence": next_evidence,
+        })
 
     # ---- growth / execution ----
     def _growth():
@@ -167,18 +176,26 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
     def _concentration():
         evidence: list[str] = []
         checked: list[str] = []
+        unavailable_reasons: list[str] = []
         for kind, kind_label in (("segment", "分部"), ("product", "产品类别")):
-            if context is not None:
-                seg = context.segments(kind=kind, frequency="annual")
-            else:
-                from equitylens.api.segments_service import get_segments
+            try:
+                if context is not None:
+                    seg = context.segments(kind=kind, frequency="annual")
+                else:
+                    from equitylens.api.segments_service import get_segments
 
-                seg = get_segments(store, ticker, kind=kind, frequency="annual")
+                    seg = get_segments(store, ticker, kind=kind, frequency="annual")
+            except (KeyError, ValueError) as exc:
+                unavailable_reasons.append(str(exc))
+                continue
             total = seg.get("total_revenue")
             if not total or kind in checked:
                 continue
+            segments = [s for s in (seg.get("segments") or []) if s.get("share") is not None]
+            if not segments:
+                continue
             checked.append(kind)
-            top = max((s for s in seg["segments"] if s.get("share")), key=lambda s: s["share"] or 0)
+            top = max(segments, key=lambda s: s["share"] or 0)
             source_ids = [
                 source["source_document_id"] for source in top.get("sources", [])
                 if source.get("source_document_id")
@@ -196,6 +213,16 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
                     f"仅 {len(seg['segments'])} 个报告分部。",
                     evidence_ids=source_ids,
                     monitoring="是否新增高增长分部")
+        if not checked:
+            detail = "当前已发布数据没有可用的年度分部或产品收入披露，集中度未判定"
+            if unavailable_reasons:
+                detail += f"（{'; '.join(dict.fromkeys(unavailable_reasons))}）"
+            return (
+                "EVIDENCE_GAP",
+                detail,
+                evidence,
+                "同步并审核最新 10-K 的年度分部或产品收入披露",
+            )
         return "OK", None, evidence
     record_check("concentration", _concentration)
 

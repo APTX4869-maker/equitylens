@@ -75,7 +75,22 @@ def capital_allocation(store, company_id: str) -> dict:
         summary["buyback_cagr"] = cagr(f0.get("gross_buybacks"), f1.get("gross_buybacks"), len(out) - 1)
         summary["dividend_cagr"] = cagr(f0.get("dividends"), f1.get("dividends"), len(out) - 1)
         if f0.get("diluted_shares") and f1.get("diluted_shares"):
-            summary["share_count_5y_change"] = f1["diluted_shares"] / f0["diluted_shares"] - 1.0
+            raw_change = f1["diluted_shares"] / f0["diluted_shares"] - 1.0
+            summary["raw_share_count_change"] = raw_change
+            if abs(raw_change) > 0.50:
+                summary["share_count_5y_change"] = None
+                summary["share_count_change_status"] = "EVIDENCE_GAP"
+                summary["share_count_change_reason"] = (
+                    "股数变化超过 50%，可能包含拆股、并股或其他公司行动，不能直接判定为稀释"
+                )
+            else:
+                summary["share_count_5y_change"] = raw_change
+                summary["share_count_change_status"] = "SUPPORTED"
+                summary["share_count_change_reason"] = None
+        else:
+            summary["share_count_5y_change"] = None
+            summary["share_count_change_status"] = "INCOMPLETE_PERIOD"
+            summary["share_count_change_reason"] = "缺少可比起止财年的稀释后加权平均股数"
     # allocation mix (latest year, share of cash returned + capex)
     mix = {}
     if latest:

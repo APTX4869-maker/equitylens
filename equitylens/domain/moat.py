@@ -30,6 +30,17 @@ QUALITATIVE_GAPS = [
 ]
 
 
+def _evidence_gap(dimension: str, reason: str, next_evidence: str) -> dict:
+    """Return one consistently structured, non-judgmental evidence gap."""
+    return {
+        "dimension": dimension,
+        "status": "EVIDENCE_GAP",
+        "reason": reason,
+        "note": reason,  # backward-compatible display field
+        "next_evidence": next_evidence,
+    }
+
+
 @dataclass
 class Signal:
     dimension: str
@@ -70,7 +81,10 @@ def _mean(vals: list[float]) -> float:
 def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
     engine = context.metric_engine if context is not None else MetricEngine(store)
     signals: list[Signal] = []
-    gaps = [{"dimension": d, "note": n} for d, n in QUALITATIVE_GAPS]
+    gaps = [
+        _evidence_gap(d, n, "补充可核验的行业、客户或产品层面资料后再评估")
+        for d, n in QUALITATIVE_GAPS
+    ]
     ev = _evidence_ids
 
     # ---- 1) pricing power: gross margin level + stability/trend (5Y annual) ----
@@ -180,8 +194,11 @@ def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
     except Exception:
         dependency_count = 0  # segment data unavailable -> honest gap below
     if dependency_count == 0:
-        gaps.append({"dimension": "分部/产品收入依赖",
-                     "note": "当前数据源没有可用的年度分部披露（运行 sync-segments 后自动评估）；依赖度未判定。"})
+        gaps.append(_evidence_gap(
+            "分部/产品收入依赖",
+            "当前已发布数据没有可用的年度分部披露；依赖度未判定。",
+            "同步并审核最新 10-K 的年度分部或产品收入披露",
+        ))
 
     # ---- 7) board independence (only when the 14A marks it) ----
     board = store.query(
@@ -199,8 +216,11 @@ def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
         ))
 
     if not board or not any(str(b["independent"] or "").strip() for b in board):
-        gaps.insert(0, {"dimension": "董事会独立性标注",
-                        "note": "该 14A 未逐位标注独立性，无法从 SEC 数字证据评估。"})
+        gaps.insert(0, _evidence_gap(
+            "董事会独立性标注",
+            "该 14A 未逐位标注独立性，无法从 SEC 数字证据评估。",
+            "补充并审核 DEF 14A 董事独立性披露",
+        ))
 
     n_strength = sum(1 for s in signals if s.verdict == "strength")
     n_watch = sum(1 for s in signals if s.verdict == "watch")

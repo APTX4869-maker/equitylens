@@ -190,6 +190,18 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
     assert ask_response.status_code == 200
     assert overview_response.json()["publication_id"] == first.publication_id
     assert ask_response.json()["publication_id"] == first.publication_id
+    concentration = next(
+        check for check in risks_response.json()["checks"]
+        if check["key"] == "concentration"
+    )
+    assert concentration["status"] == "EVIDENCE_GAP"
+    assert concentration["next_evidence"]
+    dependency_gap = next(
+        gap for gap in moat_response.json()["qualitative_gaps"]
+        if gap["dimension"] == "分部/产品收入依赖"
+    )
+    assert dependency_gap["status"] == "EVIDENCE_GAP"
+    assert dependency_gap["next_evidence"]
     evidence = [
         evidence_id
         for claim in ask_response.json()["claims"]
@@ -208,6 +220,23 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
     assert evidence
     assert all(not item.startswith("mutable-") for item in evidence)
     assert all(item.startswith("published-") for item in evidence)
+
+
+def test_risks_unavailable_module_returns_http_200(client, monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("valuation module unavailable")
+
+    monkeypatch.setattr("equitylens.valuation.service.default_valuation", unavailable)
+
+    response = client.get("/api/v1/companies/AAPL/risks")
+
+    assert response.status_code == 200
+    valuation = next(
+        check for check in response.json()["checks"] if check["key"] == "valuation"
+    )
+    assert valuation["status"] == "ERROR"
+    assert valuation["reason"] == "valuation module unavailable"
+    assert valuation["next_evidence"]
 
 
 def test_company_identity(client):

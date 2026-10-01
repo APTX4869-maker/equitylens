@@ -470,6 +470,32 @@ class MetricEngine:
 
         if metric == "REVENUE_GROWTH_YOY":
             rev = self.load_facts(company_id, ["REVENUE"])["REVENUE"]
+
+            def growth_point(cur, previous_value, input_ids, point_frequency, formula_id):
+                if previous_value is None:
+                    point = self._point(
+                        metric, None, cur, formula_id, input_ids, point_frequency, unit="ratio"
+                    )
+                    point.status = "INCOMPLETE_PERIOD"
+                    point.missing_reason = "Revenue comparison base is missing"
+                    return point
+                if float(previous_value) <= 0:
+                    point = self._point(
+                        metric, None, cur, formula_id, input_ids, point_frequency, unit="ratio"
+                    )
+                    point.status = "INCOMPARABLE_BASE"
+                    point.missing_reason = "Revenue growth requires a positive comparison base"
+                    return point
+                return self._point(
+                    metric,
+                    float(cur["value"]) / float(previous_value) - 1.0,
+                    cur,
+                    formula_id,
+                    input_ids,
+                    point_frequency,
+                    unit="ratio",
+                )
+
             if freq == "quarterly":
                 series = self.standalone_series(rev)
                 keys = sorted(series, key=lambda k: (k[0] or 0, k[1] or 0))
@@ -480,10 +506,11 @@ class MetricEngine:
                     prev = series.get((k[0] - 1, k[1]))
                     if prev is None:
                         continue
-                    value = (float(cur["value"]) / float(prev["value"]) - 1.0) if prev["value"] else None
-                    points.append(self._point(metric, value, cur, "revenue_growth_yoy.v1",
-                                              [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
-                                              freq, unit="ratio"))
+                    points.append(growth_point(
+                        cur, prev["value"],
+                        [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                        freq, "revenue_growth_yoy.v1",
+                    ))
             elif freq == "annual":
                 series = self._annual_series(rev)
                 for k in sorted(series, key=lambda k: (k[0] or 0, k[1] or 0)):
@@ -491,10 +518,11 @@ class MetricEngine:
                     prev = series.get((k[0] - 1, None))
                     if prev is None:
                         continue
-                    value = (float(cur["value"]) / float(prev["value"]) - 1.0) if prev["value"] else None
-                    points.append(self._point(metric, value, cur, "revenue_growth_yoy.v1",
-                                              [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
-                                              freq, unit="ratio"))
+                    points.append(growth_point(
+                        cur, prev["value"],
+                        [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                        freq, "revenue_growth_yoy.v1",
+                    ))
             else:  # ttm: two complete TTM windows 4 quarters apart (8 consecutive quarters)
                 series = self.standalone_series(rev)
                 keys = sorted((k for k in series if self._valid_quarter_key(k)))
@@ -505,12 +533,11 @@ class MetricEngine:
                     cur4, prev4 = window8[-4:], window8[:4]
                     cur_val = sum(float(series[x]["value"]) for x in cur4)
                     prev_val = sum(float(series[x]["value"]) for x in prev4)
-                    if not prev_val:
-                        continue
-                    value = cur_val / prev_val - 1.0
                     input_ids = [series[x]["canonical_fact_id"] for x in window8]
-                    points.append(self._point(metric, value, series[k], "revenue_growth_yoy.ttm.v1",
-                                              input_ids, "ttm", unit="ratio"))
+                    points.append(growth_point(
+                        {**series[k], "value": cur_val}, prev_val, input_ids,
+                        "ttm", "revenue_growth_yoy.ttm.v1",
+                    ))
         elif metric in ("GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN"):
             num_metric = {"GROSS_MARGIN": "GROSS_PROFIT", "OPERATING_MARGIN": "OPERATING_INCOME",
                           "NET_MARGIN": "NET_INCOME"}[metric]
