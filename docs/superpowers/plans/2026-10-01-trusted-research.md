@@ -106,11 +106,11 @@ Commit message: `fix: make research gaps explicit`
 - Test: `tests/integration/test_api.py`
 - Test: `apps/web/e2e/research-boundaries.spec.ts`
 
-- [ ] **Step 1: Write failing API and browser tests**
+- [x] **Step 1: Write failing API and browser tests**
 
 Request six annual metrics with `limit=4` and assert up to four rows **per metric**, not four rows total. In the three-year table assert every non-empty cell is a source button and opens provenance under the selected publication.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run backend: `uv run pytest tests/integration/test_api.py -k 'annual_statement or per_metric_limit' -q`
 
@@ -118,11 +118,11 @@ Run frontend: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/
 
 Expected: only four combined facts are returned and table cells cannot open their own evidence.
 
-- [ ] **Step 3: Apply per-series limiting and interactive cells**
+- [x] **Step 3: Apply per-series limiting and interactive cells**
 
 Limit after grouping by requested metric. Preserve fact/evidence identity in the table model; render non-empty cells as keyboard-accessible buttons using the existing source drawer.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `fix: complete annual statements and provenance`
 
