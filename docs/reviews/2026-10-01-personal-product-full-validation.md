@@ -198,8 +198,9 @@
 
 ## 验证记录与证据
 
-- P0实施后 `uv run pytest -q` → **464 passed, 1 warning in 137.31s**；新增17项覆盖严格请求、零写入、证据路径审计/重映射和UTC连接。
+- P0最终审查修复后 `uv run pytest -q` → **481 passed, 1 warning in 141.98s**。审查补齐原始JSON非有限数、嵌套估值强类型与零写入、复制时显式清空字段、恢复候选目录逃逸，以及发布后哈希失败的事务/manifest回滚；总计新增34项覆盖严格请求、证据路径和UTC连接。
 - P0实施后前端 `tsc --noEmit`、lint、production build均退出0；本批没有前端业务代码变化。
+- 证据路径审计可复现命令（必须显式指向数据副本，连接使用DuckDB `read_only=True`，不会初始化schema或修复记录）：`uv run python -m equitylens.storage.source_paths --db /tmp/equitylens-personal-audit.uMPbOM/data/equitylens.duckdb --raw-root /tmp/equitylens-personal-audit.uMPbOM/data/raw`。输出每条分类与候选路径；本轮副本结果为 `valid=10, recoverable=84, hash_mismatch=0, missing=0`。
 
 - `pnpm build`：编译、TypeScript、静态页面生成成功；`pnpm start --port 3000`成功。此前首轮仅dev，本轮补齐production。
 - 既有Playwright：`PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec playwright test --reporter=line` → **44 passed (24.3s)**。它覆盖的是原有夹具契约，不代表上面真实问题已修复。

@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 
 def _insert_document(db, document_id: str, local_path: Path, content: bytes) -> None:
     db.upsert_source_documents([{
@@ -63,3 +65,35 @@ def test_source_path_audit_classifies_without_mutating_rows(db, tmp_path):
         "missing": "missing",
     }
     assert after == before
+
+
+def test_source_path_audit_never_recovers_outside_raw_root(db, tmp_path):
+    from equitylens.storage.source_paths import audit_source_paths
+
+    raw_root = tmp_path / "raw"
+    raw_root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside")
+    escaping = (
+        tmp_path / "deleted-stage" / "nested" / "raw" / ".." / "outside.txt"
+    )
+    _insert_document(db, "traversal", escaping, b"outside")
+
+    link = raw_root / "escape-link"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this filesystem")
+    _insert_document(
+        db,
+        "symlink",
+        tmp_path / "deleted-stage" / "raw" / "escape-link",
+        b"outside",
+    )
+
+    result = audit_source_paths(db, raw_root)
+    by_id = {item.source_document_id: item for item in result.items}
+    assert by_id["traversal"].status == "missing"
+    assert by_id["traversal"].candidate_path is None
+    assert by_id["symlink"].status == "missing"
+    assert by_id["symlink"].candidate_path is None

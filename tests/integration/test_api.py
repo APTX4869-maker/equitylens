@@ -587,6 +587,73 @@ def test_non_finite_or_wrong_type_plan_margin_is_rejected_without_write(
     assert after == before
 
 
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e999"])
+def test_raw_non_finite_plan_margin_returns_4xx_without_write(
+    client, company_db, literal
+):
+    run = _save_v2_run(client)
+    before = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        content=(
+            '{"valuation_run_id":"%s","scenario_key":"base",'
+            '"margin_of_safety":%s}' % (run["valuation_run_id"], literal)
+        ),
+        headers={"content-type": "application/json"},
+    )
+
+    assert 400 <= response.status_code < 500
+    after = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "assumptions",
+    [
+        {"wacc": "0.1"},
+        {"tax_rate": False},
+        {"unexpected": 123},
+        {"wacc": {}},
+        {"revenue_growth": None},
+    ],
+)
+def test_valuation_run_rejects_wrong_nested_assumptions_without_write(
+    client, company_db, assumptions
+):
+    before = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_run WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        json={"persist": True, "assumptions": assumptions},
+    )
+
+    assert 400 <= response.status_code < 500
+    after = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_run WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+    assert after == before
+
+
+@pytest.mark.parametrize("target_price", [True, "100", {}, None])
+def test_reverse_dcf_rejects_wrong_target_price_type(client, target_price):
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/reverse-dcf",
+        json={"target_price": target_price},
+    )
+    assert 400 <= response.status_code < 500
+
+
 def test_strict_request_rejects_unknown_plan_fields(client):
     run = _save_v2_run(client)
     response = client.post(
@@ -655,6 +722,60 @@ def test_plan_copy_compare_and_company_isolation(client):
     assert client.get(
         f"/api/v1/companies/MSFT/valuation/plans/{first['plan_id']}"
     ).status_code == 404
+
+
+def test_plan_copy_distinguishes_omitted_fields_from_explicit_null(client):
+    run = _save_v2_run(client)
+    original = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "notes": "clear me",
+            "conditions_to_verify": ["clear me too"],
+        },
+    ).json()
+
+    copied = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{original['plan_id']}/copy",
+        json={"notes": None, "conditions_to_verify": None},
+    )
+
+    assert copied.status_code == 200
+    assert copied.json()["notes"] is None
+    assert copied.json()["conditions_to_verify"] == []
+
+
+def test_raw_non_finite_plan_copy_margin_returns_4xx_without_write(
+    client, company_db
+):
+    run = _save_v2_run(client)
+    original = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+        },
+    ).json()
+    before = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+
+    response = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{original['plan_id']}/copy",
+        content='{"margin_of_safety":NaN}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert 400 <= response.status_code < 500
+    after = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+    assert after == before
 
 
 def test_plan_fields_survive_store_restart(tmp_path):
@@ -920,6 +1041,65 @@ def test_refresh_finalizes_staged_document_path(
     assert persisted.is_relative_to(raw_root)
     assert persisted.exists()
     assert hashlib.sha256(persisted.read_bytes()).hexdigest() == row["content_sha256"]
+
+
+def test_refresh_rolls_back_database_and_manifest_when_published_hash_mismatches(
+    company_db, tmp_path, monkeypatch
+):
+    import hashlib
+    import json
+
+    import equitylens.refresh.service as refresh_service
+    from equitylens.storage.raw_store import MANIFEST_NAME
+
+    raw_root = tmp_path / "raw"
+    company_root = raw_root / "sec" / "0000320193"
+    company_root.mkdir(parents=True)
+    manifest = company_root / MANIFEST_NAME
+    manifest.write_text(json.dumps({"version": "old"}))
+    content = b"expected evidence"
+
+    def write_staged_document(store, ticker, module, raw_dir):
+        path = raw_dir / "sec" / "0000320193" / "filing_docs" / "mismatch.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        (raw_dir / "sec" / "0000320193" / MANIFEST_NAME).write_text(
+            json.dumps({"version": "new"})
+        )
+        store.upsert_source_documents([{
+            "source_document_id": "refresh-hash-mismatch",
+            "company_id": "0000320193",
+            "provider": "SEC",
+            "document_type": "FILING_DOCUMENT",
+            "source_url": "https://example.test/mismatch.html",
+            "fetched_at": "2026-10-01T00:00:00+00:00",
+            "content_sha256": hashlib.sha256(content).hexdigest(),
+            "local_path": str(path),
+        }])
+        return {}
+
+    real_publish = refresh_service._publish_staged
+
+    def publish_then_corrupt(stage, destination_root, relative):
+        backups = real_publish(stage, destination_root, relative)
+        (destination_root / relative / "filing_docs" / "mismatch.html").write_bytes(
+            b"corrupted after publication"
+        )
+        return backups
+
+    monkeypatch.setattr(refresh_service, "_run_module", write_staged_document)
+    monkeypatch.setattr(refresh_service, "_publish_staged", publish_then_corrupt)
+
+    result = refresh_service.refresh_company(
+        company_db, "AAPL", modules=["financials"], raw_dir=raw_root
+    )
+
+    assert result["modules"]["financials"]["status"] == "error"
+    assert company_db.query_one(
+        "SELECT source_document_id FROM source_document "
+        "WHERE source_document_id='refresh-hash-mismatch'"
+    ) is None
+    assert json.loads(manifest.read_text()) == {"version": "old"}
 
 
 def test_refresh_marks_existing_plan_for_review_without_recalculation(client, company_db, monkeypatch):

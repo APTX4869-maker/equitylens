@@ -1216,7 +1216,7 @@ def valuation_plan_copy(ticker: str, plan_id: str, payload: ValuationPlanCopyReq
     try:
         return copy_plan(
             _store(), company.cik, company.ticker, plan_id,
-            payload.model_dump(exclude_none=True),
+            payload.model_dump(exclude_unset=True),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

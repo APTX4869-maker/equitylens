@@ -9,8 +9,10 @@ import asyncio
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from equitylens.api.company_routes import router as company_router
 from equitylens.api.routes import router
@@ -60,6 +62,30 @@ app = FastAPI(
                 "calculations from deterministic code, opinions from evidence.",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_request_validation_error(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Return validation details without echoing non-JSON-safe input values."""
+    if request.url.path.endswith("/valuation/reverse-dcf"):
+        first = exc.errors()[0]
+        location = first.get("loc") or ()
+        field = str(location[-1])
+        return JSONResponse(
+            status_code=400,
+            content={"error": {
+                "code": "INVALID_INPUT",
+                "field": field,
+                "message": first.get("msg") or "invalid request value",
+            }},
+        )
+    detail = [
+        {key: value for key, value in error.items() if key in {"type", "loc", "msg"}}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 app.add_middleware(
     CORSMiddleware,

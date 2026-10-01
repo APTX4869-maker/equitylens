@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictStr,
+    model_validator,
+)
 
 
 class StrictRequest(BaseModel):
@@ -18,16 +26,43 @@ class ResearchAskRequest(StrictRequest):
     publication_id: StrictStr | None = None
 
 
+class ValuationAssumptions(StrictRequest):
+    revenue_base: StrictFloat | None = None
+    revenue_growth: list[StrictFloat] | None = None
+    op_margin_start: StrictFloat | None = None
+    op_margin_end: StrictFloat | None = None
+    tax_rate: StrictFloat | None = None
+    da_pct: StrictFloat | None = None
+    capex_pct: StrictFloat | None = None
+    nwc_pct: StrictFloat | None = None
+    wacc: StrictFloat | None = None
+    terminal_growth: StrictFloat | None = None
+    net_cash: StrictFloat | None = None
+    shares: StrictFloat | None = None
+    share_basis_label: StrictStr | None = None
+    share_basis_security_id: StrictStr | None = None
+    terminal_roic: StrictFloat | None = None
+
+    @model_validator(mode="after")
+    def reject_explicit_nulls(self):
+        null_fields = [
+            name for name in self.model_fields_set if getattr(self, name) is None
+        ]
+        if null_fields:
+            raise ValueError(f"assumption fields cannot be null: {', '.join(null_fields)}")
+        return self
+
+
 class ValuationRunRequest(StrictRequest):
     persist: StrictBool = True
-    assumptions: dict[str, Any] | None = None
+    assumptions: ValuationAssumptions | None = None
 
 
 class ReverseDcfRequest(StrictRequest):
-    # The valuation service owns field-specific 400 errors for the numeric
-    # domain. This model forbids unknown fields without replacing that API.
-    target_price: Any = None
-    assumptions: Any = None
+    # Missing/null values retain the service's field-specific 400 response;
+    # provided numeric values and nested assumptions are strict at the edge.
+    target_price: StrictFloat | None = None
+    assumptions: ValuationAssumptions | None = None
 
 
 class ValuationPlanRequest(StrictRequest):
