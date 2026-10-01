@@ -40,8 +40,8 @@ def _evs(points) -> list[str]:
     return ids
 
 
-def risk_signals(store, company_id: str, ticker: str) -> dict:
-    engine = MetricEngine(store)
+def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
+    engine = context.metric_engine if context is not None else MetricEngine(store)
     risks: list[dict] = []
     checks: list[dict] = []
 
@@ -165,12 +165,15 @@ def risk_signals(store, company_id: str, ticker: str) -> dict:
 
     # ---- concentration (segment AND product views) ----
     def _concentration():
-        from equitylens.api.segments_service import get_segments
-
         evidence: list[str] = []
         checked: list[str] = []
         for kind, kind_label in (("segment", "分部"), ("product", "产品类别")):
-            seg = get_segments(store, ticker, kind=kind, frequency="annual")
+            if context is not None:
+                seg = context.segments(kind=kind, frequency="annual")
+            else:
+                from equitylens.api.segments_service import get_segments
+
+                seg = get_segments(store, ticker, kind=kind, frequency="annual")
             total = seg.get("total_revenue")
             if not total or kind in checked:
                 continue

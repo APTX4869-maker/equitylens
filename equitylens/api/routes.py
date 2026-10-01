@@ -1254,13 +1254,15 @@ def company_risks(
     publication_id: str | None = None,
 ):
     from equitylens.domain.risks import risk_signals
+    from equitylens.research.context import PublishedResearchContext
 
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id,
         module="risks",
     )
+    research = PublishedResearchContext.from_publication(store, company, context)
     return {
-        **risk_signals(store, company.cik, company.ticker),
+        **risk_signals(store, company.cik, company.ticker, context=research),
         **_version_fields(company, context),
     }
 
@@ -1273,13 +1275,15 @@ def company_moat(
 ):
     """Moat evidence from SEC numbers only; qualitative gaps are explicit (M8.5)."""
     from equitylens.domain.moat import moat_signals
+    from equitylens.research.context import PublishedResearchContext
 
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id,
         module="moat",
     )
+    research = PublishedResearchContext.from_publication(store, company, context)
     return {
-        **moat_signals(store, company.cik, company.ticker),
+        **moat_signals(store, company.cik, company.ticker, context=research),
         **_version_fields(company, context),
     }
 
@@ -1288,6 +1292,7 @@ def company_moat(
 def research_ask(payload: ResearchAskRequest):
     """Evidence-first research Q&A (deterministic engine; LLM pluggable later)."""
     from equitylens.research.engine import ask
+    from equitylens.research.context import PublishedResearchContext
 
     ticker = payload.ticker.upper()
     question = payload.question
@@ -1299,8 +1304,9 @@ def research_ask(payload: ResearchAskRequest):
         publication_id=payload.publication_id,
         module="research",
     )
+    research = PublishedResearchContext.from_publication(store, company, context)
     return {
-        **ask(store, company.cik, company.ticker, question),
+        **ask(store, company.cik, company.ticker, question, context=research),
         **_version_fields(company, context),
     }
 

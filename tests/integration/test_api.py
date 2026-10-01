@@ -32,6 +32,184 @@ def test_health(client):
     assert r.status_code == 200
 
 
+def test_published_research_endpoints_ignore_mutable_split_brain_rows(
+    db, monkeypatch
+):
+    from equitylens.companies.models import CompanyIdentity, SecurityIdentity
+    from equitylens.companies.registry import CompanyRegistry
+    from equitylens.publication.builder import DatasetBuilder
+    from equitylens.publication.repository import PublicationRepository
+
+    company_id = "0000000402"
+    registry = CompanyRegistry(db)
+    registry.register_company(
+        CompanyIdentity(
+            company_id=company_id,
+            cik=company_id,
+            legal_name="Split Brain Fixture",
+            reporting_template="us_gaap_operating_v1",
+        ),
+        legacy_ticker="SPLT",
+    )
+    registry.register_security(
+        SecurityIdentity(
+            security_id="40240240-2402-4402-8402-402402402402",
+            company_id=company_id,
+            ticker="SPLT",
+            exchange="NYSE",
+            currency="USD",
+            instrument_type="COMMON_STOCK",
+            identity_evidence={"source": "fixture"},
+        )
+    )
+    publications = PublicationRepository(db)
+    profile_id = publications.create_profile(
+        company_id,
+        version=1,
+        schema_version=1,
+        content={"company_id": company_id},
+    )
+
+    def fact(metric, fact_id, value, period_type, year, quarter=None):
+        return {
+            "canonical_fact_id": fact_id,
+            "company_id": company_id,
+            "canonical_metric": metric,
+            "period_type": period_type,
+            "fiscal_year": year,
+            "fiscal_quarter": quarter,
+            "period_start": f"{year}-01-01",
+            "period_end": f"{year}-12-31",
+            "instant_date": None,
+            "value": value,
+            "unit": "USD",
+            "status": "REPORTED",
+            "mapping_rule_id": "published-fixture",
+            "mapping_version": "v1",
+            "source_raw_fact_ids": [],
+            "as_known_at": f"{year + 1}-02-01T00:00:00",
+            "created_at": f"{year + 1}-02-01T00:00:00",
+            "warnings_json": [],
+            "source_document_id": None,
+        }
+
+    published_facts = []
+    for year in (2023, 2024, 2025):
+        for metric, value in (
+            ("REVENUE", 100.0 + year - 2023),
+            ("GROSS_PROFIT", 40.0),
+            ("OPERATING_INCOME", 20.0),
+            ("NET_INCOME", 15.0),
+            ("OPERATING_CASH_FLOW", 25.0),
+            ("CAPITAL_EXPENDITURES", 5.0),
+        ):
+            fact_id = f"published-{metric.lower()}-{year}"
+            published_facts.append(fact(metric, fact_id, value, "FY", year))
+    for year in (2024, 2025):
+        for quarter in (1, 2, 3, 4):
+            published_facts.extend([
+                fact("REVENUE", f"published-revenue-{year}q{quarter}",
+                     20.0 + quarter + (year - 2024), "Q_STANDALONE", year, quarter),
+                fact("OPERATING_INCOME", f"published-op-{year}q{quarter}",
+                     4.0, "Q_STANDALONE", year, quarter),
+            ])
+    dataset_id = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": []},
+        rows=[
+            ("canonical_fact", item["canonical_fact_id"], item)
+            for item in published_facts
+        ],
+    )
+    first = publications.publish_dataset(
+        company_id=company_id,
+        dataset_id=dataset_id,
+        profile_id=profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+
+    mutable_rows = [
+        {
+            **item,
+            "canonical_fact_id": item["canonical_fact_id"].replace(
+                "published-", "mutable-"
+            ),
+            "value": item["value"] * 9,
+            "mapping_rule_id": "mutable-fixture",
+            "as_known_at": "2099-01-01T00:00:00",
+            "created_at": "2099-01-01T00:00:00",
+        }
+        for item in published_facts
+    ]
+    db._insert_many("canonical_fact", mutable_rows)
+
+    second_dataset = DatasetBuilder(db).seal_rows(
+        company_id=company_id,
+        profile_id=profile_id,
+        source_manifest={"documents": []},
+        rows=[(
+            "canonical_fact",
+            "second-publication-revenue",
+            fact("REVENUE", "second-publication-revenue", 777.0, "FY", 2025),
+        )],
+    )
+    publications.publish_dataset(
+        company_id=company_id,
+        dataset_id=second_dataset,
+        profile_id=profile_id,
+        quality_report_id=None,
+        review_id=None,
+    )
+
+    monkeypatch.setattr("equitylens.api.routes.DuckDBStore", lambda: db)
+    with TestClient(app) as split_client:
+        identity = f"publication_id={first.publication_id}"
+        overview_response = split_client.get(
+            f"/api/v1/companies/SPLT/overview?{identity}"
+        )
+        risks_response = split_client.get(
+            f"/api/v1/companies/SPLT/risks?{identity}"
+        )
+        moat_response = split_client.get(
+            f"/api/v1/companies/SPLT/moat?{identity}"
+        )
+        ask_response = split_client.post(
+            "/api/v1/research/ask",
+            json={
+                "ticker": "SPLT",
+                "publication_id": first.publication_id,
+                "question": "总览",
+            },
+        )
+
+    assert overview_response.status_code == 200
+    assert risks_response.status_code == 200
+    assert moat_response.status_code == 200
+    assert ask_response.status_code == 200
+    assert overview_response.json()["publication_id"] == first.publication_id
+    assert ask_response.json()["publication_id"] == first.publication_id
+    evidence = [
+        evidence_id
+        for claim in ask_response.json()["claims"]
+        for evidence_id in claim["evidence_ids"]
+    ]
+    evidence.extend(
+        evidence_id
+        for risk in risks_response.json()["risks"]
+        for evidence_id in risk["evidence_ids"]
+    )
+    evidence.extend(
+        evidence_id
+        for signal in moat_response.json()["signals"]
+        for evidence_id in signal["evidence_ids"]
+    )
+    assert evidence
+    assert all(not item.startswith("mutable-") for item in evidence)
+    assert all(item.startswith("published-") for item in evidence)
+
+
 def test_company_identity(client):
     r = client.get("/api/v1/companies/AAPL")
     assert r.status_code == 200

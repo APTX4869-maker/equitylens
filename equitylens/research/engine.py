@@ -23,8 +23,8 @@ EVIDENCE_MISSING = "NO_EVIDENCE_FOR_THIS_CLAIM"
 SUPPORTED_TOPICS = ["增长", "利润率", "现金流", "风险", "估值", "业务构成", "指标解释"]
 
 
-def _num(store, company_id: str, metric: str, freq="quarterly"):
-    engine = MetricEngine(store)
+def _num(store, company_id: str, metric: str, freq="quarterly", *, context=None):
+    engine = context.metric_engine if context is not None else MetricEngine(store)
     try:
         return engine.compute(metric, company_id, frequency=freq)
     except ValueError:
@@ -35,20 +35,20 @@ def _latest(pts):
     return pts[-1] if pts else None
 
 
-def ask(store, company_id: str, ticker: str, question: str) -> dict:
+def ask(store, company_id: str, ticker: str, question: str, *, context=None) -> dict:
     q = question.strip()
     intent = _route(q)
 
     builders = {
         "metric_explain": lambda: _metric_explain(q),
-        "risk": lambda: _answer_risks(store, company_id, ticker),
-        "compare": lambda: _answer_compare(store, company_id, ticker, q),
-        "margin": lambda: _answer_margin(store, company_id, ticker),
-        "cash": lambda: _answer_cash(store, company_id, ticker),
-        "growth": lambda: _answer_growth(store, company_id, ticker),
-        "business": lambda: _answer_business(store, company_id, ticker),
+        "risk": lambda: _answer_risks(store, company_id, ticker, context=context),
+        "compare": lambda: _answer_compare(store, company_id, ticker, q, context=context),
+        "margin": lambda: _answer_margin(store, company_id, ticker, context=context),
+        "cash": lambda: _answer_cash(store, company_id, ticker, context=context),
+        "growth": lambda: _answer_growth(store, company_id, ticker, context=context),
+        "business": lambda: _answer_business(store, company_id, ticker, context=context),
         "valuation": lambda: _answer_valuation(store, company_id, ticker),
-        "overview": lambda: _answer_overview(store, company_id, ticker),
+        "overview": lambda: _answer_overview(store, company_id, ticker, context=context),
         "unsupported": _answer_unsupported,
     }
     return {"intent": intent, "supported_topics": SUPPORTED_TOPICS, **builders[intent]()}
@@ -122,8 +122,8 @@ _RISK_CHECK_LABELS = {
 }
 
 
-def _answer_risks(store, company_id: str, ticker: str) -> dict:
-    data = risk_signals(store, company_id, ticker)
+def _answer_risks(store, company_id: str, ticker: str, *, context=None) -> dict:
+    data = risk_signals(store, company_id, ticker, context=context)
     claims = []
     for r in data["risks"][:4]:
         # severity and confidence are separate: a HIGH-severity risk is not
@@ -157,11 +157,11 @@ def _answer_risks(store, company_id: str, ticker: str) -> dict:
     }
 
 
-def _answer_compare(store, company_id: str, ticker: str, q: str) -> dict:
-    rev = _num(store, company_id, "REVENUE", freq="ttm")  # TTM, not a single quarter
-    opp = _num(store, company_id, "OPERATING_MARGIN")
-    fcf = _num(store, company_id, "FCF_MARGIN")
-    growth = _num(store, company_id, "REVENUE_GROWTH_YOY")
+def _answer_compare(store, company_id: str, ticker: str, q: str, *, context=None) -> dict:
+    rev = _num(store, company_id, "REVENUE", freq="ttm", context=context)  # TTM, not a single quarter
+    opp = _num(store, company_id, "OPERATING_MARGIN", context=context)
+    fcf = _num(store, company_id, "FCF_MARGIN", context=context)
+    growth = _num(store, company_id, "REVENUE_GROWTH_YOY", context=context)
     lr = _latest(rev); lo = _latest(opp); lf = _latest(fcf); lg = _latest(growth)
     claims = []
     if lr and lr.value:
@@ -179,10 +179,10 @@ def _answer_compare(store, company_id: str, ticker: str, q: str) -> dict:
             "claims": claims, "metric_ids": [], "limitations": ["跨公司对比请手动切换公司后自行对照，或后续版本提供并排视图"]}
 
 
-def _answer_margin(store, company_id: str, ticker: str) -> dict:
-    gm = _num(store, company_id, "GROSS_MARGIN")
-    om = _num(store, company_id, "OPERATING_MARGIN")
-    nm = _num(store, company_id, "NET_MARGIN")
+def _answer_margin(store, company_id: str, ticker: str, *, context=None) -> dict:
+    gm = _num(store, company_id, "GROSS_MARGIN", context=context)
+    om = _num(store, company_id, "OPERATING_MARGIN", context=context)
+    nm = _num(store, company_id, "NET_MARGIN", context=context)
     lg, lo, ln = _latest(gm), _latest(om), _latest(nm)
     claims = []
     if lg and lg.value:
@@ -205,10 +205,10 @@ def _margin_trend_text(pts) -> str:
     return ""
 
 
-def _answer_cash(store, company_id: str, ticker: str) -> dict:
-    ocf = _num(store, company_id, "OPERATING_CASH_FLOW", freq="ttm")
-    capex = _num(store, company_id, "CAPITAL_EXPENDITURES", freq="ttm")
-    fcf = _num(store, company_id, "FCF", freq="ttm")
+def _answer_cash(store, company_id: str, ticker: str, *, context=None) -> dict:
+    ocf = _num(store, company_id, "OPERATING_CASH_FLOW", freq="ttm", context=context)
+    capex = _num(store, company_id, "CAPITAL_EXPENDITURES", freq="ttm", context=context)
+    fcf = _num(store, company_id, "FCF", freq="ttm", context=context)
     ocf_last = _latest(ocf); capex_last = _latest(capex); fcf_last = _latest(fcf)
     claims = []
     if ocf_last and ocf_last.value:
@@ -225,9 +225,9 @@ def _answer_cash(store, company_id: str, ticker: str) -> dict:
             "limitations": ["TTM 为连续四个独立季度合计；缺失季度不参与（不凑数）"]}
 
 
-def _answer_growth(store, company_id: str, ticker: str) -> dict:
-    rev = _num(store, company_id, "REVENUE")
-    growth = _num(store, company_id, "REVENUE_GROWTH_YOY")
+def _answer_growth(store, company_id: str, ticker: str, *, context=None) -> dict:
+    rev = _num(store, company_id, "REVENUE", context=context)
+    growth = _num(store, company_id, "REVENUE_GROWTH_YOY", context=context)
     claims = []
     if len(growth) >= 2:
         a = [p.value for p in growth[-2:] if p.value is not None]
@@ -248,9 +248,13 @@ def _answer_growth(store, company_id: str, ticker: str) -> dict:
             "limitations": ["增长解释如需拆分到分部/驱动，请询问业务构成"]}
 
 
-def _answer_business(store, company_id: str, ticker: str) -> dict:
+def _answer_business(store, company_id: str, ticker: str, *, context=None) -> dict:
     try:
-        seg = get_segments(store, ticker, kind="segment", frequency="annual")
+        seg = (
+            context.segments(kind="segment", frequency="annual")
+            if context is not None
+            else get_segments(store, ticker, kind="segment", frequency="annual")
+        )
     except Exception:
         seg = {"segments": []}
     claims = []
@@ -314,9 +318,9 @@ def _answer_valuation(store, company_id: str, ticker: str) -> dict:
         return {"answer": f"估值暂不可用：{exc}", "claims": [], "metric_ids": [], "limitations": ["先同步财务数据"]}
 
 
-def _answer_overview(store, company_id: str, ticker: str) -> dict:
-    rev = _num(store, company_id, "REVENUE")
-    opp = _num(store, company_id, "OPERATING_MARGIN")
+def _answer_overview(store, company_id: str, ticker: str, *, context=None) -> dict:
+    rev = _num(store, company_id, "REVENUE", context=context)
+    opp = _num(store, company_id, "OPERATING_MARGIN", context=context)
     lr, lo = _latest(rev), _latest(opp)
     claims = []
     if lr and lr.value:

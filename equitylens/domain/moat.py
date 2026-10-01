@@ -67,9 +67,10 @@ def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals)
 
 
-def moat_signals(store, company_id: str, ticker: str) -> dict:
-    engine = MetricEngine(store)
+def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
+    engine = context.metric_engine if context is not None else MetricEngine(store)
     signals: list[Signal] = []
+    gaps = [{"dimension": d, "note": n} for d, n in QUALITATIVE_GAPS]
     ev = _evidence_ids
 
     # ---- 1) pricing power: gross margin level + stability/trend (5Y annual) ----
@@ -156,10 +157,13 @@ def moat_signals(store, company_id: str, ticker: str) -> dict:
     # ---- 6) segment/product dependency ----
     dependency_count = 0
     try:
-        from equitylens.api.segments_service import get_segments
-
         for kind, label in (("segment", "分部"), ("product", "产品类别")):
-            seg = get_segments(store, ticker, kind=kind, frequency="annual")
+            if context is not None:
+                seg = context.segments(kind=kind, frequency="annual")
+            else:
+                from equitylens.api.segments_service import get_segments
+
+                seg = get_segments(store, ticker, kind=kind, frequency="annual")
             segs = [s for s in seg["segments"] if s.get("share")]
             if not segs:
                 continue
@@ -194,7 +198,6 @@ def moat_signals(store, company_id: str, ticker: str) -> dict:
             evidence_ids=["board_member"], value_label=f"{ratio*100:.0f}%",
         ))
 
-    gaps = [{"dimension": d, "note": n} for d, n in QUALITATIVE_GAPS]
     if not board or not any(str(b["independent"] or "").strip() for b in board):
         gaps.insert(0, {"dimension": "董事会独立性标注",
                         "note": "该 14A 未逐位标注独立性，无法从 SEC 数字证据评估。"})
