@@ -39,27 +39,27 @@
 - Produces: context helpers for provenance-safe evidence IDs and segment reads.
 - Preserves: legacy-publication compatibility only when `dataset_version.parser_version == 'legacy'`.
 
-- [ ] **Step 1: Write failing split-brain tests**
+- [x] **Step 1: Write failing split-brain tests**
 
 Create a publication fixture, then insert conflicting newer rows into mutable tables. Assert overview, metrics, risks, moat and research assistant still return only the selected publication's values/evidence. Assert a non-active explicit publication remains stable if the active pointer changes between requests.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/unit/test_research_context.py tests/integration/test_api.py -k 'published_research or split_brain' -q`
 
 Expected: risks/moat/assistant read mutable tables or return evidence outside the requested dataset.
 
-- [ ] **Step 3: Implement and inject the context**
+- [x] **Step 3: Implement and inject the context**
 
 Load and hash-verify dataset entities once. Construct `MetricEngine(published_facts=...)`; provide published segment/profile/source helpers. Change risks, moat and assistant builders to consume the context. Keep one narrow legacy adapter and label it in code.
 
-- [ ] **Step 4: Run focused endpoints**
+- [x] **Step 4: Run focused endpoints**
 
 Run: `uv run pytest tests/unit/test_research_context.py tests/integration/test_api.py -k 'overview or metrics or risks or moat or research' -q`
 
 Expected: all pass and every response identity equals the requested publication.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit message: `feat: unify published research context`
 
@@ -74,25 +74,25 @@ Commit message: `feat: unify published research context`
 - Test: `tests/unit/test_moat.py`
 - Test: `tests/unit/test_risks.py`
 
-- [ ] **Step 1: Write failing missing-evidence tests**
+- [x] **Step 1: Write failing missing-evidence tests**
 
 Cover no segment mapping, empty segment facts, missing comparison periods, zero bases, negative bases, stock-split share changes and unavailable modules. Assert HTTP 200 with explicit `gaps`/incomplete checks and no fabricated verdict; never 500 and never call missing evidence a completed check.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/unit/test_moat.py tests/unit/test_risks.py tests/integration/test_api.py -k 'missing_evidence or no_segment or negative_base or split' -q`
 
 Expected: current moat path raises or rules emit misleading judgments.
 
-- [ ] **Step 3: Make rule outcomes tri-state**
+- [x] **Step 3: Make rule outcomes tri-state**
 
 Use `SUPPORTED`, `NOT_SUPPORTED`, and `EVIDENCE_GAP`/`INCOMPLETE_PERIOD` outcomes. Treat missing/zero/negative comparison bases as non-comparable. A share-count jump alone is not dilution when split evidence or per-share restatement is unresolved.
 
-- [ ] **Step 4: Verify focused behavior**
+- [x] **Step 4: Verify focused behavior**
 
 Run the same focused suite; assert evidence gaps include a human-readable reason and the next evidence needed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit message: `fix: make research gaps explicit`
 
