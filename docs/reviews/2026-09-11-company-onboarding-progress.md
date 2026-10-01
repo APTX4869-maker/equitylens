@@ -8,6 +8,8 @@
 
 同日继续补充测试：生产构建/启动、五公司40个模块页面、40组研究问答、方案数量/非法输入、真实COST刷新、NVDA重审、服务中断恢复及刷新后的原始证据定位。新增F01—F14问题、未到达验收和六个待review方案见 [补充全流程测试](2026-10-01-personal-product-full-validation.md)。用户review后再开始业务修复，当前不将历史里程碑改称全产品通过。
 
+同日用户批准“可信度优先”实施。P0数据安全已完成：严格请求与有限数零写入、刷新证据路径事务内持久化、只读历史路径审计、DuckDB UTC连接契约。后端全量464 passed，前端类型/lint/production build通过；测试副本路径审计为10条有效、84条可恢复、0条hash不匹配、0条真正缺失。未自动修改正式历史数据；P1可信研究及后续阶段仍待实施。
+
 扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。NVDA 研究补全计划：`docs/superpowers/plans/2026-09-25-nvda-completion.md`。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |
