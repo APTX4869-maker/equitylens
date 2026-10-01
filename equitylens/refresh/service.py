@@ -16,6 +16,7 @@ from time import monotonic
 from equitylens.config import DB_PATH, RAW_DIR
 from equitylens.domain.companies import get_company
 from equitylens.storage.raw_store import MANIFEST_NAME, _write_immutable, _write_manifest
+from equitylens.storage.source_paths import finalize_staged_source_paths
 from equitylens.storage.writer import WriterBusy, writer_for
 
 MODULES = ("financials", "segments", "management", "quotes")
@@ -204,6 +205,7 @@ def refresh_company(
                     with store.transaction():
                         value = _run_module(store, company.ticker, module, stage)
                         backups = _publish_staged(stage, raw_dir, relative)
+                        finalize_staged_source_paths(store, stage, raw_dir)
                 results[module] = {
                     "status": "ok", "retryable": False, "started_at": started,
                     "finished_at": _now(), **_result_fields(value),

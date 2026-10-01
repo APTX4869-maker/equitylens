@@ -878,6 +878,50 @@ def test_refresh_rolls_back_failed_module_writes(client, company_db, monkeypatch
     ) is None
 
 
+def test_refresh_finalizes_staged_document_path(
+    company_db, tmp_path, monkeypatch
+):
+    import hashlib
+    from pathlib import Path
+
+    import equitylens.refresh.service as refresh_service
+
+    content = b"durable refresh evidence"
+    digest = hashlib.sha256(content).hexdigest()
+
+    def write_staged_document(store, ticker, module, raw_dir):
+        path = raw_dir / "sec" / "0000320193" / "filing_docs" / "audit.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        store.upsert_source_documents([{
+            "source_document_id": "refresh-staged-document",
+            "company_id": "0000320193",
+            "provider": "SEC",
+            "document_type": "FILING_DOCUMENT",
+            "source_url": "https://example.test/audit.html",
+            "fetched_at": "2026-10-01T00:00:00+00:00",
+            "content_sha256": digest,
+            "local_path": str(path),
+        }])
+        return {}
+
+    monkeypatch.setattr(refresh_service, "_run_module", write_staged_document)
+    raw_root = tmp_path / "raw"
+    result = refresh_service.refresh_company(
+        company_db, "AAPL", modules=["financials"], raw_dir=raw_root
+    )
+    row = company_db.query_one(
+        "SELECT local_path, content_sha256 FROM source_document "
+        "WHERE source_document_id='refresh-staged-document'"
+    )
+
+    assert result["modules"]["financials"]["status"] == "ok"
+    persisted = Path(row["local_path"])
+    assert persisted.is_relative_to(raw_root)
+    assert persisted.exists()
+    assert hashlib.sha256(persisted.read_bytes()).hexdigest() == row["content_sha256"]
+
+
 def test_refresh_marks_existing_plan_for_review_without_recalculation(client, company_db, monkeypatch):
     import equitylens.market.service as market_service
     from equitylens.market.service import SyncReport as QuoteSyncReport
