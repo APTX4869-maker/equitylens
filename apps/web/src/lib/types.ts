@@ -153,7 +153,7 @@ export type Fact = {
   period_start: string | null;
   period_end: string | null;
   instant_date: string | null;
-  value: number;
+  value: number | null;
   unit: string;
   status: string;
   canonical_fact_id: string | null;
@@ -177,6 +177,9 @@ export type Fact = {
 
 export type FactsResponse = {
   ticker: string;
+  company_id: string;
+  security_id: string;
+  publication_id: string;
   frequency: string;
   view: string;
   facts: Fact[];
@@ -199,8 +202,16 @@ export type MetricPoint = {
 
 export type MetricsResponse = {
   ticker: string;
+  company_id: string;
+  security_id: string;
+  publication_id: string;
   frequency: string;
   metrics: MetricPoint[];
+};
+
+export type ResearchIdentity = {
+  security_id?: string;
+  publication_id?: string | null;
 };
 
 export type ProvenanceNode = {

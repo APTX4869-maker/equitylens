@@ -2,15 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import type { MarketQuote, MetricPoint, Fact } from "@/lib/types";
+import type { MarketQuote, MetricPoint, Fact, ResearchIdentity } from "@/lib/types";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
 
 type Props = {
   ticker: string;
+  identity: ResearchIdentity;
   market?: MarketQuote | null;
   onOpenMetric: (key: string, fact: Fact | null) => void;
+  onOpenSource: (entityId: string) => void;
 };
 
 const QUARTER_METRICS: { key: string; label: string; kind: "ratio" | "currency" | "growth" }[] = [
@@ -42,7 +44,9 @@ const CARD_DEFS: { key: string; metric: string; label: string; note: string; k?:
   { key: "fcfYield", metric: "FCF_YIELD", label: "FCF 收益率", note: "行情未同步", k: "fcfYield" },
 ];
 
-export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
+export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOpenSource }: Props) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [view, setView] = useState<"quarter" | "annual">("quarter");
   const [activeMetric, setActiveMetric] = useState("REVENUE");
   const [quarterly, setQuarterly] = useState<Record<string, MetricPoint[]>>({});
@@ -57,18 +61,20 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
     let cancelled = false;
     (async () => {
       try {
+        const selectedIdentity = { security_id: securityId, publication_id: publicationId };
         const qKeys = [...new Set([...QUARTER_METRICS.map((m) => m.key), "NET_MARGIN", "FCF_MARGIN", "NET_DEBT"])];
         const aKeys = ANNUAL_METRICS.map((m) => m.key);
         const ttmKeys = ["REVENUE", "FCF", "GROSS_MARGIN", "OPERATING_MARGIN", "NET_MARGIN", "FCF_MARGIN"];
         const [qRes, aRes, tRes, sRes] = await Promise.all([
-          api.metrics(ticker, qKeys, "quarterly", 12),
-          api.metrics(ticker, aKeys, "annual", 10),
-          api.metrics(ticker, ttmKeys, "ttm", 8),
+          api.metrics(ticker, qKeys, "quarterly", 12, selectedIdentity),
+          api.metrics(ticker, aKeys, "annual", 10, selectedIdentity),
+          api.metrics(ticker, ttmKeys, "ttm", 8, selectedIdentity),
           api.facts(
             ticker,
             ["REVENUE", "GROSS_PROFIT", "OPERATING_INCOME", "NET_INCOME", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"],
             "annual",
-            4
+            4,
+            selectedIdentity
           ),
         ]);
         if (cancelled) return;
@@ -90,7 +96,7 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [ticker, reloadKey]);
+  }, [ticker, securityId, publicationId, reloadKey]);
 
   const series = useMemo(
     () => (view === "quarter" ? quarterly[activeMetric] ?? [] : annual[activeMetric] ?? []),
@@ -185,13 +191,16 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
     const byMetric: Record<string, Fact[]> = {};
     for (const f of statement) (byMetric[f.metric] ??= []).push(f);
     const years = [...new Set(byMetric.REVENUE?.map((f) => f.fiscal_year).filter((y): y is number => y != null))].slice(-3);
-    const rows: { label: string; values: (number | null)[]; major: boolean }[] = [
-      { label: "营业收入", values: years.map((y) => byMetric.REVENUE?.find((f) => f.fiscal_year === y)?.value ?? null), major: true },
-      { label: "毛利润", values: years.map((y) => byMetric.GROSS_PROFIT?.find((f) => f.fiscal_year === y)?.value ?? null), major: false },
-      { label: "营业利润", values: years.map((y) => byMetric.OPERATING_INCOME?.find((f) => f.fiscal_year === y)?.value ?? null), major: true },
-      { label: "净利润", values: years.map((y) => byMetric.NET_INCOME?.find((f) => f.fiscal_year === y)?.value ?? null), major: true },
-      { label: "经营现金流", values: years.map((y) => byMetric.OPERATING_CASH_FLOW?.find((f) => f.fiscal_year === y)?.value ?? null), major: false },
-      { label: "资本开支", values: years.map((y) => byMetric.CAPITAL_EXPENDITURES?.find((f) => f.fiscal_year === y)?.value ?? null), major: false },
+    const cells = (metric: string) => years.map(
+      (year) => byMetric[metric]?.find((fact) => fact.fiscal_year === year) ?? null
+    );
+    const rows: { label: string; cells: (Fact | null)[]; major: boolean }[] = [
+      { label: "营业收入", cells: cells("REVENUE"), major: true },
+      { label: "毛利润", cells: cells("GROSS_PROFIT"), major: false },
+      { label: "营业利润", cells: cells("OPERATING_INCOME"), major: true },
+      { label: "净利润", cells: cells("NET_INCOME"), major: true },
+      { label: "经营现金流", cells: cells("OPERATING_CASH_FLOW"), major: false },
+      { label: "资本开支", cells: cells("CAPITAL_EXPENDITURES"), major: false },
     ];
     return { years, rows };
   }, [statement]);
@@ -306,7 +315,25 @@ export function FinancialsSection({ ticker, market, onOpenMetric }: Props) {
                 {annualRows.rows.map((r, i) => (
                   <tr key={i} className={r.major ? "major" : ""}>
                     <td>{r.label}</td>
-                    {r.values.map((v, j) => <td key={j}>{v != null ? `$${(v / 1e9).toFixed(1)}B` : "—"}</td>)}
+                    {r.cells.map((fact, j) => {
+                      const entityId = fact?.canonical_fact_id ?? fact?.provenance.source_document_id ?? null;
+                      const value = fact?.value;
+                      return (
+                        <td key={annualRows.years[j] ?? j}>
+                          {value != null && entityId ? (
+                            <button
+                              type="button"
+                              className="statement-source"
+                              data-testid="annual-statement-source"
+                              aria-label={`查看 ${r.label} FY${annualRows.years[j]} 来源：$${(value / 1e9).toFixed(1)}B`}
+                              onClick={() => onOpenSource(entityId)}
+                            >
+                              ${(value / 1e9).toFixed(1)}B
+                            </button>
+                          ) : "—"}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

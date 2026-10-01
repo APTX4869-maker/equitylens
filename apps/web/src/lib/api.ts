@@ -10,6 +10,7 @@ import type {
   OnboardingTask,
   ProfileCandidate,
   ReviewPackage,
+  ResearchIdentity,
 } from "./types";
 
 export type ApiErrorDetail = {
@@ -58,7 +59,7 @@ function longRunningApiPath(path: string): string {
   return path;
 }
 
-function identityQuery(identity?: { security_id?: string; publication_id?: string | null }) {
+function identityQuery(identity?: ResearchIdentity) {
   const params = new URLSearchParams();
   if (identity?.security_id) params.set("security_id", identity.security_id);
   if (identity?.publication_id) params.set("publication_id", identity.publication_id);
@@ -98,23 +99,23 @@ export const api = {
     getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   reviseOnboarding: (id: string, action: "retry" | "cancel", revision: number) =>
     getJson<OnboardingTask>(`/api/v1/company-onboardings/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) }),
-  company: (ticker: string, identity?: { security_id?: string; publication_id?: string | null }, signal?: AbortSignal) =>
+  company: (ticker: string, identity?: ResearchIdentity, signal?: AbortSignal) =>
     getJson<CompanyInfo>(`/api/v1/companies/${ticker}${identityQuery(identity)}`, { signal }),
-  facts: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number) =>
+  facts: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number, identity?: ResearchIdentity) =>
     getJson<FactsResponse>(
       `/api/v1/companies/${ticker}/facts?metrics=${encodeURIComponent(
         metrics.join(",")
-      )}&frequency=${frequency}${limit ? `&limit=${limit}` : ""}`
+      )}&frequency=${frequency}${limit ? `&limit=${limit}` : ""}${identityQuery(identity).replace("?", "&")}`
     ),
-  metrics: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number) =>
+  metrics: (ticker: string, metrics: string[], frequency = "quarterly", limit?: number, identity?: ResearchIdentity) =>
     getJson<MetricsResponse>(
       `/api/v1/companies/${ticker}/metrics?metrics=${encodeURIComponent(
         metrics.join(",")
-      )}&frequency=${frequency}${limit ? `&limit=${limit}` : ""}`
+      )}&frequency=${frequency}${limit ? `&limit=${limit}` : ""}${identityQuery(identity).replace("?", "&")}`
     ),
-  overview: (ticker: string, identity?: { security_id?: string; publication_id?: string | null }, signal?: AbortSignal) =>
+  overview: (ticker: string, identity?: ResearchIdentity, signal?: AbortSignal) =>
     getJson<OverviewResponse>(`/api/v1/companies/${ticker}/overview${identityQuery(identity)}`, { signal }),
-  marketQuote: (ticker: string, identity?: { security_id?: string; publication_id?: string | null }, signal?: AbortSignal) =>
+  marketQuote: (ticker: string, identity?: ResearchIdentity, signal?: AbortSignal) =>
     getJson<MarketQuote>(`/api/v1/companies/${ticker}/market/quote${identityQuery(identity)}`, { signal }),
   provenance: (entityId: string, publicationId?: string | null) =>
     getJson<{ entity_id: string; kind: string; tree: ProvenanceNode }>(

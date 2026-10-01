@@ -168,9 +168,18 @@ def _facts_endpoint(store, company_id: str, metrics: list[str], frequency: str,
                     "provenance": _provenance_ref_for_fact(store, f),
                     "input_fact_ids": json.loads(f["source_raw_fact_ids"] or "[]"),
                 })
-    if limit:
-        out = out[-limit:]
-    return out
+    return _limit_fact_series(out, metrics, limit)
+
+
+def _limit_fact_series(rows: list[dict], metrics: list[str], limit: int | None) -> list[dict]:
+    """Apply a row limit independently to each requested fact series."""
+    if limit is None:
+        return rows
+    return [
+        item
+        for metric in metrics
+        for item in [row for row in rows if row.get("metric") == metric][-limit:]
+    ]
 
 
 def _published_entity(
@@ -378,8 +387,7 @@ def facts(
             item["input_fact_ids"] = item.get("source_raw_fact_ids", [])
             data.append(item)
         data.sort(key=lambda item: (item.get("fiscal_year") or 0, item.get("fiscal_quarter") or 0))
-        if limit:
-            data = data[-limit:]
+        data = _limit_fact_series(data, metric_list, limit)
     else:
         # Legacy test/dev databases can add facts after their migration snapshot.
         # Only those explicitly legacy-unreviewed publications use this compatibility path.

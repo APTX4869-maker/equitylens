@@ -323,6 +323,32 @@ def test_metrics_have_formula_and_inputs(client):
     assert all(m["value"] is not None for m in metrics)
 
 
+def test_annual_statement_limit_applies_per_metric(client):
+    requested = [
+        "REVENUE",
+        "GROSS_PROFIT",
+        "OPERATING_INCOME",
+        "NET_INCOME",
+        "OPERATING_CASH_FLOW",
+        "CAPITAL_EXPENDITURES",
+    ]
+
+    response = client.get(
+        "/api/v1/companies/AAPL/facts",
+        params={"metrics": ",".join(requested), "frequency": "annual", "limit": 4},
+    )
+
+    assert response.status_code == 200
+    facts = response.json()["facts"]
+    counts = {
+        metric: sum(item["metric"] == metric for item in facts)
+        for metric in requested
+    }
+    assert all(1 <= count <= 4 for count in counts.values())
+    assert len(facts) == sum(counts.values())
+    assert len(facts) > 4
+
+
 def test_overview_kpis_and_trends(client):
     r = client.get("/api/v1/companies/AAPL/overview")
     assert r.status_code == 200

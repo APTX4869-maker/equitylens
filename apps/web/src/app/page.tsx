@@ -466,7 +466,17 @@ export default function Home() {
           ) : null}
           {tab === "financials" ? (
             <section className="section active" id="section-financials">
-              <FinancialsSection key={`${company}:${reloadKey}`} ticker={company} market={market[company] ?? null} onOpenMetric={openMetric} />
+              <FinancialsSection
+                key={`${company}:${reloadKey}`}
+                ticker={company}
+                identity={{
+                  security_id: companies.find((item) => item.ticker === company)?.security_id,
+                  publication_id: companies.find((item) => item.ticker === company)?.publication_id,
+                }}
+                market={market[company] ?? null}
+                onOpenMetric={openMetric}
+                onOpenSource={openSource}
+              />
             </section>
           ) : null}
           {tab === "moat" ? (

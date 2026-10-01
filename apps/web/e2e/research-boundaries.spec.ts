@@ -99,3 +99,60 @@ test("research claims open resolvable evidence and unsupported questions stay in
   await expect(page.getByText(/超出当前规则检索能力/)).toBeVisible();
   await expect(page.locator(".answer-point")).toHaveCount(0);
 });
+
+test("annual statement cells open provenance for the selected publication", async ({ page }) => {
+  await stubShell(page);
+  let factsUsedSelectedPublication = false;
+  let provenanceUsedSelectedPublication = false;
+  const statementMetrics = [
+    ["REVENUE", "营业收入"],
+    ["GROSS_PROFIT", "毛利润"],
+    ["OPERATING_INCOME", "营业利润"],
+    ["NET_INCOME", "净利润"],
+    ["OPERATING_CASH_FLOW", "经营现金流"],
+    ["CAPITAL_EXPENDITURES", "资本开支"],
+  ] as const;
+
+  await page.route("**/api/v1/companies/AAPL/metrics?**", (route) => route.fulfill({ json: {
+    ticker: "AAPL", company_id: "0000320193", security_id: "sec-aapl",
+    publication_id: "pub-aapl", frequency: "annual", metrics: [],
+  }}));
+  await page.route("**/api/v1/companies/AAPL/facts?**", (route) => {
+    const url = new URL(route.request().url());
+    factsUsedSelectedPublication = url.searchParams.get("publication_id") === "pub-aapl";
+    const facts = statementMetrics.flatMap(([metric], metricIndex) =>
+      [2023, 2024, 2025].map((year) => ({
+        metric, period: `FY${year}`, period_type: "FY", fiscal_year: year,
+        fiscal_quarter: null, period_start: `${year}-01-01`, period_end: `${year}-12-31`,
+        instant_date: null, value: (metricIndex + 1) * 100_000_000_000 + (year - 2023),
+        unit: "USD", status: "REPORTED", canonical_fact_id: `fact-${metric}-${year}`,
+        provenance: { source_document_id: `source-${year}` }, input_fact_ids: [],
+      }))
+    );
+    return route.fulfill({ json: {
+      ticker: "AAPL", company_id: "0000320193", security_id: "sec-aapl",
+      publication_id: "pub-aapl", frequency: "annual", view: "latest_restated", facts,
+    } });
+  });
+  await page.route("**/api/v1/provenance/fact-REVENUE-2023?**", (route) => {
+    const url = new URL(route.request().url());
+    provenanceUsedSelectedPublication = url.searchParams.get("publication_id") === "pub-aapl";
+    return route.fulfill({ json: {
+      entity_id: "fact-REVENUE-2023", kind: "canonical_fact", tree: {
+        entity_id: "fact-REVENUE-2023", kind: "canonical_fact", label: "REVENUE",
+        fields: { metric: "REVENUE", fiscal_year: 2023, value: 100_000_000_000, unit: "USD", status: "REPORTED" },
+        parents: [],
+      },
+    } });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "⌁ 财务分析", exact: true }).click();
+
+  const sourceButtons = page.locator('[data-testid="annual-statement-source"]');
+  await expect(sourceButtons).toHaveCount(18);
+  await page.getByRole("button", { name: /查看 营业收入 FY2023 来源/ }).click();
+  await expect(page.getByRole("dialog")).toContainText("REVENUE");
+  expect(factsUsedSelectedPublication).toBe(true);
+  expect(provenanceUsedSelectedPublication).toBe(true);
+});
