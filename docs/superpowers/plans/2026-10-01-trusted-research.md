@@ -140,23 +140,23 @@ Commit message: `fix: complete annual statements and provenance`
 - Test: `tests/integration/test_api.py`
 - Test: `apps/web/e2e/refresh-state.spec.ts`
 
-- [ ] **Step 1: Write failing period/freshness tests**
+- [x] **Step 1: Write failing period/freshness tests**
 
 Use staggered facts so revenue, margin and FCF have different latest periods. Assert each KPI reports its own period and the UI warns instead of presenting a shared snapshot. Assert a stale quote says “行情已过期” with observation and fetch times, never “未同步”. Cover negative-base growth as non-comparable.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/unit/test_metrics.py tests/integration/test_api.py -k 'period_alignment or stale_quote or negative_base' -q`
 
-- [ ] **Step 3: Add period metadata and stale-state contract**
+- [x] **Step 3: Add period metadata and stale-state contract**
 
 Return per-card periods, an alignment summary and explicit mismatch reasons. Keep `observed_at` separate from `fetched_at`; represent quote state as `ok|stale|missing` end-to-end.
 
-- [ ] **Step 4: Verify browser labels**
+- [x] **Step 4: Verify browser labels**
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec playwright test e2e/refresh-state.spec.ts --reporter=line`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit message: `fix: expose research periods and quote age`
 
