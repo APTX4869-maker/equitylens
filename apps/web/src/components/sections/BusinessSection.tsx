@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { fmtMoney, signedPct } from "@/lib/format";
 import { Card, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
+import type { ResearchIdentity } from "@/lib/types";
 import * as echarts from "echarts";
 
 export type SegmentPoint = {
@@ -35,6 +36,9 @@ export type SegmentInfo = {
 
 export type SegmentsResponse = {
   ticker: string;
+  company_id: string;
+  security_id: string;
+  publication_id: string;
   frequency: string;
   kind: string;
   profit_disclosed: boolean;
@@ -86,7 +90,13 @@ function ProfitBadge({ info }: { info: SegmentInfo }) {
   );
 }
 
-export function BusinessSection({ ticker }: { ticker: string }) {
+export function BusinessSection({ ticker, identity, onOpenSource }: {
+  ticker: string;
+  identity: ResearchIdentity;
+  onOpenSource: (id: string) => void;
+}) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [kind, setKind] = useState<"segment" | "product">("segment");
   const [annual, setAnnual] = useState<SegmentsResponse | null>(null);
   const [quarterly, setQuarterly] = useState<SegmentsResponse | null>(null);
@@ -99,12 +109,8 @@ export function BusinessSection({ ticker }: { ticker: string }) {
     (async () => {
       try {
         const [a, q] = await Promise.all([
-          api.fetchJson<SegmentsResponse>(
-            `/api/v1/companies/${ticker}/segments?kind=${kind}&frequency=annual`
-          ),
-          api.fetchJson<SegmentsResponse>(
-            `/api/v1/companies/${ticker}/segments?kind=${kind}&frequency=quarterly`
-          ),
+          api.segments<SegmentsResponse>(ticker, kind, "annual", { security_id: securityId, publication_id: publicationId }),
+          api.segments<SegmentsResponse>(ticker, kind, "quarterly", { security_id: securityId, publication_id: publicationId }),
         ]);
         if (cancelled) return;
         setAnnual(a);
@@ -118,7 +124,7 @@ export function BusinessSection({ ticker }: { ticker: string }) {
     return () => {
       cancelled = true;
     };
-  }, [ticker, kind, reloadKey]);
+  }, [ticker, securityId, publicationId, kind, reloadKey]);
 
   const seg = useMemo(
     () => annual?.segments.find((s) => s.name === selected) ?? annual?.segments[0] ?? null,
@@ -265,9 +271,14 @@ export function BusinessSection({ ticker }: { ticker: string }) {
               ) : null}
               <div className="source-row" style={{ marginTop: 12 }}>
                 {seg.sources.map((src) => (
-                  <span className="source-chip-sm" key={src.source_document_id}>
-                    ↗ {src.form_type ?? "filing"} · {src.filed_at ?? ""}
-                  </span>
+                  <button
+                    className="source-chip-sm"
+                    key={src.source_document_id}
+                    onClick={() => onOpenSource(src.source_document_id)}
+                    aria-label={`查看 ${src.form_type ?? "filing"} ${src.filed_at ?? "日期未知"} 官方来源`}
+                  >
+                    ↗ {src.form_type ?? "filing"} · {src.filed_at ?? "日期未知"}
+                  </button>
                 ))}
                 <span className="source-chip-sm">来源：SEC EDGAR 官方文件</span>
               </div>

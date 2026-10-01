@@ -376,6 +376,14 @@ def test_provenance_recursive_lineage(client):
         for g in p.get("parents", []):
             kinds.add(g["kind"])
     assert kinds == {"canonical_fact", "raw_fact", "source_document"}
+    source_nodes = [
+        child
+        for parent in tree["parents"]
+        for child in parent.get("parents", [])
+        if child["kind"] == "source_document"
+    ]
+    assert source_nodes
+    assert all(node["fields"]["source_url"].startswith("https://") for node in source_nodes)
 
 
 def test_sources_endpoint(client):
@@ -404,6 +412,15 @@ def test_segments_annual_aapl(client):
     assert am["share"] == pytest.approx(178_353 / 416_161, rel=1e-6)
     assert am["profitability"]["status"] == "NOT_DISCLOSED"
     assert am["sources"], "segment must carry source documents"
+    assert d["security_id"]
+    assert d["publication_id"]
+    source_id = am["sources"][0]["source_document_id"]
+    source = client.get(
+        f"/api/v1/provenance/{source_id}",
+        params={"publication_id": d["publication_id"]},
+    )
+    assert source.status_code == 200
+    assert source.json()["tree"]["fields"]["source_url"].startswith("https://")
 
 
 def test_segments_quarterly_msft_with_profit(client):

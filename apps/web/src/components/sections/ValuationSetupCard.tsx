@@ -10,6 +10,7 @@ import {
   type DraftEdit,
 } from "@/lib/valuationDraft";
 import { Card, Pill, Spinner } from "@/components/ui";
+import type { ResearchIdentity } from "@/lib/types";
 
 type AssumptionMeta = {
   reason?: string;
@@ -45,6 +46,7 @@ type ValuationDraft = {
 
 export type ValuationSetupCardProps = {
   ticker: string;
+  identity: ResearchIdentity;
   gate: { status: string; reason: string | null };
   onConfirmed: () => Promise<void> | void;
 };
@@ -72,11 +74,13 @@ function percent(inputs: DcfInputs, field: DraftEdit["field"]): number {
   return inputs.terminal_roic * 100;
 }
 
-function draftUrl(ticker: string) {
-  return `/api/v1/companies/${encodeURIComponent(ticker)}/valuation-profile/draft`;
+function draftUrl(ticker: string, identity: ResearchIdentity) {
+  return `/api/v1/companies/${encodeURIComponent(ticker)}/valuation-profile/draft?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
 }
 
-export function ValuationSetupCard({ ticker, gate, onConfirmed }: ValuationSetupCardProps) {
+export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: ValuationSetupCardProps) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [source, setSource] = useState<ValuationDraft | null>(null);
   const [draft, setDraft] = useState<DcfInputs | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -95,7 +99,10 @@ export function ValuationSetupCard({ ticker, gate, onConfirmed }: ValuationSetup
     setAcknowledged(false);
     setConfirmed(false);
     try {
-      const response = await api.fetchJson<ValuationDraft>(draftUrl(ticker));
+      const response = await api.fetchJson<ValuationDraft>(draftUrl(ticker, {
+        security_id: securityId,
+        publication_id: publicationId,
+      }));
       if (sequence !== requestSequence.current) return;
       setSource(response);
       setDraft(draftFromInputs(response.assumptions.inputs));
@@ -105,7 +112,7 @@ export function ValuationSetupCard({ ticker, gate, onConfirmed }: ValuationSetup
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }, [ticker]);
+  }, [ticker, securityId, publicationId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadDraft(), 0);

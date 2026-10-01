@@ -6,6 +6,7 @@ import { fmtMoney } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
 import { PromiseTracker } from "@/components/sections/PromiseTracker";
+import type { ResearchIdentity } from "@/lib/types";
 
 type Leader = { name: string; title: string | null; latest_fy: number | null; total_compensation: number | null; source?: string };
 type CompRow = { name: string; fiscal_year: number; salary: number | null; stock_awards: number | null; non_equity_incentive: number | null; all_other: number | null; total_compensation: number | null };
@@ -46,7 +47,9 @@ const TX_CODE: Record<string, string> = {
   S: "卖出", P: "买入", A: "授予", M: "行权", F: "代扣税", G: "赠与", D: "出售至发行人", X: "行权/出售",
 };
 
-export function ManagementSection({ ticker }: { ticker: string }) {
+export function ManagementSection({ ticker, identity }: { ticker: string; identity: ResearchIdentity }) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [data, setData] = useState<ManagementResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openDim, setOpenDim] = useState<string | null>(null);
@@ -56,7 +59,10 @@ export function ManagementSection({ ticker }: { ticker: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.fetchJson<ManagementResponse>(`/api/v1/companies/${ticker}/management`);
+        const d = await api.management<ManagementResponse>(ticker, {
+          security_id: securityId,
+          publication_id: publicationId,
+        });
         if (!cancelled) {
           setData(d);
           setError(null);
@@ -68,7 +74,7 @@ export function ManagementSection({ ticker }: { ticker: string }) {
     return () => {
       cancelled = true;
     };
-  }, [ticker, reloadKey]);
+  }, [ticker, securityId, publicationId, reloadKey]);
 
   if (error) return <Card><ErrorBox message={error} onRetry={() => setReloadKey((k) => k + 1)} /></Card>;
   if (!data) return <Spinner label="正在加载管理层数据…" />;
@@ -270,7 +276,7 @@ export function ManagementSection({ ticker }: { ticker: string }) {
       </Card>
 
       {/* Promise tracker: live evidence-card verification (M8.6) */}
-      <PromiseTracker ticker={ticker} />
+      <PromiseTracker ticker={ticker} identity={identity} />
 
       {/* Watch items */}
       <Card className="card-pad" style={{ marginTop: 16 }}>

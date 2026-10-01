@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
+import type { ResearchIdentity } from "@/lib/types";
 
 type Claim = { claim: string; confidence: string; evidence_ids: string[] };
 type AskResponse = {
@@ -12,6 +13,8 @@ type AskResponse = {
   claims: Claim[];
   metric_ids: string[];
   limitations: string[];
+  status?: "ready" | "needs_review";
+  action?: { type: "open_valuation"; label: string; tab: "valuation" } | null;
 };
 
 const SUGGESTIONS = [
@@ -23,7 +26,14 @@ const SUGGESTIONS = [
   "估值怎么看？",
 ];
 
-export function AiSection({ ticker, onOpenSource }: { ticker: string; onOpenSource: (id: string) => void }) {
+export function AiSection({ ticker, identity, onOpenSource, onOpenValuation }: {
+  ticker: string;
+  identity: ResearchIdentity;
+  onOpenSource: (id: string) => void;
+  onOpenValuation: () => void;
+}) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<(AskResponse & { _t: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +45,7 @@ export function AiSection({ ticker, onOpenSource }: { ticker: string; onOpenSour
       setLoading(true);
       setError(null);
       try {
-        const d = await api.fetchJson<AskResponse>(`/api/v1/research/ask`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticker, question: q }),
-        });
+        const d = await api.askResearch<AskResponse>(ticker, q, { security_id: securityId, publication_id: publicationId });
         setAnswer({ ...d, _t: ticker });
       } catch (e) {
         setError(String(e));
@@ -47,7 +53,7 @@ export function AiSection({ ticker, onOpenSource }: { ticker: string; onOpenSour
         setLoading(false);
       }
     },
-    [ticker]
+    [ticker, securityId, publicationId]
   );
 
   return (
@@ -126,6 +132,11 @@ export function AiSection({ ticker, onOpenSource }: { ticker: string; onOpenSour
                     {answer.limitations.map((l, i) => <li key={i}>{l}</li>)}
                   </ul>
                 </div>
+              ) : null}
+              {answer.action?.type === "open_valuation" ? (
+                <button className="tab-btn" style={{ marginTop: 12 }} onClick={onOpenValuation}>
+                  {answer.action.label}
+                </button>
               ) : null}
               <div className="ai-disclaimer">
                 本助手当前使用确定性规则检索。规则固定只表示同输入可复现，不保证解释或投资结论正确；数值证据可点击溯源。

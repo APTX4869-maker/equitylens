@@ -24,6 +24,8 @@ function NodeRow({ node, depth }: { node: ProvenanceNode; depth: number }) {
         ? "原始事实"
         : node.kind === "market_observation"
           ? "行情观察"
+          : node.kind === "valuation_confirmation"
+            ? "估值确认"
           : "来源文档";
   return (
     <div className="prov-node" style={{ marginLeft: depth * 18 }}>
@@ -65,6 +67,10 @@ function NodeRow({ node, depth }: { node: ProvenanceNode; depth: number }) {
               <a href={String(f.source_url)} target="_blank" rel="noreferrer" className="prov-link">
                 ↗ 打开官方来源
               </a>
+            ) : node.kind === "source_document" ? (
+              <span className="provenance na" data-testid="official-source-gap">
+                官方链接不可用 · 当前仅保留文档身份与校验信息
+              </span>
             ) : null}
           </>
         )}

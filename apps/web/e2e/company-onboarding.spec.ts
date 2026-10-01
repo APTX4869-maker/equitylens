@@ -551,7 +551,7 @@ test("mobile overview does not overflow the viewport", async ({ page }) => {
 test("valuation turns a company configuration gate into an assumption review", async ({ page }) => {
   await installOnboardingApiFixture(page);
   await page.route("**/api/v1/companies?**", (route) => route.fulfill({ json: { items: [{ ...apple, capabilities: [{ module: "valuation", status: "NEEDS_CONFIGURATION", reason: "需要确认 USD 与稀释股本口径" }] }], next_cursor: null } }));
-  await page.route("**/api/v1/companies/AAPL/valuation-profile/draft", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/AAPL/valuation-profile/draft?**", (route) => route.fulfill({ json: {
     security_id: apple.security_id,
     publication_id: apple.publication_id,
     model_version: "fcff_dcf.v2",

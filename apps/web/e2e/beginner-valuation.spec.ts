@@ -57,9 +57,9 @@ async function stub(page: Page) {
   await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: { ticker: "AAPL", latest_period: { fiscal_year: 2025, fiscal_quarter: 4 }, kpis: {}, trend: {}, provenance_available: true } }));
   await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
-  await page.route("**/api/v1/companies/AAPL/valuation/default", (route) => route.fulfill({ json: response() }));
+  await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) => route.fulfill({ json: response() }));
   await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) => route.fulfill({ json: { plans: [] } }));
-  await page.route("**/api/v1/companies/AAPL/valuation/run", (route) => {
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
     return route.fulfill({ json: response(body.assumptions) });
   });

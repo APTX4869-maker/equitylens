@@ -119,7 +119,7 @@ async function stubPage(page: Page) {
   await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } })
   );
-  await page.route("**/api/v1/companies/AAPL/valuation/default", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) =>
     route.fulfill({ json: runResponse(300, defaults()) })
   );
 }
@@ -129,7 +129,7 @@ test("keeps the newest complete draft when previews return out of order", async 
   let runCount = 0;
 
   await stubPage(page);
-  await page.route("**/api/v1/companies/AAPL/valuation/run", async (route) => {
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", async (route) => {
     const body = route.request().postDataJSON() as { persist: boolean; assumptions: Assumptions };
     runBodies.push(body);
     runCount += 1;
@@ -166,7 +166,7 @@ test("a failed newest request marks the result stale and disables save", async (
   let failNext = false;
 
   await stubPage(page);
-  await page.route("**/api/v1/companies/AAPL/valuation/run", async (route) => {
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", async (route) => {
     if (failNext) return route.abort();
     const body = route.request().postDataJSON() as { persist: boolean; assumptions: Assumptions };
     await route.fulfill({ json: runResponse(250, body.assumptions) });
@@ -186,7 +186,7 @@ test("a failed newest request marks the result stale and disables save", async (
 
 test("ignores reverse DCF response after target price changes", async ({ page }) => {
   await stubPage(page);
-  await page.route("**/api/v1/companies/AAPL/valuation/reverse-dcf", async (route) => {
+  await page.route("**/api/v1/companies/AAPL/valuation/reverse-dcf?**", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await route.fulfill({ json: {
       implied_revenue_cagr: 0.31,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, userErrorMessage } from "@/lib/api";
-import type { CompanyInfo, CompanyListItem, Fact, MarketQuote, OnboardingTask, OverviewResponse } from "@/lib/types";
+import type { CompanyInfo, CompanyListItem, Fact, MarketQuote, OnboardingTask, OverviewResponse, ResearchIdentity } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
@@ -159,7 +159,7 @@ export default function Home() {
     const controller = new AbortController();
     const requestSeq = ++dataRequestSeq.current;
     const selected = companies.find((item) => item.ticker === company);
-    if (!selected) return () => controller.abort();
+    if (!selected?.publication_id) return () => controller.abort();
     const identity = { security_id: selected.security_id, publication_id: selected.publication_id };
     (async () => {
       const [infoR, overviewR, mqR, freshR] = await Promise.allSettled([
@@ -371,6 +371,13 @@ export default function Home() {
   }, [company]);
 
   const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai", "moat"];
+  const selectedCompany = companies.find((item) => item.ticker === company);
+  const researchIdentity: ResearchIdentity | null = selectedCompany?.publication_id
+    ? {
+        security_id: selectedCompany.security_id,
+        publication_id: selectedCompany.publication_id,
+      }
+    : null;
 
   return (
     <div className="app">
@@ -380,7 +387,7 @@ export default function Home() {
         <div className="content">
           {companyListError ? <div className="action-error company-list-error" role="alert">{companyListError} <button onClick={() => void loadCompanies()}>重试</button></div> : null}
           {!company && !companyListError ? <div className="onboarding-empty">正在读取已发布公司…</div> : null}
-          {company ? <>
+          {company && researchIdentity ? <>
           <Hero company={entry?.info ?? null} market={market[company] ?? null} />
           <div className="research-toolbar">
             <div className="tool-left">
@@ -465,7 +472,12 @@ export default function Home() {
           ) : null}
           {tab === "business" ? (
             <section className="section active" id="section-business">
-              <BusinessSection key={`${company}:${reloadKey}`} ticker={company} />
+              <BusinessSection
+                key={`${company}:${researchIdentity.publication_id}:${reloadKey}`}
+                ticker={company}
+                identity={researchIdentity}
+                onOpenSource={openSource}
+              />
             </section>
           ) : null}
           {tab === "financials" ? (
@@ -473,10 +485,7 @@ export default function Home() {
               <FinancialsSection
                 key={`${company}:${reloadKey}`}
                 ticker={company}
-                identity={{
-                  security_id: companies.find((item) => item.ticker === company)?.security_id,
-                  publication_id: companies.find((item) => item.ticker === company)?.publication_id,
-                }}
+                identity={researchIdentity}
                 market={market[company] ?? null}
                 onOpenMetric={openMetric}
                 onOpenSource={openSource}
@@ -485,12 +494,12 @@ export default function Home() {
           ) : null}
           {tab === "moat" ? (
             <section className="section active" id="section-moat">
-              <MoatSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
+              <MoatSection key={`${company}:${researchIdentity.publication_id}:${reloadKey}`} ticker={company} identity={researchIdentity} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "management" ? (
             <section className="section active" id="section-management">
-              <ManagementSection key={`${company}:${reloadKey}`} ticker={company} />
+              <ManagementSection key={`${company}:${researchIdentity.publication_id}:${reloadKey}`} ticker={company} identity={researchIdentity} />
             </section>
           ) : null}
           {tab === "valuation" ? (
@@ -498,7 +507,8 @@ export default function Home() {
               <ValuationSection
                 key={`${company}:${companies.find((item) => item.ticker === company)?.publication_id ?? "none"}`}
                 ticker={company}
-                gate={companies.find((item) => item.ticker === company)?.capabilities.find((capability) => capability.module === "valuation") ?? null}
+                identity={researchIdentity}
+                gate={selectedCompany?.capabilities.find((capability) => capability.module === "valuation") ?? null}
                 refreshGeneration={valuationReviewGeneration[company] ?? 0}
                 refreshReviewRequired={(valuationReviewGeneration[company] ?? 0) > 0}
                 onConfirmed={handleValuationConfirmed}
@@ -507,12 +517,18 @@ export default function Home() {
           ) : null}
           {tab === "risks" ? (
             <section className="section active" id="section-risks">
-              <RisksSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
+              <RisksSection key={`${company}:${researchIdentity.publication_id}:${reloadKey}`} ticker={company} identity={researchIdentity} onOpenSource={openSource} />
             </section>
           ) : null}
           {tab === "ai" ? (
             <section className="section active" id="section-ai">
-              <AiSection key={`${company}:${reloadKey}`} ticker={company} onOpenSource={openSource} />
+              <AiSection
+                key={`${company}:${researchIdentity.publication_id}:${reloadKey}`}
+                ticker={company}
+                identity={researchIdentity}
+                onOpenSource={openSource}
+                onOpenValuation={() => setTab("valuation")}
+              />
             </section>
           ) : null}
           </> : null}
@@ -530,7 +546,7 @@ export default function Home() {
       />
       <SourceDrawer
         entityId={sourceEntity}
-        publicationId={companies.find((item) => item.ticker === company)?.publication_id}
+        publicationId={researchIdentity?.publication_id}
         onClose={() => setSourceEntity(null)}
       />
       <AddCompanyDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(task, ticker) => { setCreatedTask({ ...task, ticker }); setAttentionRefresh((value) => value + 1); setCenterOpen(true); }} />

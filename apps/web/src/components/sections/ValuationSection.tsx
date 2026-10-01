@@ -6,6 +6,7 @@ import { fmtMoney } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
 import { ValuationSetupCard } from "@/components/sections/ValuationSetupCard";
+import type { ResearchIdentity } from "@/lib/types";
 import {
   buildPreviewRequest,
   draftFingerprint,
@@ -131,17 +132,20 @@ const RNG = {
 
 export function ValuationSection({
   ticker,
+  identity,
   gate = null,
   refreshGeneration = 0,
   refreshReviewRequired = false,
   onConfirmed = () => {},
 }: {
   ticker: string;
+  identity: ResearchIdentity;
   gate?: { status: string; reason: string | null } | null;
   refreshGeneration?: number;
   refreshReviewRequired?: boolean;
   onConfirmed?: () => Promise<void> | void;
 }) {
+  const identitySuffix = `?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
   const [base, setBase] = useState<RunResponse | null>(null);
   const [draft, setDraft] = useState<DcfInputs | null>(null);
   const [appliedInputs, setAppliedInputs] = useState<DcfInputs | null>(null);
@@ -230,7 +234,7 @@ export function ValuationSection({
       setLoading(true);
       setError(null);
       try {
-        const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/run`, {
+        const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/run${identitySuffix}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(buildPreviewRequest(next, persist)),
@@ -245,7 +249,7 @@ export function ValuationSection({
         if (seq === reqSeq.current) setLoading(false);
       }
     },
-    [ticker, applyResponse]
+    [ticker, identitySuffix, applyResponse]
   );
 
   // Editing a field updates the COMPLETE draft synchronously before any fetch,
@@ -269,7 +273,7 @@ export function ValuationSection({
     const calculatedRefresh = refreshGenerationRef.current;
     setLoading(true);
     try {
-      const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default`);
+      const d = await api.fetchJson<RunResponse>(`/api/v1/companies/${ticker}/valuation/default${identitySuffix}`);
       if (
         requestSeq !== defaultReqSeq.current
         || calculatedRefresh !== refreshGenerationRef.current
@@ -282,7 +286,7 @@ export function ValuationSection({
     } finally {
       if (requestSeq === defaultReqSeq.current) setLoading(false);
     }
-  }, [ticker, applyResponse, prefillReverseTarget]);
+  }, [ticker, identitySuffix, applyResponse, prefillReverseTarget]);
 
   const rebaseOnLatestDefault = useCallback(async (
     targetRefresh = refreshGenerationRef.current,
@@ -298,7 +302,7 @@ export function ValuationSection({
     setError(null);
     try {
       const latest = await api.fetchJson<RunResponse>(
-        `/api/v1/companies/${ticker}/valuation/default`
+        `/api/v1/companies/${ticker}/valuation/default${identitySuffix}`
       );
       if (
         requestSeq !== defaultReqSeq.current
@@ -322,7 +326,7 @@ export function ValuationSection({
     } finally {
       if (!previewStarted && requestSeq === defaultReqSeq.current) setLoading(false);
     }
-  }, [ticker, preview]);
+  }, [ticker, identitySuffix, preview]);
 
   useEffect(() => {
     if (gate && gate.status !== "READY") return;
@@ -461,7 +465,7 @@ export function ValuationSection({
     setReverseLoading(true);
     try {
       const d = await api.fetchJson<{ implied_revenue_cagr: number | null; historical_revenue_cagr: number | null; no_root_reason?: string | null }>(
-        `/api/v1/companies/${ticker}/valuation/reverse-dcf`,
+        `/api/v1/companies/${ticker}/valuation/reverse-dcf${identitySuffix}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -490,7 +494,7 @@ export function ValuationSection({
     } finally {
       if (seq === reverseReqSeq.current) setReverseLoading(false);
     }
-  }, [ticker]);
+  }, [ticker, identitySuffix]);
 
   const fair = base?.result.fair_value_per_share;
   const bear = base?.scenarios.bear.result?.fair_value_per_share;
@@ -533,7 +537,7 @@ export function ValuationSection({
   }, [base]);
 
   if (gate?.status === "BLOCKED") return <Card className="card-pad" data-testid="valuation-gate"><div className="section-head"><div><span className="eyebrow">Valuation readiness</span><h2 style={{ margin: "4px 0" }}>估值尚未开放</h2></div><Pill tone="bad">数据阻断</Pill></div><div className="next-step">{gate.reason ?? "关键财务事实、币种或每股口径尚未通过质量门禁。"}<br />修复数据阻断后，系统才会生成可审核的估值方案。</div></Card>;
-  if (gate?.status === "NEEDS_CONFIGURATION") return <ValuationSetupCard ticker={ticker} gate={gate} onConfirmed={onConfirmed} />;
+  if (gate?.status === "NEEDS_CONFIGURATION") return <ValuationSetupCard ticker={ticker} identity={identity} gate={gate} onConfirmed={onConfirmed} />;
   if (gate && gate.status !== "READY") return <Card className="card-pad" data-testid="valuation-gate"><div className="section-head"><div><span className="eyebrow">Valuation readiness</span><h2 style={{ margin: "4px 0" }}>估值尚未开放</h2></div><Pill tone="warn">状态待处理</Pill></div><div className="next-step">{gate.reason ?? "当前估值能力状态不支持直接配置。"}</div></Card>;
   if (error && !base) return <Card><ErrorBox message={error} onRetry={loadDefault} /></Card>;
   if (!base) return <Spinner label="正在加载估值引擎…" />;

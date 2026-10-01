@@ -54,7 +54,7 @@ async function stubShell(page: Page) {
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: {
     modules: [], stale_modules: [], hint: null,
   }}));
-  await page.route("**/api/v1/companies/AAPL/valuation/default", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) =>
     route.fulfill({ json: runResponse(false) }));
 }
 
@@ -63,7 +63,7 @@ test("save, open, copy and compare traceable valuation plans", async ({ page }) 
   const plans: Record<string, unknown>[] = [];
   let planRequest: Record<string, unknown> | null = null;
 
-  await page.route("**/api/v1/companies/AAPL/valuation/run", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) =>
     route.fulfill({ json: runResponse(true) }));
   await page.route("**/api/v1/companies/AAPL/valuation/plans", async (route) => {
     if (route.request().method() === "GET") return route.fulfill({ json: { plans } });

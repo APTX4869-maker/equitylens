@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
+import type { ResearchIdentity } from "@/lib/types";
 
 type MoatSignal = {
   dimension: string;
@@ -28,7 +29,9 @@ const VERDICT_META: Record<string, { label: string; cls: string }> = {
   concern: { label: "警示", cls: "bad" },
 };
 
-export function MoatSection({ ticker, onOpenSource }: { ticker: string; onOpenSource: (id: string) => void }) {
+export function MoatSection({ ticker, identity, onOpenSource }: { ticker: string; identity: ResearchIdentity; onOpenSource: (id: string) => void }) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [data, setData] = useState<MoatResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -37,14 +40,14 @@ export function MoatSection({ ticker, onOpenSource }: { ticker: string; onOpenSo
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.fetchJson<MoatResponse>(`/api/v1/companies/${ticker}/moat`);
+        const d = await api.moat<MoatResponse>(ticker, { security_id: securityId, publication_id: publicationId });
         if (!cancelled) { setData(d); setError(null); }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
     })();
     return () => { cancelled = true; };
-  }, [ticker, reloadKey]);
+  }, [ticker, securityId, publicationId, reloadKey]);
 
   if (error) return <Card><ErrorBox message={error} onRetry={() => setReloadKey((k) => k + 1)} /></Card>;
   if (!data) return <Spinner label="正在从 SEC 数字证据生成护城河信号…" />;

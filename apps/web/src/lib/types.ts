@@ -210,8 +210,8 @@ export type MetricsResponse = {
 };
 
 export type ResearchIdentity = {
-  security_id?: string;
-  publication_id?: string | null;
+  security_id: string;
+  publication_id: string;
 };
 
 export type ProvenanceNode = {

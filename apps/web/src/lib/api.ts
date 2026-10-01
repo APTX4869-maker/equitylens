@@ -117,6 +117,22 @@ export const api = {
     getJson<OverviewResponse>(`/api/v1/companies/${ticker}/overview${identityQuery(identity)}`, { signal }),
   marketQuote: (ticker: string, identity?: ResearchIdentity, signal?: AbortSignal) =>
     getJson<MarketQuote>(`/api/v1/companies/${ticker}/market/quote${identityQuery(identity)}`, { signal }),
+  segments: <T>(ticker: string, kind: "segment" | "product", frequency: "annual" | "quarterly", identity: ResearchIdentity) =>
+    getJson<T>(`/api/v1/companies/${ticker}/segments?kind=${kind}&frequency=${frequency}${identityQuery(identity).replace("?", "&")}`),
+  moat: <T>(ticker: string, identity: ResearchIdentity) =>
+    getJson<T>(`/api/v1/companies/${ticker}/moat${identityQuery(identity)}`),
+  risks: <T>(ticker: string, identity: ResearchIdentity) =>
+    getJson<T>(`/api/v1/companies/${ticker}/risks${identityQuery(identity)}`),
+  management: <T>(ticker: string, identity: ResearchIdentity) =>
+    getJson<T>(`/api/v1/companies/${ticker}/management${identityQuery(identity)}`),
+  promises: <T>(ticker: string, identity: ResearchIdentity) =>
+    getJson<T>(`/api/v1/companies/${ticker}/promises${identityQuery(identity)}`),
+  askResearch: <T>(ticker: string, question: string, identity: ResearchIdentity) =>
+    getJson<T>("/api/v1/research/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker, question, ...identity }),
+    }),
   provenance: (entityId: string, publicationId?: string | null) =>
     getJson<{ entity_id: string; kind: string; tree: ProvenanceNode }>(
       `/api/v1/provenance/${entityId}${publicationId ? `?publication_id=${encodeURIComponent(publicationId)}` : ""}`

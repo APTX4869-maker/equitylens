@@ -91,7 +91,7 @@ async function stubSetupPage(page: Page, valuationReady: () => boolean) {
   await page.route("**/api/v1/company-onboardings?**", (route) => route.fulfill({ json: {
     items: [], next_cursor: null, attention_count: 0,
   } }));
-  await page.route("**/api/v1/companies/NVDA/valuation-profile/draft", (route) => route.fulfill({ json: {
+  await page.route("**/api/v1/companies/NVDA/valuation-profile/draft?**", (route) => route.fulfill({ json: {
     company_id: "0001045810", ticker: "NVDA", security_id: "sec-nvda",
     publication_id: "pub-nvda", model_version: "fcff_dcf.v2",
     status: "NEEDS_CONFIGURATION", acknowledgement_required: true,
@@ -115,7 +115,7 @@ async function stubSetupPage(page: Page, valuationReady: () => boolean) {
       result: { fair_value_per_share: body.assumptions.wacc === 0.12 ? 180 : 200 },
     } });
   });
-  await page.route("**/api/v1/companies/NVDA/valuation/default", (route) => route.fulfill({ json: readyValuation() }));
+  await page.route("**/api/v1/companies/NVDA/valuation/default?**", (route) => route.fulfill({ json: readyValuation() }));
   await page.route("**/api/v1/companies/NVDA/valuation/plans", (route) => route.fulfill({ json: { ticker: "NVDA", plans: [] } }));
 }
 

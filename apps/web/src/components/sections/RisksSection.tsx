@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
+import type { ResearchIdentity } from "@/lib/types";
 
 type RiskItem = {
   category: string;
@@ -30,7 +31,9 @@ const CATEGORY_LABEL: Record<string, string> = {
   valuation: "估值风险",
 };
 
-export function RisksSection({ ticker, onOpenSource }: { ticker: string; onOpenSource: (id: string) => void }) {
+export function RisksSection({ ticker, identity, onOpenSource }: { ticker: string; identity: ResearchIdentity; onOpenSource: (id: string) => void }) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [data, setData] = useState<RiskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -39,14 +42,14 @@ export function RisksSection({ ticker, onOpenSource }: { ticker: string; onOpenS
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.fetchJson<RiskResponse>(`/api/v1/companies/${ticker}/risks`);
+        const d = await api.risks<RiskResponse>(ticker, { security_id: securityId, publication_id: publicationId });
         if (!cancelled) { setData(d); setError(null); }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
     })();
     return () => { cancelled = true; };
-  }, [ticker, reloadKey]);
+  }, [ticker, securityId, publicationId, reloadKey]);
 
   if (error) return <Card><ErrorBox message={error} onRetry={() => setReloadKey((k) => k + 1)} /></Card>;
   if (!data) return <Spinner label="正在生成风险信号…" />;

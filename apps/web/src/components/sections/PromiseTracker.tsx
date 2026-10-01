@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
+import type { ResearchIdentity } from "@/lib/types";
 
 type PromiseItem = {
   promise_id: string;
@@ -25,7 +26,9 @@ const STATUS_META: Record<string, { label: string; tone: "good" | "bad" | "blue"
   UNVERIFIED: { label: "无法验证", tone: "neutral" },
 };
 
-export function PromiseTracker({ ticker }: { ticker: string }) {
+export function PromiseTracker({ ticker, identity }: { ticker: string; identity: ResearchIdentity }) {
+  const securityId = identity.security_id;
+  const publicationId = identity.publication_id;
   const [data, setData] = useState<{ items: PromiseItem[]; note: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,16 +36,17 @@ export function PromiseTracker({ ticker }: { ticker: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.fetchJson<{ items: PromiseItem[]; note: string }>(
-          `/api/v1/companies/${ticker}/promises`
-        );
+        const d = await api.promises<{ items: PromiseItem[]; note: string }>(ticker, {
+          security_id: securityId,
+          publication_id: publicationId,
+        });
         if (!cancelled) { setData(d); setError(null); }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
     })();
     return () => { cancelled = true; };
-  }, [ticker]);
+  }, [ticker, securityId, publicationId]);
 
   if (error) return <Card style={{ marginTop: 16 }}><ErrorBox message={error} /></Card>;
   if (!data) return <Spinner label="正在加载承诺追踪…" />;
