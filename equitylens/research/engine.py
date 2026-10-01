@@ -17,7 +17,8 @@ import re
 from equitylens.api.segments_service import get_segments
 from equitylens.domain.risks import risk_signals
 from equitylens.metrics.engine import MetricEngine
-from equitylens.valuation.service import default_valuation
+from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+from equitylens.valuation.service import confirmed_valuation, require_valuation_confirmation
 
 EVIDENCE_MISSING = "NO_EVIDENCE_FOR_THIS_CLAIM"
 SUPPORTED_TOPICS = ["增长", "利润率", "现金流", "风险", "估值", "业务构成", "指标解释"]
@@ -47,7 +48,9 @@ def ask(store, company_id: str, ticker: str, question: str, *, context=None) -> 
         "cash": lambda: _answer_cash(store, company_id, ticker, context=context),
         "growth": lambda: _answer_growth(store, company_id, ticker, context=context),
         "business": lambda: _answer_business(store, company_id, ticker, context=context),
-        "valuation": lambda: _answer_valuation(store, company_id, ticker),
+        "valuation": lambda: _answer_valuation(
+            store, company_id, ticker, context=context
+        ),
         "overview": lambda: _answer_overview(store, company_id, ticker, context=context),
         "unsupported": _answer_unsupported,
     }
@@ -277,28 +280,76 @@ def _answer_business(store, company_id: str, ticker: str, *, context=None) -> di
             "limitations": ["分部利润率未披露时系统显示 NOT_DISCLOSED，不估算"]}
 
 
-def _answer_valuation(store, company_id: str, ticker: str) -> dict:
+def _valuation_identity(context, confirmation_id: str | None = None) -> dict:
+    return {
+        "security_id": context.security_id if context is not None else None,
+        "publication_id": context.publication_id if context is not None else None,
+        "model_version": MODEL_VERSION,
+        "confirmation_id": confirmation_id,
+    }
+
+
+def _valuation_needs_review(context, reason: str) -> dict:
+    return {
+        "status": "needs_review",
+        "answer": "估值假设尚未针对当前证券和数据发布版本完成确认，请先到估值页审核并确认。",
+        "claims": [],
+        "metric_ids": [],
+        "limitations": [reason, "未确认前研究助手不会计算或展示公允价值与估值区间。"],
+        "valuation_identity": _valuation_identity(context),
+        "evidence": [],
+        "market_state": None,
+        "action": {
+            "type": "open_valuation",
+            "label": "前往估值页确认假设",
+            "tab": "valuation",
+        },
+    }
+
+
+def _answer_valuation(store, company_id: str, ticker: str, *, context=None) -> dict:
+    if context is None or not context.security_id:
+        return _valuation_needs_review(
+            context, "当前研究请求缺少可绑定的证券或发布版本身份。"
+        )
     try:
-        dv = default_valuation(store, company_id, ticker)
+        confirmation = require_valuation_confirmation(
+            store,
+            company_id=company_id,
+            security_id=context.security_id,
+            publication_id=context.publication_id,
+            model_version=MODEL_VERSION,
+        )
+        if confirmation is None:
+            return _valuation_needs_review(
+                context, "当前发布版本属于未审核兼容数据，尚无正式估值确认。"
+            )
+        dv = confirmed_valuation(
+            store,
+            company_id=company_id,
+            ticker=ticker,
+            confirmation=confirmation,
+            persist=False,
+        )
         fair = dv["result"]["fair_value_per_share"]
         tv = dv["result"]["terminal_value_share"]
         bear = dv["scenarios"]["bear"]["result"]["fair_value_per_share"]
         bull = dv["scenarios"]["bull"]["result"]["fair_value_per_share"]
         market = dv.get("market") or {}
+        market_state = market.get("state") or "missing"
         market_claim = None
         if market.get("status") == "OK" and market.get("quote") and "price_vs_fair_pct" in (market.get("derived") or {}):
             price = market["quote"]["price"]
             premium = market["derived"]["price_vs_fair_pct"]
             side = f"现价 ${price:.2f} 较公允价 {premium:+.1f}%（确定性 price_vs_fair.v1）"
             market_claim = _claim(side + "。", "HIGH", [market["quote"]["observation_id"]])
+        elif market_state == "stale":
+            side = "行情已过期，保留估值结果但不与旧市场价格对比"
         else:
             side = "行情未同步，无法与市场价格对比（运行 sync-quotes 后可见）"
-        evidence = sorted({
-            fact_id
-            for item in dv["assumptions"]["meta"].values()
-            if isinstance(item, dict)
-            for fact_id in (item.get("source_ids") or [])
-        })
+        confirmation_id = confirmation["assumption_set_id"]
+        evidence_id = f"valuation_confirmation:{confirmation_id}"
+        evidence = [evidence_id]
         claims = [
             _claim(f"DCF Base 每股价值 ${fair:.0f}（{dv['model_version']}，假设可溯源）。",
                    "MEDIUM", evidence),
@@ -308,14 +359,25 @@ def _answer_valuation(store, company_id: str, ticker: str) -> dict:
         if market_claim:
             claims.append(market_claim)
         return {
-            "answer": (f"{ticker} 确定性 FCFF DCF：Base ${fair:.0f}，参考区间 ${bear:.0f}–${bull:.0f}，"
+            "status": "ready",
+            "answer": (f"{ticker} 经确认的 FCFF DCF（{dv['model_version']}）：Base ${fair:.0f}，参考区间 ${bear:.0f}–${bull:.0f}，"
                        f"终值占 EV {tv*100:.0f}%。{side}。"),
             "claims": claims,
             "metric_ids": [],
-            "limitations": ["无风险利率为配置回退值（Treasury 当前不可达）；模型假设均可调整", "研究参考，非目标价"],
+            "limitations": ["结论仅适用于已确认的证券、发布版本和模型版本；身份变化后必须重新确认。", "研究参考，非目标价"],
+            "valuation_identity": _valuation_identity(context, confirmation_id),
+            "evidence": [{
+                "evidence_id": evidence_id,
+                "kind": "valuation_confirmation",
+                "confirmation_id": confirmation_id,
+                "publication_id": context.publication_id,
+                "model_version": MODEL_VERSION,
+            }],
+            "market_state": market_state,
+            "action": None,
         }
-    except Exception as exc:
-        return {"answer": f"估值暂不可用：{exc}", "claims": [], "metric_ids": [], "limitations": ["先同步财务数据"]}
+    except ValuationError as exc:
+        return _valuation_needs_review(context, exc.message)
 
 
 def _answer_overview(store, company_id: str, ticker: str, *, context=None) -> dict:

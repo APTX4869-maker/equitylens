@@ -271,6 +271,126 @@ def test_confirmation_binds_security_publication_model_and_assumptions(db, monke
     assert stale.json()["error"]["code"] == "VALUATION_NEEDS_CONFIGURATION"
 
 
+def _ask_research_valuation(client, publication_id=None):
+    body = {
+        "ticker": "NEWCO",
+        "security_id": "security-newco",
+        "question": "估值怎么看？",
+    }
+    if publication_id is not None:
+        body["publication_id"] = publication_id
+    return client.post("/api/v1/research/ask", json=body)
+
+
+def test_research_valuation_gate_blocks_unconfirmed_conclusion(db, monkeypatch):
+    publication = _install_company(db)
+    client = _client(db, monkeypatch)
+
+    response = _ask_research_valuation(client, publication.publication_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["intent"] == "valuation"
+    assert body["status"] == "needs_review"
+    assert body["claims"] == []
+    assert body["valuation_identity"] == {
+        "security_id": "security-newco",
+        "publication_id": publication.publication_id,
+        "model_version": MODEL_VERSION,
+        "confirmation_id": None,
+    }
+    assert body["action"]["type"] == "open_valuation"
+    assert "确认" in body["answer"]
+    assert "Base $" not in body["answer"]
+    assert "参考区间 $" not in body["answer"]
+
+
+def test_research_valuation_gate_uses_bound_confirmation_and_evidence(db, monkeypatch):
+    publication = _install_company(db)
+    client = _client(db, monkeypatch)
+    confirmed = _confirm(client, publication)
+    assert confirmed.status_code == 200, confirmed.text
+
+    response = _ask_research_valuation(client, publication.publication_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    confirmation_id = confirmed.json()["confirmation_id"]
+    assert body["status"] == "ready"
+    assert body["valuation_identity"] == {
+        "security_id": "security-newco",
+        "publication_id": publication.publication_id,
+        "model_version": MODEL_VERSION,
+        "confirmation_id": confirmation_id,
+    }
+    assert body["evidence"] == [{
+        "evidence_id": f"valuation_confirmation:{confirmation_id}",
+        "kind": "valuation_confirmation",
+        "confirmation_id": confirmation_id,
+        "publication_id": publication.publication_id,
+        "model_version": MODEL_VERSION,
+    }]
+    assert body["claims"]
+    assert all(
+        claim["evidence_ids"] == [f"valuation_confirmation:{confirmation_id}"]
+        for claim in body["claims"][:2]
+    )
+    assert MODEL_VERSION in body["answer"]
+    provenance = client.get(
+        f"/api/v1/provenance/valuation_confirmation:{confirmation_id}",
+        params={"publication_id": publication.publication_id},
+    )
+    assert provenance.status_code == 200, provenance.text
+    assert provenance.json()["kind"] == "valuation_confirmation"
+    assert provenance.json()["tree"]["fields"]["publication_id"] == publication.publication_id
+    assert provenance.json()["tree"]["fields"]["model_version"] == MODEL_VERSION
+
+
+def test_research_valuation_gate_does_not_compare_a_stale_quote(db, monkeypatch):
+    publication = _install_company(db)
+    db.insert_market_quote({
+        "quote_id": "quote-stale-newco",
+        "company_id": publication.company_id,
+        "security_id": "security-newco",
+        "ticker": "NEWCO",
+        "provider": "fixture",
+        "observed_at": "2020-01-02 00:00:00",
+        "price": 42.0,
+        "currency": "USD",
+        "fetched_at": "2020-01-02 00:00:00",
+    })
+    client = _client(db, monkeypatch)
+    assert _confirm(client, publication).status_code == 200
+
+    response = _ask_research_valuation(client, publication.publication_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["market_state"] == "stale"
+    assert "行情已过期" in body["answer"]
+    assert "较公允价" not in body["answer"]
+    assert all("较公允价" not in claim["claim"] for claim in body["claims"])
+
+
+def test_research_valuation_gate_rechecks_changed_active_publication(db, monkeypatch):
+    original = _install_company(db)
+    client = _client(db, monkeypatch)
+    assert _confirm(client, original).status_code == 200
+    newer = _install_new_publication(db, original.company_id, version=402)
+
+    active = _ask_research_valuation(client)
+    pinned = _ask_research_valuation(client, original.publication_id)
+
+    assert active.status_code == 200, active.text
+    assert active.json()["publication_id"] == newer.publication_id
+    assert active.json()["status"] == "needs_review"
+    assert active.json()["valuation_identity"]["confirmation_id"] is None
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["publication_id"] == original.publication_id
+    assert pinned.json()["status"] == "ready"
+
+
 def _install_new_publication(db, company_id: str, *, version: int):
     publications = PublicationRepository(db)
     profile_id = publications.create_profile(

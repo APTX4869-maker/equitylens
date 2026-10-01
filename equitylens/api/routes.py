@@ -724,6 +724,46 @@ def _build_provenance(
     visited = visited | {entity_id}
     if entity_id.startswith("derived.v2.") or entity_id.startswith("derived:"):
         return _build_derived_node(store, entity_id, depth, visited, dataset_id)
+    if entity_id.startswith("valuation_confirmation:"):
+        confirmation_id = entity_id.split(":", 1)[1]
+        params: list = [confirmation_id]
+        dataset_filter = ""
+        if dataset_id is not None:
+            dataset_filter = " AND p.dataset_id=?"
+            params.append(dataset_id)
+        confirmation = store.query_one(
+            f"""
+            SELECT a.*, p.dataset_id
+            FROM valuation_assumption_set a
+            JOIN publication p ON p.publication_id=a.publication_id
+            WHERE a.assumption_set_id=? AND a.status='CONFIRMED'{dataset_filter}
+            """,
+            params,
+        )
+        if confirmation:
+            assumptions = confirmation.get("assumptions_json") or {}
+            if isinstance(assumptions, str):
+                assumptions = json.loads(assumptions)
+            return {
+                "entity_id": entity_id,
+                "kind": "valuation_confirmation",
+                "label": "Confirmed FCFF DCF assumptions",
+                "fields": {
+                    "confirmation_id": confirmation_id,
+                    "company_id": confirmation.get("company_id"),
+                    "security_id": confirmation.get("security_id"),
+                    "publication_id": confirmation.get("publication_id"),
+                    "model_name": confirmation.get("model_name"),
+                    "model_version": confirmation.get("model_version"),
+                    "confirmed_at": confirmation.get("confirmed_at"),
+                    "assumptions_hash": confirmation.get("assumptions_hash"),
+                    "confirmation_fingerprint": confirmation.get(
+                        "confirmation_fingerprint"
+                    ),
+                    "assumptions": assumptions,
+                },
+                "parents": [],
+            }
     cf = _entity_row(store, "canonical_fact", entity_id, dataset_id)
     if cf:
         raw_value = cf.get("source_raw_fact_ids") or []
