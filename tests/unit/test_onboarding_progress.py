@@ -73,6 +73,21 @@ def test_heartbeat_changes_fingerprint_and_stalled_after_45_seconds():
     assert first.fingerprint != second.fingerprint
 
 
+def test_naive_database_heartbeat_is_interpreted_as_utc():
+    task = _task(TaskState.FETCHING, step=OnboardingStep.FETCH)
+    naive_heartbeat = (NOW - timedelta(seconds=46)).replace(tzinfo=None)
+    attempts = [{
+        "heartbeat_at": naive_heartbeat,
+        "started_at": (NOW - timedelta(minutes=1)).replace(tzinfo=None),
+        "step": "FETCH",
+        "state": "RUNNING",
+    }]
+
+    progress = derive_progress(task, attempts, [], now=NOW)
+
+    assert progress.stalled is True
+
+
 def test_cancelled_progress_uses_saved_pre_cancel_snapshot():
     task = _task(TaskState.CANCELLED, step=None)
     events = [{

@@ -179,6 +179,10 @@ class DuckDBStore:
     def connect(self) -> "DuckDBStore":
         if self._conn is None:
             self._conn = duckdb.connect(str(self.path))
+            # All schema timestamps are stored without timezone. Pin the
+            # session clock so `now()` always writes a UTC wall-clock value,
+            # independent of the machine running the local service.
+            self._conn.execute("SET TimeZone='UTC'")
         return self
 
     def close(self) -> None:

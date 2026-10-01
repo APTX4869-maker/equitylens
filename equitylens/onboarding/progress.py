@@ -28,6 +28,7 @@ def _get(value: Any, name: str, default=None):
 
 
 def _aware(value: datetime | None) -> datetime | None:
+    """Apply the DuckDBStore UTC contract to naive database timestamps."""
     if value is None:
         return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
