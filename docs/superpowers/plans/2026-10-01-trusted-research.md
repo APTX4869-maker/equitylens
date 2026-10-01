@@ -203,23 +203,23 @@ Commit message: `fix: apply valuation gate to research assistant`
 - Test: `apps/web/e2e/research-boundaries.spec.ts`
 - Test: `tests/integration/test_api.py`
 
-- [ ] **Step 1: Read installed Next.js guidance**
+- [x] **Step 1: Read installed Next.js guidance**
 
 Read `apps/web/node_modules/next/dist/docs/03-architecture/accessibility.md` and the relevant App Router client-component/data-fetching pages before editing.
 
-- [ ] **Step 2: Write failing browser tests**
+- [x] **Step 2: Write failing browser tests**
 
 Intercept all module requests and assert `security_id` plus `publication_id` are present. Change the directory's active publication during a loaded page and assert existing modules remain pinned until the shell intentionally reloads. Assert segment evidence and deep canonical evidence reach a clickable official URL; an unavailable URL is labeled as a gap.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec playwright test e2e/research-boundaries.spec.ts --reporter=line`
 
-- [ ] **Step 4: Thread a single identity object**
+- [x] **Step 4: Thread a single identity object**
 
 Pass `{security_id, publication_id}` from the selected directory item to all sections and API helpers. Include the publication in assistant POST bodies. Extend provenance traversal only as needed to surface the dataset's official source document; do not fall back to live tables.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit message: `feat: pin research ui to publication`
 
