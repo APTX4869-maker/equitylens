@@ -8,6 +8,14 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from equitylens.config import RAW_DIR
+from equitylens.api.schemas import (
+    RefreshRequest,
+    ResearchAskRequest,
+    ReverseDcfRequest,
+    ValuationPlanCopyRequest,
+    ValuationPlanRequest,
+    ValuationRunRequest,
+)
 from equitylens.domain.companies import get_company
 from equitylens.metrics.engine import MetricEngine
 from equitylens.publication.models import sha256_json, validate_dataset_payload
@@ -1001,7 +1009,7 @@ def valuation_default(
 @router.post("/companies/{ticker}/valuation/run")
 def valuation_run(
     ticker: str,
-    payload: dict,
+    payload: ValuationRunRequest,
     security_id: str | None = None,
     publication_id: str | None = None,
 ):
@@ -1017,14 +1025,15 @@ def valuation_run(
         ticker, security_id=security_id, publication_id=publication_id
     )
     try:
-        persist = bool(payload.get("persist", True))
+        body = payload.model_dump(exclude_none=True)
+        persist = body.get("persist", True)
         confirmation = require_valuation_confirmation(
             store,
             company_id=company.cik,
             security_id=company.security_id,
             publication_id=context.publication_id,
             model_version=MODEL_VERSION,
-            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+            assumptions=body.get("assumptions") if body.get("assumptions") else None,
         )
         if confirmation:
             return confirmed_valuation(
@@ -1035,7 +1044,7 @@ def valuation_run(
                 persist=persist,
             )
         return {
-            **run_custom(store, company.cik, company.ticker, payload, persist=persist),
+            **run_custom(store, company.cik, company.ticker, body, persist=persist),
             **_version_fields(company, context),
         }
     except ValuationError as exc:
@@ -1054,7 +1063,7 @@ def valuation_run(
 @router.post("/companies/{ticker}/valuation/reverse-dcf")
 def valuation_reverse(
     ticker: str,
-    payload: dict,
+    payload: ReverseDcfRequest,
     security_id: str | None = None,
     publication_id: str | None = None,
 ):
@@ -1067,7 +1076,8 @@ def valuation_reverse(
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id
     )
-    if "target_price" not in payload:
+    body = payload.model_dump(exclude_unset=True)
+    if "target_price" not in body:
         return JSONResponse(
             status_code=400,
             content={"error": {"code": "INVALID_INPUT", "field": "target_price",
@@ -1080,14 +1090,14 @@ def valuation_reverse(
             security_id=company.security_id,
             publication_id=context.publication_id,
             model_version=MODEL_VERSION,
-            assumptions=payload.get("assumptions") if payload.get("assumptions") else None,
+            assumptions=body.get("assumptions") if body.get("assumptions") else None,
         )
         return {
             **reverse_dcf(
                 store,
                 company.cik,
                 company.ticker,
-                payload,
+                body,
                 confirmed_assumptions=confirmation["assumptions"] if confirmation else None,
                 security_id=company.security_id,
             ),
@@ -1156,12 +1166,14 @@ def valuation_run_detail(ticker: str, run_id: str):
 
 
 @router.post("/companies/{ticker}/valuation/plans")
-def valuation_plans_create(ticker: str, payload: dict):
+def valuation_plans_create(ticker: str, payload: ValuationPlanRequest):
     from equitylens.valuation.service import create_plan
 
     company = _resolve_company(ticker)
     try:
-        return create_plan(_store(), company.cik, company.ticker, payload)
+        return create_plan(
+            _store(), company.cik, company.ticker, payload.model_dump(exclude_none=True)
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1197,12 +1209,15 @@ def valuation_plan_detail(ticker: str, plan_id: str):
 
 
 @router.post("/companies/{ticker}/valuation/plans/{plan_id}/copy")
-def valuation_plan_copy(ticker: str, plan_id: str, payload: dict):
+def valuation_plan_copy(ticker: str, plan_id: str, payload: ValuationPlanCopyRequest):
     from equitylens.valuation.service import copy_plan
 
     company = _resolve_company(ticker)
     try:
-        return copy_plan(_store(), company.cik, company.ticker, plan_id, payload)
+        return copy_plan(
+            _store(), company.cik, company.ticker, plan_id,
+            payload.model_dump(exclude_none=True),
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1270,18 +1285,18 @@ def company_moat(
 
 
 @router.post("/research/ask")
-def research_ask(payload: dict):
+def research_ask(payload: ResearchAskRequest):
     """Evidence-first research Q&A (deterministic engine; LLM pluggable later)."""
     from equitylens.research.engine import ask
 
-    ticker = (payload.get("ticker") or "AAPL").upper()
-    question = payload.get("question") or ""
+    ticker = payload.ticker.upper()
+    question = payload.question
     if not question.strip():
         raise HTTPException(400, "question is required")
     store, company, context = _versioned_company(
         ticker,
-        security_id=payload.get("security_id"),
-        publication_id=payload.get("publication_id"),
+        security_id=payload.security_id,
+        publication_id=payload.publication_id,
         module="research",
     )
     return {
@@ -1339,12 +1354,12 @@ def company_freshness(
 
 
 @router.post("/companies/{ticker}/refresh")
-def company_refresh(ticker: str, payload: dict | None = None):
+def company_refresh(ticker: str, payload: RefreshRequest | None = None):
     """Refresh all modules or retry an explicit subset with independent status."""
     from equitylens.refresh.service import RefreshBusy, refresh_company
 
     company = _resolve_company(ticker)
-    body = payload or {}
+    body = payload.model_dump(exclude_none=True) if payload else {}
     try:
         return refresh_company(
             _store(),

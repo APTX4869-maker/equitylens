@@ -4,7 +4,53 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictStr
+
+
+class StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class ResearchAskRequest(StrictRequest):
+    ticker: StrictStr = "AAPL"
+    question: StrictStr
+    security_id: StrictStr | None = None
+    publication_id: StrictStr | None = None
+
+
+class ValuationRunRequest(StrictRequest):
+    persist: StrictBool = True
+    assumptions: dict[str, Any] | None = None
+
+
+class ReverseDcfRequest(StrictRequest):
+    # The valuation service owns field-specific 400 errors for the numeric
+    # domain. This model forbids unknown fields without replacing that API.
+    target_price: Any = None
+    assumptions: Any = None
+
+
+class ValuationPlanRequest(StrictRequest):
+    valuation_run_id: StrictStr
+    scenario_key: Literal["base", "bear", "bull"]
+    margin_of_safety: StrictFloat = Field(allow_inf_nan=False)
+    name: StrictStr | None = None
+    notes: StrictStr | None = None
+    conditions_to_verify: list[StrictStr] = Field(default_factory=list)
+
+
+class ValuationPlanCopyRequest(StrictRequest):
+    scenario_key: Literal["base", "bear", "bull"] | None = None
+    margin_of_safety: StrictFloat | None = Field(default=None, allow_inf_nan=False)
+    name: StrictStr | None = None
+    notes: StrictStr | None = None
+    conditions_to_verify: list[StrictStr] | None = None
+
+
+class RefreshRequest(StrictRequest):
+    modules: list[Literal["financials", "segments", "management", "quotes"]] | None = None
+    operation_id: StrictStr | None = None
+    operation_finished: StrictBool = True
 
 
 class SourceRef(BaseModel):

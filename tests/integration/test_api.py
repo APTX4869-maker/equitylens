@@ -505,7 +505,7 @@ def test_plan_requires_traceable_run_and_derives_reference(client):
         json={"reference_value": 100.0, "reference_source": "base_dcf",
               "margin_of_safety": 0.2},
     )
-    assert arbitrary.status_code == 400
+    assert arbitrary.status_code == 422
 
     run = _save_v2_run(client)
     response = client.post(
@@ -558,6 +558,74 @@ def test_plan_margin_validation_and_nonpositive_value(client):
         f"/api/v1/companies/AAPL/valuation/plans/{response.json()['plan_id']}"
     ).json()
     assert detail["reference_price_reason"] == response.json()["reference_price_reason"]
+
+
+@pytest.mark.parametrize("margin", ["NaN", "Infinity", "0.2", True, None])
+def test_non_finite_or_wrong_type_plan_margin_is_rejected_without_write(
+    client, company_db, margin
+):
+    run = _save_v2_run(client)
+    before = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": margin,
+        },
+    )
+
+    assert 400 <= response.status_code < 500
+    after = company_db.query_one(
+        "SELECT COUNT(*) AS count FROM valuation_plan WHERE company_id = ?",
+        ["0000320193"],
+    )["count"]
+    assert after == before
+
+
+def test_strict_request_rejects_unknown_plan_fields(client):
+    run = _save_v2_run(client)
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "reference_value": 1_000_000,
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"ticker": 123, "question": "现金流如何？"},
+        {"ticker": "AAPL", "question": 123},
+        {"ticker": "AAPL", "question": "现金流如何？", "unexpected": True},
+    ],
+)
+def test_wrong_type_research_request_returns_4xx(client, payload):
+    response = client.post("/api/v1/research/ask", json=payload)
+    assert 400 <= response.status_code < 500
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"modules": "financials"},
+        {"modules": ["unknown"]},
+        {"operation_finished": "false"},
+        {"unexpected": True},
+    ],
+)
+def test_wrong_type_refresh_request_returns_4xx(client, payload):
+    response = client.post("/api/v1/companies/AAPL/refresh", json=payload)
+    assert 400 <= response.status_code < 500
 
 
 def test_plan_copy_compare_and_company_isolation(client):

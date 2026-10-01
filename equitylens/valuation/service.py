@@ -861,7 +861,7 @@ def create_plan(
     if payload.get("margin_of_safety") is None:
         raise ValueError("必须显式设置安全边际（margin_of_safety，0 表示无边际）")
     margin = float(payload["margin_of_safety"])
-    if margin < 0 or margin >= 1.0:
+    if not math.isfinite(margin) or margin < 0 or margin >= 1.0:
         raise ValueError("安全边际必须在 [0, 1) 区间（负值或 ≥100% 不接受）")
 
     price = None
