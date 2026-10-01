@@ -56,6 +56,9 @@ export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOp
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+  const quoteUnavailableNote = market?.status === "STALE" && market.quote
+    ? `行情已过期 · 观察 ${market.quote.observed_at.slice(0, 10)} · 抓取 ${market.quote.fetched_at.slice(0, 10)}`
+    : "行情未同步";
 
   useEffect(() => {
     let cancelled = false;
@@ -140,21 +143,21 @@ export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOp
         const pe = market?.status === "OK" ? market.derived?.pe_ttm : undefined;
         out[def.key] = pe != null
           ? { value: pe.toFixed(1), note: `P/E(TTM) · ${market?.quote?.provider_label ?? ""} · 确定性`, fact: null }
-          : { value: "—", note: market?.derived?.pe_ttm_reason ?? "行情未同步", fact: null };
+          : { value: "—", note: market?.status === "STALE" ? quoteUnavailableNote : market?.derived?.pe_ttm_reason ?? quoteUnavailableNote, fact: null };
         continue;
       }
       if (def.key === "pfcf") {
         const pfcf = market?.status === "OK" ? market.derived?.pfcf_ttm : undefined;
         out[def.key] = pfcf != null
           ? { value: `${pfcf.toFixed(1)}×`, note: "P/FCF(TTM) · 确定性", fact: null }
-          : { value: "—", note: market?.derived?.pfcf_ttm_reason ?? "行情未同步", fact: null };
+          : { value: "—", note: market?.status === "STALE" ? quoteUnavailableNote : market?.derived?.pfcf_ttm_reason ?? quoteUnavailableNote, fact: null };
         continue;
       }
       if (def.key === "fcfYield") {
         const fy = market?.status === "OK" ? market.derived?.fcf_yield_ttm : undefined;
         out[def.key] = fy != null
           ? { value: `${(fy * 100).toFixed(1)}%`, note: "FCF 收益率(TTM) · 确定性", fact: null }
-          : { value: "—", note: "行情未同步", fact: null };
+          : { value: "—", note: quoteUnavailableNote, fact: null };
         continue;
       }
       if (def.key === "revenue" || def.key === "fcf") {
@@ -165,8 +168,8 @@ export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOp
         const yago = pts[pts.length - 5]; // TTM 4 quarters earlier
         out[def.key] = {
           value: last?.value != null ? fmtMoney(last.value) : "—",
-          note: last?.value != null && yago?.value != null && yago.value !== 0
-            ? `${signedPct(last.value / yago.value - 1)} YoY（TTM）` : def.note,
+          note: `${last?.value != null && yago?.value != null && yago.value !== 0
+            ? `${signedPct(last.value / yago.value - 1)} YoY（TTM）` : def.note}${last?.period ? ` · ${last.period}` : ""}`,
           fact: last ? (last as unknown as Fact) : null,
         };
         continue;
@@ -180,12 +183,12 @@ export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOp
       const isRatio = def.key.includes("Margin") || def.key === "fcfMargin";
       out[def.key] = {
         value: isRatio ? fmtPct(last.value) : fmtMoney(last.value),
-        note: def.note,
+        note: `${def.note}${last.period ? ` · ${last.period}` : ""}`,
         fact: last as unknown as Fact,
       };
     }
     return out;
-  }, [quarterly, ttm, market]);
+  }, [quarterly, ttm, market, quoteUnavailableNote]);
 
   const annualRows = useMemo(() => {
     const byMetric: Record<string, Fact[]> = {};

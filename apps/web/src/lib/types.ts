@@ -249,6 +249,14 @@ export type OverviewResponse = {
       missing_reason?: string | null;
     }
   >;
+  period_alignment?: {
+    status: "aligned" | "mixed" | "unavailable";
+    reference_key?: string;
+    reference_period: string | null;
+    reference_period_end: string | null;
+    periods: Record<string, { period: string | null; period_end: string | null; frequency: string | null }>;
+    mismatches: { key: string; reason: string }[];
+  };
   trend: Record<string, { label: string; unit?: string | null; values: (number | null)[]; periods: (string | null)[] }>;
   provenance_available: boolean;
 };
@@ -256,6 +264,8 @@ export type OverviewResponse = {
 /** M8: latest synced market quote + deterministic derived facts. */
 export type MarketQuote = {
   status: "OK" | "STALE" | "UNAVAILABLE";
+  state?: "ok" | "stale" | "missing";
+  status_label?: string;
   stale?: boolean;
   stale_reason?: string | null;
   quote_age_days?: number | null;

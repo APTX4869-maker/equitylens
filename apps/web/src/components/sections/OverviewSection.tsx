@@ -79,12 +79,14 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
     const fcfTtm = k.TTM_FCF?.value ?? null;
     const fcfMargin = k.FCF_MARGIN?.value ?? null;
     const netDebt = k.NET_DEBT?.value ?? null;
+    const withPeriod = (note: string, key: string) =>
+      k[key]?.period ? `${note} · ${k[key].period}` : note;
     return {
       items: [
         {
           label: "TTM 营业收入",
           value: fmtMoney(revTtm),
-          note: revTtm && revTtmPrev ? `${signedPct(revTtm / revTtmPrev - 1)} YoY` : "—",
+          note: withPeriod(revTtm && revTtmPrev ? `${signedPct(revTtm / revTtmPrev - 1)} YoY` : "TTM", "TTM_REVENUE"),
           tone: revTtm && revTtmPrev && revTtm >= revTtmPrev ? "good" : "",
           metricKey: "revenue",
           fact: kpiFact("TTM_REVENUE"),
@@ -92,16 +94,16 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         {
           label: "最近季度收入增速",
           value: latestGrowth !== null && latestGrowth !== undefined ? signedPct(latestGrowth) : "—",
-          note: "同比（真实数据）",
+          note: withPeriod("同比（真实数据）", "REVENUE_GROWTH_YOY"),
           tone: latestGrowth !== null && latestGrowth !== undefined && latestGrowth > 0 ? "good" : "warn",
           metricKey: "revenue",
           fact: kpiFact("REVENUE_GROWTH_YOY"),
         },
-        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: "最近季度", tone: opLast != null && opLast > 0.2 ? "good" : "", metricKey: "opMargin", fact: kpiFact("OPERATING_MARGIN") },
-        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: "最近季度", tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin", fact: kpiFact("GROSS_MARGIN") },
-        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: "经营现金流 − 资本开支", tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf", fact: kpiFact("TTM_FCF") },
-        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: "最近季度", tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin", fact: kpiFact("FCF_MARGIN") },
-        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash", fact: kpiFact("NET_DEBT") },
+        { label: "营业利润率", value: opLast != null ? fmtPct(opLast) : "—", note: withPeriod("最近季度", "OPERATING_MARGIN"), tone: opLast != null && opLast > 0.2 ? "good" : "", metricKey: "opMargin", fact: kpiFact("OPERATING_MARGIN") },
+        { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: withPeriod("最近季度", "GROSS_MARGIN"), tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin", fact: kpiFact("GROSS_MARGIN") },
+        { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: withPeriod("经营现金流 − 资本开支", "TTM_FCF"), tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf", fact: kpiFact("TTM_FCF") },
+        { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: withPeriod("最近季度", "FCF_MARGIN"), tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin", fact: kpiFact("FCF_MARGIN") },
+        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: withPeriod(netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", "NET_DEBT"), tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash", fact: kpiFact("NET_DEBT") },
         {
           label: "最新财报期",
           value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",
@@ -214,6 +216,13 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         </div>
         <Pill tone="good">真实数据</Pill>
       </div>
+      {overview.period_alignment?.status === "mixed" ? (
+        <div className="action-error" data-testid="kpi-period-warning" role="status">
+          <strong>指标期间不一致：</strong>{" "}
+          {overview.period_alignment.mismatches.map((item) => item.reason).join("；")}。
+          请按每张卡片标注的期间分别解读，不能视为同一时点快照。
+        </div>
+      ) : null}
       <div className="briefing-grid">
         {kpis?.items.map((k: KpiItem) => (
           <KpiCard key={k.label} label={k.label} value={k.value} note={k.note} tone={k.tone}

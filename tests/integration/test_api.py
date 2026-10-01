@@ -460,6 +460,44 @@ def test_market_quote_endpoint_ok_with_derived(client):
     assert d["derived"]["pe_ttm_formula"] == "pe_ttm.v1"
 
 
+def test_stale_quote_contract_keeps_observation_and_fetch_times(
+    client, company_db
+):
+    company_db.insert_market_quote({
+        "quote_id": "quote-stale-contract",
+        "company_id": "0000320193",
+        "ticker": "AAPL",
+        "provider": "nasdaq",
+        "observed_at": "2026-08-01T14:30:00+00:00",
+        "price": 321.0,
+        "currency": "USD",
+        "source_label": "Nasdaq",
+        "source_url": "https://example.test/stale-quote",
+        "fetched_at": "2099-01-01T00:00:00+00:00",
+    })
+    try:
+        response = client.get("/api/v1/companies/AAPL/market/quote")
+        freshness_response = client.get("/api/v1/companies/AAPL/freshness")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["state"] == "stale"
+        assert body["status_label"] == "行情已过期"
+        assert body["quote"]["observed_at"] == "2026-08-01T14:30:00+00:00"
+        assert body["quote"]["fetched_at"].startswith("2099-01-01T00:00:00")
+        market_freshness = next(
+            item for item in freshness_response.json()["modules"]
+            if item["key"] == "market_quote"
+        )
+        assert market_freshness["status"] == "stale"
+        assert market_freshness["observed_at"].startswith("2026-08-01T14:30:00")
+        assert market_freshness["fetched_at"].startswith("2099-01-01T00:00:00")
+    finally:
+        company_db._conn.execute(
+            "DELETE FROM market_quote WHERE quote_id='quote-stale-contract'"
+        )
+
+
 def test_market_quote_in_valuation_default(client):
     r = client.get("/api/v1/companies/AAPL/valuation/default")
     d = r.json()

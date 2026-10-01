@@ -28,6 +28,7 @@ type Cached = { info: CompanyInfo; overview: OverviewResponse };
 type FreshnessModule = {
   key: string; label: string; as_of: string | null;
   detail: string; status: "ok" | "stale" | "missing"; days_ago: number | null;
+  observed_at?: string | null;
   fetched_at?: string | null;
 };
 type Freshness = { modules: FreshnessModule[]; stale_modules: string[]; hint: string | null };
@@ -415,7 +416,10 @@ export default function Home() {
                       style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8 }}
                     >
                       <span className="fresh-dot" style={{ background: color }} />
-                      {FRESHNESS_SHORT_LABELS[m.key] ?? m.label} {m.as_of?.slice(0, 10) ?? "未同步"}
+                      {FRESHNESS_SHORT_LABELS[m.key] ?? m.label}{" "}
+                      {m.status === "stale" && m.key === "market_quote"
+                        ? `已过期 ${m.as_of?.slice(0, 10) ?? "时间未知"}`
+                        : m.as_of?.slice(0, 10) ?? "未同步"}
                     </span>
                   );
                 })}

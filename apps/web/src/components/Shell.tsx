@@ -147,6 +147,7 @@ export function Topbar({
 
 export function Hero({ company, market }: { company: CompanyInfo | null; market?: MarketQuote | null }) {
   const mq = market?.status === "OK" && market.quote ? market.quote : null;
+  const staleQuote = market?.status === "STALE" && market.quote ? market.quote : null;
   return (
     <div className="hero">
       <div>
@@ -158,10 +159,15 @@ export function Hero({ company, market }: { company: CompanyInfo | null; market?
         <div className="company-line">
           <span>{company?.exchange ?? ""}</span>
           <span>·</span>
-          <span className={mq ? "pill good" : "pill neutral"}>
+          <span
+            className={mq ? "pill good" : staleQuote ? "pill warn" : "pill neutral"}
+            data-testid="market-quote-state"
+          >
             {mq
               ? `行情 ${mq.provider_label} $${mq.price.toFixed(2)} · ${mq.observed_at}`
-              : "行情未同步"}
+              : staleQuote
+                ? `行情已过期 · ${staleQuote.provider_label} $${staleQuote.price.toFixed(2)} · 观察 ${staleQuote.observed_at.slice(0, 10)} · 抓取 ${staleQuote.fetched_at.slice(0, 10)}`
+                : "行情未同步"}
           </span>
           <span className="pill blue">高质量公司研究</span>
         </div>

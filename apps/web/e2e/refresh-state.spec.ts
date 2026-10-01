@@ -48,6 +48,7 @@ function valuationResponse(overrides: Partial<typeof inputs> = {}) {
 async function stubShell(page: Page, freshnessModules: Array<{
   key: string; label: string; as_of: string | null; detail: string;
   status: "ok" | "stale" | "missing"; days_ago: number | null;
+  observed_at?: string | null;
   fetched_at?: string | null;
 }> = []) {
   await page.route("**/api/v1/companies/AAPL?**", (route) => route.fulfill({ json: {
@@ -216,6 +217,62 @@ test("freshness dates identify their data modules", async ({ page }) => {
   await expect(page.getByTestId("freshness-sec_financials")).toHaveText(/财务 2026-07-29/);
   await expect(page.getByTestId("freshness-market_quote")).toHaveText(/行情 2026-09-16/);
   await expect(page.getByTestId("freshness-valuation_runs")).toHaveText(/估值运行 2026-09-03$/);
+});
+
+test("stale quote is labeled expired with observation and fetch times", async ({ page }) => {
+  await stubShell(page, [{
+    key: "market_quote", label: "行情快照", as_of: "2026-08-01",
+    observed_at: "2026-08-01T14:30:00+00:00",
+    fetched_at: "2026-09-25T01:02:03+00:00",
+    detail: "Nasdaq $321.00 · 55 天前观察", status: "stale", days_ago: 55,
+  }]);
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: {
+    status: "STALE", state: "stale", status_label: "行情已过期",
+    configured: true, synced: true, stale: true, stale_reason: "55 天前观察",
+    quote: {
+      price: 321, currency: "USD", observed_at: "2026-08-01T14:30:00+00:00",
+      provider: "nasdaq", provider_label: "Nasdaq", source_label: "Nasdaq",
+      source_url: "https://example.test/stale", fetched_at: "2026-09-25T01:02:03+00:00",
+    }, derived: {},
+  } }));
+
+  await page.goto("/");
+
+  const expired = page.getByTestId("market-quote-state");
+  await expect(expired).toContainText("行情已过期");
+  await expect(expired).toContainText("观察 2026-08-01");
+  await expect(expired).toContainText("抓取 2026-09-25");
+  await expect(expired).not.toContainText("未同步");
+});
+
+test("overview warns when KPI periods are not aligned", async ({ page }) => {
+  await stubShell(page);
+  await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: {
+    ticker: "AAPL", latest_period: { fiscal_year: 2026, fiscal_quarter: 3, period_end: "2026-09-30" },
+    kpis: {
+      TTM_REVENUE: { metric: "REVENUE", value: 400, period: "FY2026Q3", period_end: "2026-09-30", frequency: "ttm" },
+      OPERATING_MARGIN: { metric: "OPERATING_MARGIN", value: 0.25, period: "FY2026Q2", period_end: "2026-06-30", frequency: "quarterly" },
+      TTM_FCF: { metric: "FCF", value: 80, period: "FY2026Q1", period_end: "2026-03-31", frequency: "ttm" },
+    },
+    period_alignment: {
+      status: "mixed", reference_period_end: "2026-09-30",
+      periods: {
+        TTM_REVENUE: { period: "FY2026Q3", period_end: "2026-09-30", frequency: "ttm" },
+        OPERATING_MARGIN: { period: "FY2026Q2", period_end: "2026-06-30", frequency: "quarterly" },
+        TTM_FCF: { period: "FY2026Q1", period_end: "2026-03-31", frequency: "ttm" },
+      },
+      mismatches: [
+        { key: "OPERATING_MARGIN", reason: "OPERATING_MARGIN 截止 FY2026Q2，晚于/早于统一参考期 FY2026Q3" },
+        { key: "TTM_FCF", reason: "TTM_FCF 截止 FY2026Q1，晚于/早于统一参考期 FY2026Q3" },
+      ],
+    }, trend: {}, provenance_available: true,
+  } }));
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("kpi-period-warning")).toContainText("指标期间不一致");
+  await expect(page.getByTestId("kpi-period-warning")).toContainText("FY2026Q2");
+  await expect(page.getByText("最近季度 · FY2026Q2")).toBeVisible();
 });
 
 test("freshness labels wrap inside the mobile toolbar", async ({ page }) => {

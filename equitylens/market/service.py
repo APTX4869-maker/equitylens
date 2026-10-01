@@ -201,6 +201,12 @@ def _reason_no_sync(ticker: str) -> str:
     return f"行情未同步：先运行 equitylens sync-quotes {ticker}（本地快照模式，不伪造价格）"
 
 
+def _timestamp_text(value) -> str:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=value.tzinfo or timezone.utc).isoformat()
+    return str(value or "").replace(" ", "T")
+
+
 def quote_block(
     store: DuckDBStore,
     company_id: str,
@@ -211,7 +217,8 @@ def quote_block(
     cfg = get_config()
     row = latest_quote_row(store, company_id, security_id)
     if row is None:
-        return {"status": "UNAVAILABLE", "configured": bool(cfg.active_providers),
+        return {"status": "UNAVAILABLE", "state": "missing", "status_label": "行情未同步",
+                "configured": bool(cfg.active_providers),
                 "synced": False, "reason": _reason_no_sync(ticker)}
     quote = {
         "observation_id": row["quote_id"],
@@ -220,14 +227,17 @@ def quote_block(
         "provider_label": _provider_label(cfg, row["provider"]),
         "name": row["name"], "prev_close": row["prev_close"],
         "source_label": row["source_label"], "source_url": row["source_url"],
-        "fetched_at": str(row["fetched_at"] or "")[:19],
+        "fetched_at": _timestamp_text(row.get("fetched_at")),
     }
     from equitylens.market.age import quote_observation_status
 
     age = quote_observation_status(str(row.get("observed_at") or ""))
     status = "OK" if age["status"] == "ok" else "STALE"
     derived = _derived(store, company_id, row)
+    state = "ok" if age["status"] == "ok" else "stale"
     return {"status": status,
+            "state": state,
+            "status_label": "行情正常" if state == "ok" else "行情已过期",
             "stale": age["status"] != "ok",
             "stale_reason": age["detail"] if age["status"] != "ok" else None,
             "quote_age_days": age["days_ago"],

@@ -227,12 +227,14 @@ def freshness(
         age = quote_observation_status(str(quote.get("observed_at") or ""))
         module_status = "ok" if age["status"] == "ok" else "stale"
         modules.append({"key": "market_quote", "label": "行情快照", "as_of": age["as_of"],
+                        "observed_at": _utc_timestamp(quote.get("observed_at")),
                         "fetched_at": _utc_timestamp(quote.get("fetched_at")),
                         "detail": (f"{provider_label} ${quote['price']:.2f} · "
                                    f"{quote['observed_at']} · {age['detail']}"),
                         "status": module_status, "days_ago": age["days_ago"]})
     else:
         modules.append({"key": "market_quote", "label": "行情快照", "as_of": None,
+                        "observed_at": None,
                         "fetched_at": None,
                         "detail": "行情未同步（运行 equitylens sync-quotes）",
                         "status": "missing", "days_ago": None})

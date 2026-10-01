@@ -182,6 +182,53 @@ def _limit_fact_series(rows: list[dict], metrics: list[str], limit: int | None) 
     ]
 
 
+def _period_alignment(kpis: dict[str, dict]) -> dict:
+    """Summarize whether displayed KPI cards end on the same reporting date."""
+    periods = {
+        key: {
+            "period": item.get("period"),
+            "period_end": item.get("period_end"),
+            "frequency": item.get("frequency"),
+        }
+        for key, item in kpis.items()
+        if item.get("value") is not None
+        and (item.get("period") or item.get("period_end"))
+    }
+    dated = {
+        key: item for key, item in periods.items() if item.get("period_end")
+    }
+    if not dated:
+        return {
+            "status": "unavailable",
+            "reference_period": None,
+            "reference_period_end": None,
+            "periods": periods,
+            "mismatches": [],
+        }
+    reference_key, reference = max(
+        dated.items(), key=lambda pair: str(pair[1]["period_end"])
+    )
+    mismatches = [
+        {
+            "key": key,
+            "reason": (
+                f"{key} 截止 {item.get('period') or item.get('period_end')}，"
+                f"统一参考期为 {reference.get('period') or reference.get('period_end')}"
+            ),
+        }
+        for key, item in dated.items()
+        if item["period_end"] != reference["period_end"]
+    ]
+    return {
+        "status": "mixed" if mismatches else "aligned",
+        "reference_key": reference_key,
+        "reference_period": reference.get("period"),
+        "reference_period_end": reference.get("period_end"),
+        "periods": periods,
+        "mismatches": mismatches,
+    }
+
+
 def _published_entity(
     store, entity_type: str, entity_id: str | None, dataset_id: str | None = None
 ) -> dict | None:
@@ -642,6 +689,7 @@ def overview(
         **_version_fields(company, context),
         "latest_period": latest,
         "kpis": kpis,
+        "period_alignment": _period_alignment(kpis),
         "trend": trend,
         "provenance_available": True,
     }
