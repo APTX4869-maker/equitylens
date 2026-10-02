@@ -191,6 +191,34 @@ def test_ttm_flattens_provenance_for_derived_standalone_quarters():
     ]
 
 
+def test_quarterly_margin_flattens_derived_quarter_provenance():
+    facts = [
+        {
+            **_q("OPERATING_INCOME", 2026, 4, 45.0),
+            "canonical_fact_id": None,
+            "input_ids": ["op-fy", "op-ytd9"],
+        },
+        {
+            **_q("REVENUE", 2026, 4, 100.0),
+            "canonical_fact_id": None,
+            "input_ids": ["revenue-fy", "revenue-ytd9"],
+        },
+    ]
+    engine = MetricEngine(None, published_facts=facts)
+
+    point = engine.compute(
+        "OPERATING_MARGIN", "published-company", frequency="quarterly"
+    )[0]
+
+    assert point.value == pytest.approx(0.45)
+    assert point.input_fact_ids == [
+        "op-fy",
+        "op-ytd9",
+        "revenue-fy",
+        "revenue-ytd9",
+    ]
+
+
 def test_published_lowercase_currency_unit_still_computes_ttm():
     facts = [
         {**_q("REVENUE", 2026, quarter, float(quarter)), "unit": "usd"}

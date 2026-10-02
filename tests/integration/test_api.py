@@ -1530,6 +1530,38 @@ def test_research_unsupported_question_returns_capability_boundary(client):
     assert "增长" in body["supported_topics"]
 
 
+def test_research_margin_claims_keep_resolvable_q4_evidence(client):
+    directory = client.get("/api/v1/companies").json()["items"]
+    company = next(item for item in directory if item["ticker"] == "MSFT")
+    response = client.post(
+        "/api/v1/research/ask",
+        json={
+            "ticker": "MSFT",
+            "question": "利润率现在怎么样？",
+            "security_id": company["security_id"],
+            "publication_id": company["publication_id"],
+        },
+    )
+
+    assert response.status_code == 200
+    claims = response.json()["claims"]
+    assert claims
+    evidence_ids = [
+        evidence_id
+        for claim in claims
+        for evidence_id in claim["evidence_ids"]
+    ]
+    assert evidence_ids
+    assert all(isinstance(evidence_id, str) and evidence_id for evidence_id in evidence_ids)
+    for evidence_id in evidence_ids:
+        provenance = client.get(
+            f"/api/v1/provenance/{evidence_id}",
+            params={"publication_id": company["publication_id"]},
+        )
+        assert provenance.status_code == 200
+        assert provenance.json()["tree"]
+
+
 def test_promises_endpoint_deterministic_verification(client, company_db):
     import json as _json
     from pathlib import Path

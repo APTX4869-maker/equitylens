@@ -410,6 +410,21 @@ class MetricEngine:
             and key[1] in (1, 2, 3, 4)
         )
 
+    @staticmethod
+    def _lineage_ids(*facts: dict) -> list[str]:
+        """Flatten direct and derived fact lineage into canonical evidence IDs."""
+        evidence_ids: list[str] = []
+        for fact in facts:
+            candidates = (
+                [fact["canonical_fact_id"]]
+                if fact.get("canonical_fact_id")
+                else fact.get("input_ids") or []
+            )
+            for evidence_id in candidates:
+                if evidence_id and evidence_id not in evidence_ids:
+                    evidence_ids.append(evidence_id)
+        return evidence_ids
+
     def ttm(self, facts: list[dict], as_of_quarter: tuple | None = None) -> dict | None:
         """TTM of a duration metric = sum of 4 *consecutive* standalone quarters.
 
@@ -508,7 +523,7 @@ class MetricEngine:
                         continue
                     points.append(growth_point(
                         cur, prev["value"],
-                        [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                        self._lineage_ids(cur, prev),
                         freq, "revenue_growth_yoy.v1",
                     ))
             elif freq == "annual":
@@ -520,7 +535,7 @@ class MetricEngine:
                         continue
                     points.append(growth_point(
                         cur, prev["value"],
-                        [cur.get("canonical_fact_id"), prev.get("canonical_fact_id")],
+                        self._lineage_ids(cur, prev),
                         freq, "revenue_growth_yoy.v1",
                     ))
             else:  # ttm: two complete TTM windows 4 quarters apart (8 consecutive quarters)
@@ -533,7 +548,7 @@ class MetricEngine:
                     cur4, prev4 = window8[-4:], window8[:4]
                     cur_val = sum(float(series[x]["value"]) for x in cur4)
                     prev_val = sum(float(series[x]["value"]) for x in prev4)
-                    input_ids = [series[x]["canonical_fact_id"] for x in window8]
+                    input_ids = self._lineage_ids(*(series[x] for x in window8))
                     points.append(growth_point(
                         {**series[k], "value": cur_val}, prev_val, input_ids,
                         "ttm", "revenue_growth_yoy.ttm.v1",
@@ -557,7 +572,7 @@ class MetricEngine:
                                               nt["input_ids"] + dt["input_ids"], "ttm", unit="ratio"))
             else:
                 for key, n, d in self._two_series(facts[num_metric], facts["REVENUE"], freq):
-                    inputs = [n.get("canonical_fact_id"), d.get("canonical_fact_id")]
+                    inputs = self._lineage_ids(n, d)
                     if float(d["value"]) == 0:
                         point = self._point(metric, None, n, f"{metric.lower()}.v1", inputs, freq,
                                             unit="ratio")
@@ -604,14 +619,13 @@ class MetricEngine:
                     fcf = float(o["value"]) - float(c["value"])
                     if metric == "FCF":
                         points.append(self._point("FCF", fcf, o, "fcf.v1",
-                                                  [o.get("canonical_fact_id"), c.get("canonical_fact_id")], freq,
+                                                  self._lineage_ids(o, c), freq,
                                                   unit="USD"))
                     else:
                         r = rev_series.get(key)
                         if r and r["value"]:
                             points.append(self._point("FCF_MARGIN", fcf / float(r["value"]), o, "fcf_margin.v1",
-                                                      [o.get("canonical_fact_id"), c.get("canonical_fact_id"),
-                                                       r.get("canonical_fact_id")], freq, unit="ratio"))
+                                                      self._lineage_ids(o, c, r), freq, unit="ratio"))
         elif metric == "NET_DEBT":
             # Net-debt bridge = (LT noncurrent + LT current + ST borrowings +
             # commercial paper) - cash - ST investments, all on ONE balance-sheet
