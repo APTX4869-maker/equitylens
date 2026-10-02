@@ -100,11 +100,19 @@ def get_segments(
             series = _annual_series(seg["revenue"])
         latest = series[-1] if series else None
         share = growth = None
+        growth_status = "INCOMPLETE_PERIOD"
+        growth_reason = "缺少可比较的上年同期分部收入"
         if latest and latest.get("value") is not None:
             share = latest["value"] / _total_revenue(segments, frequency) if _total_revenue(segments, frequency) else None
             prev = _year_ago(series)
-            if prev and prev.get("value"):
-                growth = latest["value"] / prev["value"] - 1.0
+            if prev and prev.get("value") is not None:
+                if float(prev["value"]) <= 0:
+                    growth_status = "INCOMPARABLE_BASE"
+                    growth_reason = "分部增长率要求上年同期收入为正数"
+                else:
+                    growth = latest["value"] / prev["value"] - 1.0
+                    growth_status = "OK"
+                    growth_reason = None
         # profitability
         profitability = {"status": "NOT_DISCLOSED", "value": None}
         if profit_disclosed:
@@ -120,6 +128,8 @@ def get_segments(
             "latest": latest,
             "share": share,
             "growth_yoy": growth,
+            "growth_status": growth_status,
+            "growth_reason": growth_reason,
             "profitability": profitability,
             "sources": _latest_sources(seg["sources"]),
         })

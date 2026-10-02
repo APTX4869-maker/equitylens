@@ -118,6 +118,13 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
         ocf = engine.current("OPERATING_CASH_FLOW", company_id, "ttm")
         if ocf.status != "OK":
             return ocf.status, ocf.missing_reason, []
+        if ocf.value is None or ocf.value <= 0:
+            return (
+                "INCOMPARABLE_BASE",
+                "TTM 经营现金流不为正，不能把 CapEx/OCF 解释为资本开支强度",
+                list(ocf.input_fact_ids or []),
+                "等待经营现金流恢复为正，或结合现金余额和融资披露单独评估流动性",
+            )
         capex = engine.current("CAPITAL_EXPENDITURES", company_id, "ttm")
         if capex.status != "OK":
             return capex.status, capex.missing_reason, []

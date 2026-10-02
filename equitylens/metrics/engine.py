@@ -565,19 +565,36 @@ class MetricEngine:
                 for key in keys:
                     nt = self._ttm_window(num_series, key)
                     dt = self._ttm_window(den_series, key)
-                    if nt is None or dt is None or not dt["value"]:
+                    if nt is None or dt is None:
                         continue
-                    value = nt["value"] / dt["value"]
-                    points.append(self._point(metric, value, num_series[key], f"{metric.lower()}.ttm.v1",
-                                              nt["input_ids"] + dt["input_ids"], "ttm", unit="ratio"))
+                    inputs = nt["input_ids"] + dt["input_ids"]
+                    if dt["value"] <= 0:
+                        point = self._point(
+                            metric, None, num_series[key], f"{metric.lower()}.ttm.v1",
+                            inputs, "ttm", unit="ratio",
+                        )
+                        point.status = "INCOMPARABLE_BASE" if dt["value"] < 0 else "UNAVAILABLE"
+                        point.missing_reason = (
+                            "Margin requires positive TTM REVENUE"
+                            if dt["value"] < 0 else "TTM REVENUE denominator is zero"
+                        )
+                        points.append(point)
+                    else:
+                        value = nt["value"] / dt["value"]
+                        points.append(self._point(metric, value, num_series[key], f"{metric.lower()}.ttm.v1",
+                                                  inputs, "ttm", unit="ratio"))
             else:
                 for key, n, d in self._two_series(facts[num_metric], facts["REVENUE"], freq):
                     inputs = self._lineage_ids(n, d)
-                    if float(d["value"]) == 0:
+                    denominator = float(d["value"])
+                    if denominator <= 0:
                         point = self._point(metric, None, n, f"{metric.lower()}.v1", inputs, freq,
                                             unit="ratio")
-                        point.status = "UNAVAILABLE"
-                        point.missing_reason = "REVENUE denominator is zero"
+                        point.status = "INCOMPARABLE_BASE" if denominator < 0 else "UNAVAILABLE"
+                        point.missing_reason = (
+                            "Margin requires positive REVENUE"
+                            if denominator < 0 else "REVENUE denominator is zero"
+                        )
                         points.append(point)
                     else:
                         points.append(self._point(metric, float(n["value"]) / float(d["value"]), n,
@@ -604,12 +621,24 @@ class MetricEngine:
                                                   ot["input_ids"] + ct["input_ids"], "ttm", unit="USD"))
                     else:
                         rt = self._ttm_window(rev_series, key)
-                        if rt is None or not rt["value"]:
+                        if rt is None:
                             continue
-                        points.append(self._point("FCF_MARGIN", fcf / rt["value"], ocf_series[key],
-                                                  "fcf_margin.ttm.v1",
-                                                  ot["input_ids"] + ct["input_ids"] + rt["input_ids"], "ttm",
-                                                  unit="ratio"))
+                        inputs = ot["input_ids"] + ct["input_ids"] + rt["input_ids"]
+                        if rt["value"] <= 0:
+                            point = self._point(
+                                "FCF_MARGIN", None, ocf_series[key], "fcf_margin.ttm.v1",
+                                inputs, "ttm", unit="ratio",
+                            )
+                            point.status = "INCOMPARABLE_BASE" if rt["value"] < 0 else "UNAVAILABLE"
+                            point.missing_reason = (
+                                "FCF margin requires positive TTM REVENUE"
+                                if rt["value"] < 0 else "TTM REVENUE denominator is zero"
+                            )
+                            points.append(point)
+                        else:
+                            points.append(self._point("FCF_MARGIN", fcf / rt["value"], ocf_series[key],
+                                                      "fcf_margin.ttm.v1", inputs, "ttm",
+                                                      unit="ratio"))
             else:
                 ocf = self.standalone_series(ocf_facts) if freq == "quarterly" else self._annual_series(ocf_facts)
                 capex = self.standalone_series(capex_facts) if freq == "quarterly" else self._annual_series(capex_facts)
@@ -623,9 +652,23 @@ class MetricEngine:
                                                   unit="USD"))
                     else:
                         r = rev_series.get(key)
-                        if r and r["value"]:
-                            points.append(self._point("FCF_MARGIN", fcf / float(r["value"]), o, "fcf_margin.v1",
-                                                      self._lineage_ids(o, c, r), freq, unit="ratio"))
+                        if r and r.get("value") is not None:
+                            denominator = float(r["value"])
+                            inputs = self._lineage_ids(o, c, r)
+                            if denominator <= 0:
+                                point = self._point(
+                                    "FCF_MARGIN", None, o, "fcf_margin.v1",
+                                    inputs, freq, unit="ratio",
+                                )
+                                point.status = "INCOMPARABLE_BASE" if denominator < 0 else "UNAVAILABLE"
+                                point.missing_reason = (
+                                    "FCF margin requires positive REVENUE"
+                                    if denominator < 0 else "REVENUE denominator is zero"
+                                )
+                                points.append(point)
+                            else:
+                                points.append(self._point("FCF_MARGIN", fcf / denominator, o, "fcf_margin.v1",
+                                                          inputs, freq, unit="ratio"))
         elif metric == "NET_DEBT":
             # Net-debt bridge = (LT noncurrent + LT current + ST borrowings +
             # commercial paper) - cash - ST investments, all on ONE balance-sheet

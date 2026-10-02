@@ -54,6 +54,10 @@ const FRESHNESS_SHORT_LABELS: Record<string, string> = {
   valuation_runs: "估值运行",
 };
 
+function researchCacheKey(ticker: string, identity: ResearchIdentity): string {
+  return `${ticker}:${identity.security_id}:${identity.publication_id}`;
+}
+
 export default function Home() {
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [company, setCompany] = useState("");
@@ -138,6 +142,17 @@ export default function Home() {
     setCompany(next);
   }, []);
 
+  const selectedCompany = companies.find((item) => item.ticker === company);
+  const researchIdentity: ResearchIdentity | null = selectedCompany?.publication_id
+    ? {
+        security_id: selectedCompany.security_id,
+        publication_id: selectedCompany.publication_id,
+      }
+    : null;
+  const activeCacheKey = researchIdentity
+    ? researchCacheKey(company, researchIdentity)
+    : null;
+
   // Escape closes any open drawer (metric knowledge / source lineage).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -161,6 +176,7 @@ export default function Home() {
     const selected = companies.find((item) => item.ticker === company);
     if (!selected?.publication_id) return () => controller.abort();
     const identity = { security_id: selected.security_id, publication_id: selected.publication_id };
+    const requestCacheKey = researchCacheKey(company, identity);
     (async () => {
       const [infoR, overviewR, mqR, freshR] = await Promise.allSettled([
         api.company(company, identity, controller.signal),
@@ -170,16 +186,16 @@ export default function Home() {
       ]);
       if (cancelled || requestSeq !== dataRequestSeq.current || companyRef.current !== company) return;
       if (infoR.status === "fulfilled" && overviewR.status === "fulfilled") {
-        setCache((prev) => ({ ...prev, [company]: { info: infoR.value, overview: overviewR.value } }));
+        setCache((prev) => ({ ...prev, [requestCacheKey]: { info: infoR.value, overview: overviewR.value } }));
         setError(null);
       } else {
         setError("公司或财务总览加载失败");
       }
       if (mqR.status === "fulfilled") {
-        setMarket((prev) => ({ ...prev, [company]: mqR.value }));
+        setMarket((prev) => ({ ...prev, [requestCacheKey]: mqR.value }));
       }
       if (freshR.status === "fulfilled") {
-        setFreshness((prev) => ({ ...prev, [company]: freshR.value }));
+        setFreshness((prev) => ({ ...prev, [requestCacheKey]: freshR.value }));
       }
       const failedOptionalReads = [
         mqR.status === "rejected" ? "行情" : null,
@@ -214,7 +230,9 @@ export default function Home() {
     };
   }, [company, companies, reloadKey]);
 
-  const entry = cache[company];
+  const entry = activeCacheKey ? cache[activeCacheKey] : undefined;
+  const activeMarket = activeCacheKey ? market[activeCacheKey] ?? null : null;
+  const activeFreshness = activeCacheKey ? freshness[activeCacheKey] ?? null : null;
   const openMetric = useCallback((key: string, fact: Fact | null) => {
     setMetricKey(key);
     setMetricFact(fact);
@@ -371,14 +389,6 @@ export default function Home() {
   }, [company]);
 
   const realDataTabs: TabKey[] = ["overview", "business", "financials", "management", "valuation", "risks", "ai", "moat"];
-  const selectedCompany = companies.find((item) => item.ticker === company);
-  const researchIdentity: ResearchIdentity | null = selectedCompany?.publication_id
-    ? {
-        security_id: selectedCompany.security_id,
-        publication_id: selectedCompany.publication_id,
-      }
-    : null;
-
   return (
     <div className="app">
       <Sidebar companies={companies} company={company} tab={tab} onCompany={selectCompany} onTab={setTab} onAddCompany={() => setAddOpen(true)} onOnboardingCenter={() => setCenterOpen(true)} />
@@ -388,7 +398,7 @@ export default function Home() {
           {companyListError ? <div className="action-error company-list-error" role="alert">{companyListError} <button onClick={() => void loadCompanies()}>重试</button></div> : null}
           {!company && !companyListError ? <div className="onboarding-empty">正在读取已发布公司…</div> : null}
           {company && researchIdentity ? <>
-          <Hero company={entry?.info ?? null} market={market[company] ?? null} />
+          <Hero company={entry?.info ?? null} market={activeMarket} />
           <div className="research-toolbar">
             <div className="tool-left">
               <div className="tool-group">
@@ -409,10 +419,10 @@ export default function Home() {
               <div
                 className="tool-group freshness-group"
                 data-testid="freshness-group"
-                title={freshness[company]?.hint ?? "各数据模块最近更新时间；过期/缺失模块会标色"}
+                title={activeFreshness?.hint ?? "各数据模块最近更新时间；过期/缺失模块会标色"}
               >
                 <span className="tool-label">数据新鲜度</span>
-                {(freshness[company]?.modules ?? []).slice(0, 5).map((m) => {
+                {(activeFreshness?.modules ?? []).slice(0, 5).map((m) => {
                   const color = m.status === "ok" ? "#2c8b72" : m.status === "stale" ? "#b58900" : "#c0392b";
                   return (
                     <span
@@ -455,7 +465,7 @@ export default function Home() {
 
           <RefreshProgress
             items={refreshProgress}
-            freshness={freshness[company]?.modules ?? []}
+            freshness={activeFreshness?.modules ?? []}
           />
 
           {tab === "overview" ? (
@@ -483,10 +493,10 @@ export default function Home() {
           {tab === "financials" ? (
             <section className="section active" id="section-financials">
               <FinancialsSection
-                key={`${company}:${reloadKey}`}
+                key={`${company}:${researchIdentity.publication_id}:${reloadKey}`}
                 ticker={company}
                 identity={researchIdentity}
-                market={market[company] ?? null}
+                market={activeMarket}
                 onOpenMetric={openMetric}
                 onOpenSource={openSource}
               />

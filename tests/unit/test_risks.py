@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 
 def _fact(fact_id: str, company_id: str, metric: str, year: int, value: float) -> dict:
     return {
@@ -89,3 +91,33 @@ def test_stock_split_like_share_jump_is_unverified_corporate_action_not_dilution
     assert allocation["summary"]["share_count_change_status"] == "EVIDENCE_GAP"
     assert allocation["summary"]["share_count_5y_change"] is None
     assert not any(item["topic"] == "股本净增长" for item in watch_items)
+
+
+def test_nonpositive_operating_cash_flow_is_not_a_completed_cash_check(db):
+    from equitylens.domain.risks import risk_signals
+
+    class Engine:
+        def compute(self, *_args, **_kwargs):
+            return []
+
+        def current(self, metric, *_args, **_kwargs):
+            value = -10.0 if metric == "OPERATING_CASH_FLOW" else 2.0
+            return SimpleNamespace(
+                status="OK", missing_reason=None, value=value,
+                input_fact_ids=[f"{metric}-fact"],
+            )
+
+    context = SimpleNamespace(
+        metric_engine=Engine(), security_id="security-test",
+        publication_id="publication-test",
+        segments=lambda **_kwargs: {
+            "segments": [], "total_revenue": None, "profit_disclosed": False,
+        },
+    )
+
+    result = risk_signals(db, "0000000996", "NEGOCF", context=context)
+    cash = next(check for check in result["checks"] if check["key"] == "cash_flow")
+
+    assert cash["status"] == "INCOMPARABLE_BASE"
+    assert cash["reason"]
+    assert cash["next_evidence"]

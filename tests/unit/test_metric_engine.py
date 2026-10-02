@@ -271,6 +271,47 @@ def test_ratio_zero_denominator_is_explicitly_unavailable(db):
     assert point.input_fact_ids == ["gross", "revenue-zero"]
 
 
+@pytest.mark.parametrize("frequency,period_type", [
+    ("quarterly", "Q_STANDALONE"),
+    ("annual", "FY"),
+])
+def test_margin_negative_revenue_is_an_incomparable_base(db, frequency, period_type):
+    """A negative revenue denominator is not a meaningful directional margin."""
+    cid = f"NEGATIVE-MARGIN-{frequency}"
+    quarter = 1 if frequency == "quarterly" else None
+    _insert_fact(db, cid, "OPERATING_INCOME", period_type, 2025, quarter, 10.0,
+                 fact_id="operating-income")
+    _insert_fact(db, cid, "REVENUE", period_type, 2025, quarter, -100.0,
+                 fact_id="negative-revenue")
+
+    point = MetricEngine(db).compute(
+        "OPERATING_MARGIN", cid, frequency=frequency
+    )[0]
+
+    assert point.value is None
+    assert point.status == "INCOMPARABLE_BASE"
+    assert "positive" in (point.missing_reason or "").lower()
+    assert point.input_fact_ids == ["operating-income", "negative-revenue"]
+
+
+def test_ttm_fcf_margin_negative_revenue_is_an_incomparable_base(db):
+    cid = "NEGATIVE-TTM-FCF-MARGIN"
+    for quarter in range(1, 5):
+        _insert_fact(db, cid, "OPERATING_CASH_FLOW", "Q_STANDALONE", 2025, quarter,
+                     20.0, fact_id=f"ocf-{quarter}")
+        _insert_fact(db, cid, "CAPITAL_EXPENDITURES", "Q_STANDALONE", 2025, quarter,
+                     5.0, fact_id=f"capex-{quarter}")
+        _insert_fact(db, cid, "REVENUE", "Q_STANDALONE", 2025, quarter,
+                     -100.0, fact_id=f"revenue-{quarter}")
+
+    point = MetricEngine(db).compute("FCF_MARGIN", cid, frequency="ttm")[-1]
+
+    assert point.value is None
+    assert point.status == "INCOMPARABLE_BASE"
+    assert "positive" in (point.missing_reason or "").lower()
+    assert len(point.input_fact_ids) == 12
+
+
 def test_aapl_eps_ttm_missing_q4_is_gap(engine):
     """D06/D09: EPS is a per-share ratio and is NOT additive quarter-over-quarter;
     the engine must never emit the bogus 8.44 TTM sum for it."""

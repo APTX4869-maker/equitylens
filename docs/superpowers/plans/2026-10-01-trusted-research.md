@@ -256,3 +256,10 @@ Commit message: `docs: record trusted research verification`
 - Missing evidence and negative/zero bases never become directional claims.
 - Assistant valuation text cannot bypass confirmation or model-applicability gates.
 - Every browser module stays on one identity during concurrent reloads and company switches.
+
+## Post-review hardening (2026-10-02)
+
+- [x] Reviewed publications reject legacy period-only `derived:` identities instead of recomputing from mutable live tables.
+- [x] Negative revenue produces `INCOMPARABLE_BASE` for margins and segment growth; nonpositive TTM OCF blocks the CapEx/OCF risk conclusion.
+- [x] Shell data caches are keyed by ticker, security and publication; financials remount on a publication change.
+- [x] Final verification: backend 505 passed; TypeScript, ESLint and production build passed; Playwright 49 passed.

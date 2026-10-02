@@ -142,15 +142,15 @@
 
 | 问题 | 状态 | 本批证据与边界 |
 |---|---|---|
-| B01 已发布数据与研究读取分裂 | 已完成 | `PublishedResearchContext` 为总览、指标、风险、护城河、助手提供同一封存事实/分部/来源；冲突可变表和旧发布切换回归通过。真实副本 AAPL、MSFT 的总览、财务、业务、护城河、风险、管理层、承诺和助手响应均返回所选 identity。 |
+| B01 已发布数据与研究读取分裂 | 已完成 | `PublishedResearchContext` 为总览、指标、风险、护城河、助手提供同一封存事实/分部/来源；冲突可变表和旧发布切换回归通过。前端缓存也按 ticker、security、publication 三元组隔离，发布切换时不再把旧壳内容标成新版本。真实副本 AAPL、MSFT 的总览、财务、业务、护城河、风险、管理层、承诺和助手响应均返回所选 identity。 |
 | F02 助手绕过估值门禁 | 已完成 | 未确认、已确认、过期行情和 active publication 变化分别有回归。副本 AAPL/MSFT 均返回 `needs_review`、空 `claims` 和“前往估值页确认假设”，没有公允价值或区间。 |
 | B02 缺分部导致护城河 500 | 已完成 | 无分部 mapping、空分部、缺比较期均返回显式 `EVIDENCE_GAP/INCOMPLETE_PERIOD`，不再 500。副本五家公司均已有分部，故缺分部使用隔离夹具验证，不为造场景修改副本。 |
 | B03 三年财务表截断且单元格不可溯源 | 已完成 | facts 的 `limit` 改为按指标限制；三年×六指标表中的有值单元格成为可键盘操作的来源按钮，并携带当前 publication。 |
 | B04 KPI 静默混用期间 | 已完成 | 每张 KPI 返回并显示自己的期间；`period_alignment` 列出参考期、落后项和原因。AAPL 真实页面明确提示收入/利润与 OCF/FCF 截止期不一致。 |
 | F06 分部来源不能打开 | 已完成 | 分部来源 chip 打开证据抽屉；AAPL 浏览器实测从 Americas 分部到 10-Q 官方链接。自动回归另覆盖无 URL 时显示“官方链接不可用”，不伪造链接。 |
-| B07 缺失仍判断、拆股误判稀释 | 已完成 | 缺失、零/负比较基数、拆股样股数跳变均转为不完整/待核验证据状态；不再形成增长或稀释结论。 |
+| B07 缺失仍判断、拆股误判稀释 | 已完成 | 缺失、零/负比较基数、拆股样股数跳变均转为不完整/待核验证据状态；负收入不再生成利润率、FCF margin 或分部增长方向，非正经营现金流不再形成 CapEx/OCF 强度结论。 |
 | B08 过期行情显示为未同步 | 已完成 | `ok/stale/missing` 端到端区分观察时间与抓取时间。副本 AAPL、MSFT 顶部均显示“行情已过期”及价格/观察日，而不是“未同步”。 |
-| B12 来源抽屉截断官方文件 | 已完成 | publication 内的递归溯源可从派生/规范化事实到 source document；浏览器回归验证深层证据最终有可点击官方 URL。 |
+| B12 来源抽屉截断官方文件 | 已完成 | publication 内的递归溯源可从派生/规范化事实到 source document；浏览器回归验证深层证据最终有可点击官方 URL。旧 `derived:` 身份只保留给 legacy 数据集，不能在 reviewed publication 内从 live table 重算。 |
 | B13 负基数及通用状态误导 | 部分完成 | 负/零基数已不再渲染百分比方向判断，期间缺失也有明确状态；所有模块统一加载、失败、中文重试体验不在本批范围，仍保留为后续事项。 |
 
 ### 真实副本用户流程
@@ -158,12 +158,13 @@
 - AAPL identity：security `70a09272-f9b8-50c6-ae38-db55318304b8`，publication `2a09e38d-c8f5-4a46-8e52-076b322c8da2`。浏览器依次打开八个研究模块，无加载失败；FY2025 收入 `cf_465bf3a8d1c6`、护城河 `cf_210c436a7334`、风险 `cf_415473559526`、助手利润率 `cf_a68db8a8ad97` 均在同一 publication 内解析到 SEC 官方文件。
 - MSFT identity：security `df451111-24a6-57aa-86c8-eb2668d95427`，publication `cfaea199-58c8-42cc-a3d9-f47028d7bff3`。八模块同样无加载失败；FY2026 收入 `cf_af2d4e9d6338`、护城河 `cf_8c2df35d36e0`、风险 `cf_255538c76946` 可到达 SEC 官方文件。
 - 实测同时发现 MSFT FY2026Q4 为“年度减九个月累计”推导时，利润率结论的 evidence 曾为 `null`。新增失败回归后，指标引擎会把派生季度的底层 canonical IDs 展平；修复后营业利润率证据为 `cf_92c2682382f2`、`cf_f8c9d917f5e7`、`cf_a452f5ad6aa1`、`cf_af2d4e9d6338`，首项已实际解析到 SEC 10-Q。修复提交为 `e55643b`。
+- 最终独立审查又识别出三类 Important 边界：旧派生 ID 可在 reviewed publication 下读取 live table、负收入/非正 OCF 仍可能生成方向性比率、同一公司换 publication 时 ticker-only 前端缓存会短暂混用旧内容。三项均以失败回归固定后修复；没有 Critical 或 Minor 遗留。审查未替本轮重新判断 SEC concept 会计语义、P1 范围外产品批次或五公司在线复跑，这些不被写成已验收。
 
 ### 自动化结果
 
-- 后端全量：`uv run pytest -q` → **499 passed, 1 warning in 140.52s**；warning 仍为 Starlette TestClient/httpx 上游弃用提示。
+- 后端全量：`.venv/bin/pytest -q` → **505 passed, 1 warning in 142.92s**；warning 仍为 Starlette TestClient/httpx 上游弃用提示。
 - 前端 TypeScript、ESLint、Next.js production build 均通过。
-- 全量 Playwright：**49 passed (31.8s)**；其中 publication 固定、分部官方链接/缺口、深层来源、三年表、过期行情和估值 action 均有专项断言。
+- 全量 Playwright（系统 Chrome）：**49 passed (34.2s)**；其中 publication 固定、同公司发布切换缓存隔离、分部官方链接/缺口、深层来源、三年表、过期行情和估值 action 均有专项断言。
 - 缺分部、缺比较期、负/零基数、拆股样跳变、模块不可用、split-brain 和 Q4 证据专项：**8 passed, 90 deselected, 1 warning in 44.78s**。
 
 外部 URL 的长期可访问性不由本地代码保证；本批证明的是选定 publication 中保存的官方 URL 可被产品到达，且缺 URL 会明确标为 gap。SEC 后续限流、网络故障或原文迁移须与代码正确性分开记录。

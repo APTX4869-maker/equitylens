@@ -865,7 +865,11 @@ def _build_derived_node(
         }
 
     # Read legacy period-only identities while existing links age out. They are
-    # recomputed and are not issued by the current API.
+    # recomputed and are not issued by the current API. This compatibility path
+    # is live-table based, so it must never be used inside a reviewed, sealed
+    # publication where it could splice a newer fact into an older research view.
+    if dataset_id is not None and not _is_legacy_dataset(store, dataset_id):
+        return None
     parts = entity_id.split(":")
     if len(parts) != 5 or parts[0] != "derived":
         return None

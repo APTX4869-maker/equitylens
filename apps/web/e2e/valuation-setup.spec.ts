@@ -65,19 +65,29 @@ function readyValuation() {
 }
 
 async function stubSetupPage(page: Page, valuationReady: () => boolean) {
-  await page.route("**/api/v1/companies?**", (route) => route.fulfill({ json: {
-    items: [{
+  await page.route("**/api/v1/companies?**", (route) => {
+    const ready = valuationReady();
+    return route.fulfill({ json: {
+      items: [{
       company_id: "0001045810", security_id: "sec-nvda", ticker: "NVDA",
-      name: "NVIDIA CORP", exchange: "NASDAQ", publication_id: "pub-nvda",
+      name: "NVIDIA CORP", exchange: "NASDAQ", publication_id: ready ? "pub-nvda-v2" : "pub-nvda",
       quality_status: "VERIFIED",
-      capabilities: [{ module: "valuation", status: valuationReady() ? "READY" : "NEEDS_CONFIGURATION", reason: valuationReady() ? null : "确认估值研究假设" }],
-    }],
-    next_cursor: null,
-  } }));
-  await page.route("**/api/v1/companies/NVDA?**", (route) => route.fulfill({ json: {
-    ticker: "NVDA", cik: "0001045810", name: "NVIDIA CORP", exchange: "NASDAQ",
-    fiscal_year_end: "01-31", source_freshness: {},
-  } }));
+      capabilities: [{ module: "valuation", status: ready ? "READY" : "NEEDS_CONFIGURATION", reason: ready ? null : "确认估值研究假设" }],
+      }],
+      next_cursor: null,
+    } });
+  });
+  await page.route("**/api/v1/companies/NVDA?**", async (route) => {
+    const publicationId = new URL(route.request().url()).searchParams.get("publication_id");
+    if (publicationId === "pub-nvda-v2") {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return route.fulfill({ json: {
+      ticker: "NVDA", cik: "0001045810",
+      name: publicationId === "pub-nvda-v2" ? "NVIDIA UPDATED" : "NVIDIA CORP",
+      exchange: "NASDAQ", fiscal_year_end: "01-31", source_freshness: {},
+    } });
+  });
   await page.route("**/api/v1/companies/NVDA/overview?**", (route) => route.fulfill({ json: {
     ticker: "NVDA", latest_period: { fiscal_year: 2026, fiscal_quarter: 4 },
     kpis: {}, trend: {}, provenance_available: true,
@@ -140,9 +150,20 @@ test("reviews complete assumptions before confirming valuation", async ({ page }
   await page.getByRole("slider", { name: /WACC/ }).fill("12");
   await expect(setup).toContainText("$180");
   await page.getByRole("checkbox", { name: /我已审核/ }).check();
+  const newPublicationRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/v1/companies/NVDA"
+      && url.searchParams.get("publication_id") === "pub-nvda-v2";
+  });
   await page.getByTestId("valuation-confirm").click();
+  await newPublicationRequest;
+
+  // Once the directory selects v2, the v1 shell must disappear immediately;
+  // it cannot be relabelled as v2 while the delayed v2 payload is still loading.
+  await expect(page.getByRole("heading", { name: "NVIDIA CORP NVDA" })).toHaveCount(0, { timeout: 150 });
 
   await expect(page.getByTestId("valuation-setup")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "NVIDIA UPDATED NVDA" })).toBeVisible();
   await expect(page.getByTestId("fair-value")).toHaveText("$200");
   expect(confirmation).toMatchObject({
     security_id: "sec-nvda",
