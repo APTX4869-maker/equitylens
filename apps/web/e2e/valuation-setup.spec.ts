@@ -145,6 +145,8 @@ test("reviews complete assumptions before confirming valuation", async ({ page }
   const setup = page.getByTestId("valuation-setup");
   await expect(setup).toContainText("pub-nvda");
   await expect(setup).toContainText("fcff_dcf.v2");
+  await expect(page.getByTestId("valuation-input-growth")).toHaveValue("30");
+  await expect(page.getByTestId("valuation-input-margin")).toHaveValue("60.5");
   await expect(page.getByTestId("valuation-confirm")).toBeDisabled();
 
   await page.getByRole("slider", { name: /WACC/ }).fill("12");

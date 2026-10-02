@@ -6,6 +6,7 @@ import { fmtMoney } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
 import { ValuationSetupCard } from "@/components/sections/ValuationSetupCard";
+import { ValuationControls } from "@/components/valuation/ValuationControls";
 import type { ResearchIdentity } from "@/lib/types";
 import {
   buildPreviewRequest,
@@ -13,8 +14,10 @@ import {
   draftFromInputs,
   rebaseDraftOnDefaults,
   updateDraft,
+  validateValuationDraft,
   type DcfInputs,
   type DraftEdit,
+  type ValuationDraftErrors,
 } from "@/lib/valuationDraft";
 
 type RunResponse = {
@@ -122,14 +125,6 @@ type ValuationPlan = {
   assumptions_json?: Record<string, unknown>;
 };
 
-const RNG = {
-  growth: { min: -100, max: 20, step: 0.5 },
-  margin: { min: 5, max: 60, step: 0.5 },
-  wacc: { min: 4, max: 15, step: 0.25 },
-  terminal: { min: 0.5, max: 4, step: 0.25 },
-  roic: { min: 8, max: 40, step: 1 },
-};
-
 export function ValuationSection({
   ticker,
   identity,
@@ -171,6 +166,7 @@ export function ValuationSection({
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [changedFields, setChangedFields] = useState<string[]>([]);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
+  const [rawControlErrors, setRawControlErrors] = useState<ValuationDraftErrors>({});
   const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
   const [draftBaselineRefresh, setDraftBaselineRefresh] = useState(refreshGeneration);
   const reqSeq = useRef(0);
@@ -263,7 +259,13 @@ export function ValuationSection({
       setReverseLoading(false);
       draftRef.current = next;
       setDraft(next);
-      void preview(next, false);
+      if (Object.keys(validateValuationDraft(next)).length === 0) {
+        void preview(next, false);
+      } else {
+        reqSeq.current += 1;
+        setLoading(false);
+        setSaved(false);
+      }
     },
     [preview]
   );
@@ -502,11 +504,23 @@ export function ValuationSection({
   const refRange = fair != null && bear != null && bull != null ? [Math.min(bear, bull), Math.max(bear, bull)] : null;
   const selectedPlanValue = base?.scenarios[planScenario]?.result?.fair_value_per_share ?? null;
 
-  const growthPct = draft ? draft.revenue_growth[0] * 100 : 0;
-  const marginPct = draft ? draft.op_margin_end * 100 : 0;
-  const waccPct = draft ? draft.wacc * 100 : 0;
-  const terminalPct = draft ? draft.terminal_growth * 100 : 0;
-  const roicPct = draft ? draft.terminal_roic * 100 : 0;
+  const draftErrors = useMemo(
+    () => draft ? validateValuationDraft(draft) : {},
+    [draft]
+  );
+  const controlErrors = useMemo(
+    () => ({ ...draftErrors, ...rawControlErrors }),
+    [draftErrors, rawControlErrors]
+  );
+  const hasControlErrors = Object.keys(controlErrors).length > 0;
+  const onRawValidityChange = useCallback((field: DraftEdit["field"], message: string | null) => {
+    setRawControlErrors((current) => {
+      const next = { ...current };
+      if (message) next[field] = message;
+      else delete next[field];
+      return next;
+    });
+  }, []);
 
   // The visible result is saveable only when the applied inputs still equal the
   // current draft and there is no pending/failed request.
@@ -521,7 +535,8 @@ export function ValuationSection({
     String(refreshGeneration),
   ].join("|") : "";
   const reverseStale = reverse != null && reverse.requestIdentity !== currentReverseIdentity;
-  const canSave = !refreshStale && !isDirty && !error && !loading && appliedFingerprint != null;
+  const canSave = !refreshStale && !isDirty && !error && !loading
+    && !hasControlErrors && appliedFingerprint != null;
 
   const forecastChart = useMemo(() => {
     if (!base) return null;
@@ -683,48 +698,20 @@ export function ValuationSection({
             <div className="fair" style={{ fontSize: 34 }} data-testid="fair-value">${fair != null ? fair.toFixed(0) : "—"}</div>
             <div className="delta">净现金 ${fmtMoney(base.result.net_cash)} · 股本 {Math.round(i.shares / 1e6)}M（{meta.shares?.basis ?? i.share_basis_label ?? "股数口径未标注"}）</div>
           </div>
-          <div className="dcf-sliders">
-            <div className="dcf-control">
-              <label htmlFor="growth-slider">首年收入增速（路径逐年递减）</label>
-              <input id="growth-slider" type="range" min={RNG.growth.min} max={RNG.growth.max} step={RNG.growth.step}
-                value={growthPct} disabled={refreshGeneration > draftBaselineRefresh}
-                onChange={(e) => edit({ field: "growth", percent: Number(e.target.value) })} />
-              <output>{growthPct.toFixed(1)}%</output>
-              {assumptionNote("revenue_growth")}
-            </div>
-            <div className="dcf-control">
-              <label htmlFor="margin-slider">第5年营业利润率</label>
-              <input id="margin-slider" type="range" min={RNG.margin.min} max={RNG.margin.max} step={RNG.margin.step}
-                value={marginPct} disabled={refreshGeneration > draftBaselineRefresh}
-                onChange={(e) => edit({ field: "margin", percent: Number(e.target.value) })} />
-              <output>{marginPct.toFixed(1)}%</output>
-              {assumptionNote("op_margin_end")}
-            </div>
-            <div className="dcf-control">
-              <label htmlFor="wacc-slider">WACC 折现率</label>
-              <input id="wacc-slider" type="range" min={RNG.wacc.min} max={RNG.wacc.max} step={RNG.wacc.step}
-                value={waccPct} disabled={refreshGeneration > draftBaselineRefresh}
-                onChange={(e) => edit({ field: "wacc", percent: Number(e.target.value) })} />
-              <output>{waccPct.toFixed(2)}%</output>
-              {assumptionNote("wacc")}
-            </div>
-            <div className="dcf-control">
-              <label htmlFor="terminal-slider">永续增长率</label>
-              <input id="terminal-slider" type="range" min={RNG.terminal.min} max={RNG.terminal.max} step={RNG.terminal.step}
-                value={terminalPct} disabled={refreshGeneration > draftBaselineRefresh}
-                onChange={(e) => edit({ field: "terminal", percent: Number(e.target.value) })} />
-              <output>{terminalPct.toFixed(2)}%</output>
-              {assumptionNote("terminal_growth")}
-            </div>
-            <div className="dcf-control">
-              <label htmlFor="roic-slider">稳定期增量资本回报率</label>
-              <input id="roic-slider" type="range" min={RNG.roic.min} max={RNG.roic.max} step={RNG.roic.step}
-                value={roicPct} disabled={refreshGeneration > draftBaselineRefresh}
-                onChange={(e) => edit({ field: "roic", percent: Number(e.target.value) })} />
-              <output>{roicPct.toFixed(0)}%</output>
-              {assumptionNote("terminal_roic")}
-            </div>
-          </div>
+          <ValuationControls
+            draft={i}
+            disabled={refreshGeneration > draftBaselineRefresh}
+            errors={controlErrors}
+            onEdit={edit}
+            onRawValidityChange={onRawValidityChange}
+            notes={{
+              growth: assumptionNote("revenue_growth"),
+              margin: assumptionNote("op_margin_end"),
+              wacc: assumptionNote("wacc"),
+              terminal: assumptionNote("terminal_growth"),
+              roic: assumptionNote("terminal_roic"),
+            }}
+          />
           <div className="card-sub" style={{ marginBottom: 8 }}>
             稳定期 Y{base.result.terminal_forecast.year}：NOPAT {fmtMoney(base.result.terminal_forecast.nopat)}，
             再投资率 {(base.result.terminal_forecast.reinvestment_rate * 100).toFixed(1)}%，

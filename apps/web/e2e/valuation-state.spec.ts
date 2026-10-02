@@ -26,9 +26,9 @@ type Assumptions = {
 function defaults(): Assumptions {
   return {
     revenue_base: 416_161_000_000,
-    revenue_growth: [0.08, 0.075, 0.07, 0.065, 0.06],
+    revenue_growth: [0.30, 0.24, 0.18, 0.14, 0.10],
     op_margin_start: 0.32,
-    op_margin_end: 0.33,
+    op_margin_end: 0.6088,
     tax_rate: 0.16,
     da_pct: 0.03,
     capex_pct: 0.04,
@@ -40,6 +40,35 @@ function defaults(): Assumptions {
     shares: 15_000_000_000,
   };
 }
+
+test("shows exact issuer values with adaptive sliders and blocks invalid text", async ({ page }) => {
+  let runRequests = 0;
+  await stubPage(page);
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", async (route) => {
+    runRequests += 1;
+    const body = route.request().postDataJSON() as { assumptions: Assumptions };
+    await route.fulfill({ json: runResponse(250, body.assumptions) });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "估值" }).click();
+  await expect(page.getByTestId("valuation-input-growth")).toHaveValue("30");
+  await expect(page.getByTestId("valuation-input-margin")).toHaveValue("60.88");
+  await expect(page.getByTestId("valuation-slider-growth")).toHaveAttribute("max", "30");
+  await expect(page.getByTestId("valuation-slider-margin")).toHaveAttribute("max", "61");
+
+  await page.getByTestId("valuation-input-margin").fill("");
+  await expect(page.getByText("请输入有效数字")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
+  expect(runRequests).toBe(0);
+
+  await page.getByTestId("valuation-input-margin").fill("60.88");
+  await expect.poll(() => runRequests).toBe(1);
+  await page.getByTestId("valuation-input-terminal").fill("9.5");
+  await expect(page.getByText("WACC 必须至少高于永续增长率 1 个百分点")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
+  expect(runRequests).toBe(1);
+});
 
 function runResponse(fair: number, assumptions: Assumptions) {
   const scen = (mult: number, label: string) => ({

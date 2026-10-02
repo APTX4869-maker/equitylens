@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, userErrorMessage } from "@/lib/api";
+import { ValuationControls } from "@/components/valuation/ValuationControls";
 import {
   buildPreviewRequest,
   draftFromInputs,
   updateDraft,
+  validateValuationDraft,
   type DcfInputs,
   type DraftEdit,
+  type ValuationDraftErrors,
 } from "@/lib/valuationDraft";
 import { Card, Pill, Spinner } from "@/components/ui";
 import type { ResearchIdentity } from "@/lib/types";
@@ -51,29 +54,6 @@ export type ValuationSetupCardProps = {
   onConfirmed: () => Promise<void> | void;
 };
 
-const controls: Array<{
-  field: DraftEdit["field"];
-  meta: string;
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-}> = [
-  { field: "growth", meta: "revenue_growth", label: "首年收入增速（五年逐步回落）", min: -100, max: 60, step: 0.5 },
-  { field: "margin", meta: "op_margin_end", label: "第五年营业利润率", min: 5, max: 80, step: 0.5 },
-  { field: "wacc", meta: "wacc", label: "WACC 折现率", min: 4, max: 20, step: 0.25 },
-  { field: "terminal", meta: "terminal_growth", label: "永续增长率", min: 0.5, max: 4, step: 0.25 },
-  { field: "roic", meta: "terminal_roic", label: "稳定期增量资本回报率", min: 8, max: 40, step: 1 },
-];
-
-function percent(inputs: DcfInputs, field: DraftEdit["field"]): number {
-  if (field === "growth") return inputs.revenue_growth[0] * 100;
-  if (field === "margin") return inputs.op_margin_end * 100;
-  if (field === "wacc") return inputs.wacc * 100;
-  if (field === "terminal") return inputs.terminal_growth * 100;
-  return inputs.terminal_roic * 100;
-}
-
 function draftUrl(ticker: string, identity: ResearchIdentity) {
   return `/api/v1/companies/${encodeURIComponent(ticker)}/valuation-profile/draft?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
 }
@@ -89,6 +69,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
   const [submitting, setSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rawControlErrors, setRawControlErrors] = useState<ValuationDraftErrors>({});
   const [confirmed, setConfirmed] = useState(false);
   const requestSequence = useRef(0);
 
@@ -127,6 +108,10 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
     const next = updateDraft(draft, change);
     const sequence = ++requestSequence.current;
     setDraft(next);
+    if (Object.keys(validateValuationDraft(next)).length > 0) {
+      setPreviewing(false);
+      return;
+    }
     setPreviewing(true);
     setError(null);
     try {
@@ -145,6 +130,23 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
       if (sequence === requestSequence.current) setPreviewing(false);
     }
   }, [draft, source, ticker]);
+
+  const draftErrors = useMemo(
+    () => draft ? validateValuationDraft(draft) : {},
+    [draft]
+  );
+  const controlErrors = useMemo(
+    () => ({ ...draftErrors, ...rawControlErrors }),
+    [draftErrors, rawControlErrors]
+  );
+  const onRawValidityChange = useCallback((field: DraftEdit["field"], message: string | null) => {
+    setRawControlErrors((current) => {
+      const next = { ...current };
+      if (message) next[field] = message;
+      else delete next[field];
+      return next;
+    });
+  }, []);
 
   const confirm = useCallback(async () => {
     if (!source || !draft || !acknowledged || submitting) return;
@@ -187,6 +189,16 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
     );
   }
 
+  const assumptionNote = (key: string) => {
+    const meta = source.assumptions.meta[key];
+    return (
+      <div className="assumption-context">
+        <strong>{meta?.reason ?? "系统生成的研究假设，需人工审核。"}</strong>
+        <span>{meta?.version ?? meta?.as_of ?? "未标注版本"} · {meta?.source ?? "未标注来源"}</span>
+      </div>
+    );
+  };
+
   return (
     <Card className="valuation-setup card-pad" data-testid="valuation-setup">
       <div className="valuation-setup-head">
@@ -206,30 +218,20 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
 
       <div className="valuation-review-grid">
         <div className="valuation-review-controls">
-          {controls.map((control) => {
-            const value = percent(draft, control.field);
-            const meta = source.assumptions.meta[control.meta];
-            return (
-              <div className="dcf-control" key={control.field}>
-                <label htmlFor={`setup-${control.field}`}>{control.label}</label>
-                <input
-                  id={`setup-${control.field}`}
-                  type="range"
-                  min={control.min}
-                  max={control.max}
-                  step={control.step}
-                  value={value}
-                  disabled={submitting}
-                  onChange={(event) => void edit({ field: control.field, percent: Number(event.target.value) } as DraftEdit)}
-                />
-                <output>{value.toFixed(control.step < 1 ? 2 : 1)}%</output>
-                <div className="assumption-context">
-                  <strong>{meta?.reason ?? "系统生成的研究假设，需人工审核。"}</strong>
-                  <span>{meta?.version ?? meta?.as_of ?? "未标注版本"} · {meta?.source ?? "未标注来源"}</span>
-                </div>
-              </div>
-            );
-          })}
+          <ValuationControls
+            draft={draft}
+            disabled={submitting}
+            errors={controlErrors}
+            onEdit={(change) => void edit(change)}
+            onRawValidityChange={onRawValidityChange}
+            notes={{
+              growth: assumptionNote("revenue_growth"),
+              margin: assumptionNote("op_margin_end"),
+              wacc: assumptionNote("wacc"),
+              terminal: assumptionNote("terminal_growth"),
+              roic: assumptionNote("terminal_roic"),
+            }}
+          />
         </div>
 
         <aside className="valuation-review-preview" aria-live="polite">
@@ -252,7 +254,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
           <input type="checkbox" checked={acknowledged} disabled={submitting || confirmed} onChange={(event) => setAcknowledged(event.target.checked)} />
           <span>我已审核该证券和本发布版本的估值假设</span>
         </label>
-        <button className="primary-action" data-testid="valuation-confirm" disabled={!acknowledged || submitting || previewing || confirmed || Boolean(error)} onClick={() => void confirm()}>
+        <button className="primary-action" data-testid="valuation-confirm" disabled={!acknowledged || submitting || previewing || confirmed || Boolean(error) || Object.keys(controlErrors).length > 0} onClick={() => void confirm()}>
           {submitting ? "正在确认…" : "确认并启用估值"}
         </button>
       </div>

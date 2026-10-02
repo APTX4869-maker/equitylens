@@ -29,6 +29,52 @@ export type DraftEdit =
   | { field: "terminal"; percent: number }
   | { field: "roic"; percent: number };
 
+export type PercentRange = { min: number; max: number; step: number };
+export type ValuationDraftErrors = Partial<Record<DraftEdit["field"], string>>;
+
+/** Expand a familiar slider range just enough to contain the exact issuer value. */
+export function adaptivePercentRange(range: PercentRange, value: number): PercentRange {
+  if (!Number.isFinite(value) || range.step <= 0) return range;
+  const min = value < range.min
+    ? Math.floor(value / range.step) * range.step
+    : range.min;
+  const max = value > range.max
+    ? Math.ceil(value / range.step) * range.step
+    : range.max;
+  return { ...range, min, max };
+}
+
+/** Client-side mirror of the DCF domain checks used for immediate feedback. */
+export function validateValuationDraft(draft: DcfInputs): ValuationDraftErrors {
+  const errors: ValuationDraftErrors = {};
+  if (draft.revenue_growth.some((value) => !Number.isFinite(value) || value < -1)) {
+    errors.growth = "每年收入增速必须是不低于 -100% 的有效数字";
+  }
+  if (!Number.isFinite(draft.op_margin_end) || draft.op_margin_end > 1) {
+    errors.margin = "第 5 年营业利润率必须是有效数字且不高于 100%";
+  }
+  if (!Number.isFinite(draft.wacc) || draft.wacc <= 0) {
+    errors.wacc = "WACC 必须是大于 0 的有效数字";
+  } else if (
+    Number.isFinite(draft.terminal_growth)
+    && draft.wacc - draft.terminal_growth < 0.01 - 1e-9
+  ) {
+    errors.wacc = "WACC 必须至少高于永续增长率 1 个百分点";
+  }
+  if (!Number.isFinite(draft.terminal_growth)) {
+    errors.terminal = "永续增长率必须是有效数字";
+  }
+  if (!Number.isFinite(draft.terminal_roic) || draft.terminal_roic <= 0) {
+    errors.roic = "稳定期 ROIC 必须是大于 0 的有效数字";
+  } else if (
+    Number.isFinite(draft.terminal_growth)
+    && draft.terminal_growth / draft.terminal_roic >= 1
+  ) {
+    errors.roic = "永续增长率必须低于稳定期 ROIC";
+  }
+  return errors;
+}
+
 /** Build a local draft from the backend's executed inputs (default/run). */
 export function draftFromInputs(inputs: DcfInputs): DcfInputs {
   return { ...inputs, revenue_growth: [...(inputs.revenue_growth ?? [])] };
@@ -61,7 +107,12 @@ export function rebaseDraftOnDefaults(defaults: DcfInputs, current: DcfInputs): 
 export function updateDraft(draft: DcfInputs, edit: DraftEdit): DcfInputs {
   if (edit.field === "growth") {
     const g = edit.percent / 100;
-    return { ...draft, revenue_growth: [g, g - 0.005, g - 0.01, g - 0.015, g - 0.02] };
+    return {
+      ...draft,
+      revenue_growth: [0, 0.005, 0.01, 0.015, 0.02].map((decline) =>
+        Math.max(-1, g - decline)
+      ),
+    };
   }
   if (edit.field === "margin") return { ...draft, op_margin_end: edit.percent / 100 };
   if (edit.field === "wacc") return { ...draft, wacc: edit.percent / 100 };
