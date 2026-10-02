@@ -10,6 +10,8 @@
 
 同日用户批准“可信度优先”实施。P0数据安全已完成：严格请求与有限数零写入、刷新证据路径事务内持久化、只读历史路径审计、DuckDB UTC连接契约。后端全量464 passed，前端类型/lint/production build通过；测试副本路径审计为10条有效、84条可恢复、0条hash不匹配、0条真正缺失。未自动修改正式历史数据；P1可信研究及后续阶段仍待实施。
 
+2026-10-02完成P1可信研究批次：所有研究读取统一绑定封存 publication，缺分部/缺比较证据转为显式 gap，年度财务按指标取三年并逐格溯源，KPI 显示各自期间，过期行情不再冒充未同步，助手估值复用正式确认门禁，全部前端模块携带同一 security/publication identity。隔离副本中的 AAPL、MSFT 各八模块浏览器走查无加载失败，官方证据可从页面或 API 到达 SEC 原文；未确认估值只显示审核入口。实测发现并修复 MSFT 推导 Q4 利润率丢失 evidence 的边界（`e55643b`）。后端全量499 passed，前端 type/lint/build通过，Playwright全量49 passed。B01/F02/B02/B03/B04/F06/B07/B08/B12已完成；B13仅完成负/零基数与期间缺口部分。估值个人编辑、更新闭环、移动端和通用错误体验仍是后续独立批次，不能据此宣称整个平台个人使用验收完成。完整证据见 [补充全流程测试](2026-10-01-personal-product-full-validation.md#p1-可信研究实施与验收2026-10-02)。
+
 扩展计划：`docs/superpowers/plans/2026-09-19-company-onboarding-closure.md`。C01—C10 用于补齐真实发行人固定证据、适配工作台、全局进度和 NVDA 发布闭环。NVDA 研究补全计划：`docs/superpowers/plans/2026-09-25-nvda-completion.md`。
 
 | 阶段 | 实现 | 验证 | 复核 | 证据/阻塞 |

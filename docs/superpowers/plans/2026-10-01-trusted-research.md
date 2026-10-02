@@ -229,7 +229,7 @@ Commit message: `feat: pin research ui to publication`
 - Modify: `docs/reviews/2026-10-01-personal-product-full-validation.md`
 - Modify: `docs/reviews/2026-09-11-company-onboarding-progress.md`
 
-- [ ] **Step 1: Run full automated verification**
+- [x] **Step 1: Run full automated verification**
 
 Run: `uv run pytest -q`
 
@@ -237,15 +237,15 @@ Run in `apps/web`: `pnpm exec tsc --noEmit && pnpm lint && pnpm build`
 
 Run: `PLAYWRIGHT_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm exec playwright test --reporter=line`
 
-- [ ] **Step 2: Run copied-data user flows**
+- [x] **Step 2: Run copied-data user flows**
 
 Start backend/frontend against the existing isolated data copy. For AAPL and MSFT open overview, financials, business, moat, risks and assistant; capture each returned publication identity and verify at least one official evidence link per available module. Exercise missing-segment and unconfirmed-valuation paths using fixture/copy state, not formal data.
 
-- [ ] **Step 3: Update status precisely**
+- [x] **Step 3: Update status precisely**
 
 Mark only B01/F02/B02/B03/B04/F06/B07/B08/B12/B13 cases proven by tests and copied-data flows. Record any unavailable external link separately from code correctness.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `docs: record trusted research verification`
 
