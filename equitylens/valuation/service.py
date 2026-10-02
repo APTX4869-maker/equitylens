@@ -23,6 +23,15 @@ from equitylens.valuation.defaults import default_assumption_set, load_valuation
 from equitylens.valuation.rates import risk_free_rate
 
 
+PERSONAL_VALUATION_FIELDS = frozenset({
+    "revenue_growth",
+    "op_margin_end",
+    "wacc",
+    "terminal_growth",
+    "terminal_roic",
+})
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -382,6 +391,59 @@ def require_valuation_confirmation(
     return row
 
 
+def confirmed_personal_assumptions(
+    confirmation: dict, requested: dict | None = None
+) -> dict:
+    """Merge legal personal assumptions onto an immutable reviewed baseline."""
+    baseline_inputs = dict(confirmation["assumptions"])
+    requested = dict(requested or {})
+    for field, value in requested.items():
+        if field in PERSONAL_VALUATION_FIELDS:
+            continue
+        if field not in baseline_inputs or canonical_json(value) != canonical_json(
+            baseline_inputs[field]
+        ):
+            _valuation_error(
+                "VALUATION_FACT_BASELINE_CHANGED",
+                f"{field} belongs to the reviewed fact baseline and cannot be edited",
+                field,
+            )
+
+    source_bundle = confirmation.get("source_metadata") or _json_object(
+        confirmation.get("source_metadata_json")
+    )
+    meta = json.loads(canonical_json(source_bundle.get("meta") or {}))
+    merged = dict(baseline_inputs)
+    for field in PERSONAL_VALUATION_FIELDS:
+        if field not in requested:
+            continue
+        value = requested[field]
+        if canonical_json(value) == canonical_json(baseline_inputs.get(field)):
+            continue
+        baseline_meta = dict(meta.get(field) or {"value": baseline_inputs.get(field)})
+        meta[field] = {
+            **baseline_meta,
+            "value": value,
+            "source_type": "user_override",
+            "source": "user_override",
+            "as_of": _now(),
+            "version": "user-input.v1",
+            "rule": "Use the personal value supplied for this valuation run.",
+            "reason": "User edited an approved personal assumption.",
+            "fallback_reason": None,
+            "baseline": baseline_meta,
+        }
+        merged[field] = value
+
+    inputs = _inputs_from_dict(merged)
+    validate(inputs)
+    return {
+        "inputs": _inputs_dict(inputs),
+        "meta": meta,
+        "source_fact_ids": source_bundle.get("source_fact_ids") or _source_fact_ids(meta),
+    }
+
+
 def confirmed_valuation(
     store,
     *,
@@ -389,15 +451,14 @@ def confirmed_valuation(
     ticker: str,
     confirmation: dict,
     persist: bool,
+    assumptions: dict | None = None,
 ) -> dict:
-    inputs = _inputs_from_dict(confirmation["assumptions"])
+    assumption_bundle = confirmed_personal_assumptions(confirmation, assumptions)
+    inputs = _inputs_from_dict(assumption_bundle["inputs"])
     output = run_dcf(inputs)
     scenarios = scenario_valuation(inputs, ticker)
     sens = sensitivity(inputs)
-    source_bundle = confirmation.get("source_metadata") or _json_object(
-        confirmation.get("source_metadata_json")
-    )
-    meta = source_bundle.get("meta") or {
+    meta = assumption_bundle.get("meta") or {
         key: {
             "value": value,
             "source_type": "user_confirmation",
@@ -405,7 +466,7 @@ def confirmed_valuation(
         }
         for key, value in _inputs_dict(inputs).items()
     }
-    source_fact_ids = source_bundle.get("source_fact_ids") or _source_fact_ids(meta)
+    source_fact_ids = assumption_bundle.get("source_fact_ids") or _source_fact_ids(meta)
     quality = model_quality_block(meta, output, scenarios)
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     from equitylens.market.service import latest_quote_row

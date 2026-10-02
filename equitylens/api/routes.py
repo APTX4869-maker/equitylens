@@ -1142,7 +1142,6 @@ def valuation_run(
             security_id=company.security_id,
             publication_id=context.publication_id,
             model_version=MODEL_VERSION,
-            assumptions=body.get("assumptions") if body.get("assumptions") else None,
         )
         if confirmation:
             return confirmed_valuation(
@@ -1151,6 +1150,7 @@ def valuation_run(
                 ticker=company.ticker,
                 confirmation=confirmation,
                 persist=persist,
+                assumptions=body.get("assumptions"),
             )
         return {
             **run_custom(store, company.cik, company.ticker, body, persist=persist),
@@ -1178,6 +1178,7 @@ def valuation_reverse(
 ):
     from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
     from equitylens.valuation.service import (
+        confirmed_personal_assumptions,
         require_valuation_confirmation,
         reverse_dcf,
     )
@@ -1199,15 +1200,20 @@ def valuation_reverse(
             security_id=company.security_id,
             publication_id=context.publication_id,
             model_version=MODEL_VERSION,
-            assumptions=body.get("assumptions") if body.get("assumptions") else None,
+        )
+        assumption_bundle = (
+            confirmed_personal_assumptions(confirmation, body.get("assumptions"))
+            if confirmation else None
         )
         return {
             **reverse_dcf(
                 store,
                 company.cik,
                 company.ticker,
-                body,
-                confirmed_assumptions=confirmation["assumptions"] if confirmation else None,
+                {"target_price": body["target_price"]} if assumption_bundle else body,
+                confirmed_assumptions=(
+                    assumption_bundle["inputs"] if assumption_bundle else None
+                ),
                 security_id=company.security_id,
             ),
             **_version_fields(company, context),

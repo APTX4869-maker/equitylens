@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from equitylens.api.main import app
@@ -347,6 +348,127 @@ def test_confirmation_binds_security_publication_model_and_assumptions(db, monke
     )
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "VALUATION_NEEDS_CONFIGURATION"
+
+
+def _confirmed_aapl_draft(db, monkeypatch):
+    publication = _install_company(
+        db,
+        ticker="AAPL",
+        complete_valuation_facts=True,
+    )
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+    ).json()
+    confirmed = client.put(
+        "/api/v1/companies/AAPL/valuation-profile",
+        json={
+            "security_id": draft["security_id"],
+            "publication_id": draft["publication_id"],
+            "model_version": draft["model_version"],
+            "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True,
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return client, publication, draft
+
+
+def test_personal_override_can_edit_approved_fields_and_retains_baseline_provenance(
+    db, monkeypatch
+):
+    client, publication, draft = _confirmed_aapl_draft(db, monkeypatch)
+    edited = dict(draft["assumptions"]["inputs"])
+    edited["op_margin_end"] = edited["op_margin_end"] + 0.01
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+        json={"assumptions": edited, "persist": True},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assumptions"]["inputs"]["op_margin_end"] == edited["op_margin_end"]
+    margin_meta = body["assumptions"]["meta"]["op_margin_end"]
+    assert margin_meta["source_type"] == "user_override"
+    assert margin_meta["baseline"]["source_type"] == "config_assumption"
+    assert margin_meta["baseline"]["source_ids"] == [
+        "operating_income-401",
+        "revenue-401",
+    ]
+
+    stored = db.query_one(
+        "SELECT fact_snapshot_json FROM valuation_run WHERE valuation_run_id=?",
+        [body["valuation_run_id"]],
+    )["fact_snapshot_json"]
+    if isinstance(stored, str):
+        stored = json.loads(stored)
+    assert stored["meta"]["revenue_base"]["source_type"] == "canonical_fact"
+    assert stored["meta"]["op_margin_end"]["source_type"] == "user_override"
+
+    reverse = client.post(
+        "/api/v1/companies/AAPL/valuation/reverse-dcf",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+        json={"target_price": 100.0, "assumptions": edited},
+    )
+    assert reverse.status_code == 200, reverse.text
+    assert reverse.json()["fixed_assumptions"]["margin_end"] == edited["op_margin_end"]
+
+
+@pytest.mark.parametrize(
+    "field,replacement",
+    [
+        ("revenue_base", 1_001.0),
+        ("shares", 11.0),
+        ("net_cash", 101.0),
+        ("tax_rate", 0.22),
+        ("op_margin_start", 0.21),
+        ("da_pct", 0.04),
+        ("capex_pct", 0.06),
+        ("nwc_pct", 0.02),
+    ],
+)
+def test_immutable_baseline_field_change_is_rejected(
+    db, monkeypatch, field, replacement
+):
+    client, publication, draft = _confirmed_aapl_draft(db, monkeypatch)
+    edited = dict(draft["assumptions"]["inputs"])
+    edited[field] = replacement
+    before_runs = db.query_one("SELECT count(*) AS n FROM valuation_run")["n"]
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+        json={"assumptions": edited, "persist": True},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == {
+        "code": "VALUATION_FACT_BASELINE_CHANGED",
+        "field": field,
+        "message": f"{field} belongs to the reviewed fact baseline and cannot be edited",
+    }
+    assert db.query_one("SELECT count(*) AS n FROM valuation_run")["n"] == before_runs
+
+
+def test_personal_override_invalid_model_input_never_persists(db, monkeypatch):
+    client, publication, draft = _confirmed_aapl_draft(db, monkeypatch)
+    edited = dict(draft["assumptions"]["inputs"])
+    edited["wacc"] = 0.0
+    before_runs = db.query_one("SELECT count(*) AS n FROM valuation_run")["n"]
+
+    response = client.post(
+        "/api/v1/companies/AAPL/valuation/run",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+        json={"assumptions": edited, "persist": True},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "INVALID_ASSUMPTION"
+    assert response.json()["error"]["field"] == "wacc"
+    assert db.query_one("SELECT count(*) AS n FROM valuation_run")["n"] == before_runs
 
 
 def _ask_research_valuation(client, publication_id=None):
