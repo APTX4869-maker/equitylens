@@ -85,6 +85,8 @@ export function ValuationControls({
   );
 
   useEffect(() => {
+    // The backend can replace the complete draft after recalculation or copy/edit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRawValues(Object.fromEntries(
       FIELDS.map((field) => [
         field,

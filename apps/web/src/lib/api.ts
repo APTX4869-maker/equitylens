@@ -26,14 +26,73 @@ export class ApiRequestError extends Error {
   }
 }
 
+export type ValuationPlan = {
+  plan_id: string;
+  name: string;
+  valuation_run_id: string | null;
+  scenario_key: "base" | "bear" | "bull" | null;
+  reference_value: number | null;
+  reference_price: number | null;
+  reference_price_reason?: string | null;
+  margin_of_safety: number;
+  notes?: string | null;
+  conditions_to_verify: string[];
+  parent_plan_id?: string | null;
+  version: number | null;
+  review_status: string;
+  review_reason?: string | null;
+  assumptions_json?: Record<string, unknown>;
+  archived_at?: string | null;
+  created_at?: string;
+};
+
+export type ValuationPlanCopyDraft = {
+  parent_plan_id: string;
+  next_version: number;
+  assumptions: Record<string, unknown>;
+  source_plan: ValuationPlan;
+  plan_defaults: {
+    scenario_key: "base" | "bear" | "bull";
+    margin_of_safety: number;
+    name: string;
+    notes?: string | null;
+    conditions_to_verify: string[];
+  };
+};
+
+export type ValuationPlanComparison = {
+  plans: ValuationPlan[];
+  fields: {
+    key: string;
+    label: string;
+    values: { plan_id: string; value: unknown }[];
+    changed: boolean;
+  }[];
+  changed_fields: string[];
+  has_differences: boolean;
+};
+
+export type ValuationRunSnapshot = {
+  valuation_run_id: string;
+  status: string;
+  model_name: string;
+  model_version: string;
+  run_at: string;
+  assumptions: { inputs?: Record<string, unknown>; meta?: Record<string, unknown> };
+  output: Record<string, unknown>;
+  scenarios?: Record<string, unknown> | null;
+  warnings?: string[];
+};
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { cache: "no-store", ...init });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     let detail: ApiErrorDetail = { message: body.slice(0, 200) };
     try {
-      const parsed = JSON.parse(body) as { detail?: ApiErrorDetail; error?: ApiErrorDetail };
-      detail = parsed.detail ?? parsed.error ?? detail;
+      const parsed = JSON.parse(body) as { detail?: ApiErrorDetail | string; error?: ApiErrorDetail | string };
+      const parsedDetail = parsed.detail ?? parsed.error;
+      detail = typeof parsedDetail === "string" ? { message: parsedDetail } : parsedDetail ?? detail;
     } catch { /* keep the response excerpt */ }
     throw new ApiRequestError(res.status, detail);
   }
@@ -64,6 +123,20 @@ function identityQuery(identity?: ResearchIdentity) {
   if (identity?.security_id) params.set("security_id", identity.security_id);
   if (identity?.publication_id) params.set("publication_id", identity.publication_id);
   return params.size ? `?${params}` : "";
+}
+
+function planListQuery(options: {
+  status?: "active" | "archived";
+  q?: string;
+  limit?: number;
+  cursor?: string | null;
+}) {
+  const params = new URLSearchParams();
+  params.set("status", options.status ?? "active");
+  params.set("limit", String(options.limit ?? 6));
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.cursor) params.set("cursor", options.cursor);
+  return params.toString();
 }
 
 export const api = {
@@ -117,6 +190,36 @@ export const api = {
     getJson<OverviewResponse>(`/api/v1/companies/${ticker}/overview${identityQuery(identity)}`, { signal }),
   marketQuote: (ticker: string, identity?: ResearchIdentity, signal?: AbortSignal) =>
     getJson<MarketQuote>(`/api/v1/companies/${ticker}/market/quote${identityQuery(identity)}`, { signal }),
+  valuationPlans: (
+    ticker: string,
+    options: { status?: "active" | "archived"; q?: string; limit?: number; cursor?: string | null },
+    signal?: AbortSignal,
+  ) => getJson<{ plans: ValuationPlan[]; next_cursor: string | null }>(
+    `/api/v1/companies/${ticker}/valuation/plans?${planListQuery(options)}`,
+    { signal },
+  ),
+  valuationPlan: (ticker: string, planId: string) =>
+    getJson<ValuationPlan>(`/api/v1/companies/${ticker}/valuation/plans/${planId}`),
+  valuationRunSnapshot: (ticker: string, runId: string) =>
+    getJson<ValuationRunSnapshot>(`/api/v1/companies/${ticker}/valuation/runs/${runId}`),
+  archiveValuationPlan: (ticker: string, planId: string) =>
+    getJson<ValuationPlan>(`/api/v1/companies/${ticker}/valuation/plans/${planId}/archive`, { method: "POST" }),
+  restoreValuationPlan: (ticker: string, planId: string) =>
+    getJson<ValuationPlan>(`/api/v1/companies/${ticker}/valuation/plans/${planId}/restore`, { method: "POST" }),
+  copyValuationPlan: (ticker: string, planId: string) =>
+    getJson<ValuationPlanCopyDraft>(`/api/v1/companies/${ticker}/valuation/plans/${planId}/copy`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }),
+  compareValuationPlans: (ticker: string, planIds: string[]) =>
+    getJson<ValuationPlanComparison>(
+      `/api/v1/companies/${ticker}/valuation/plans/compare?ids=${encodeURIComponent(planIds.join(","))}`
+    ),
+  createValuationPlan: (ticker: string, body: Record<string, unknown>, idempotencyKey: string) =>
+    getJson<ValuationPlan>(`/api/v1/companies/${ticker}/valuation/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(body),
+    }),
   segments: <T>(ticker: string, kind: "segment" | "product", frequency: "annual" | "quarterly", identity: ResearchIdentity) =>
     getJson<T>(`/api/v1/companies/${ticker}/segments?kind=${kind}&frequency=${frequency}${identityQuery(identity).replace("?", "&")}`),
   moat: <T>(ticker: string, identity: ResearchIdentity) =>

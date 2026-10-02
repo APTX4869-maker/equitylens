@@ -469,7 +469,7 @@ test("refresh automatically recalculates valuation with the preserved draft", as
       revenue_growth: [0.15, 0.14, 0.13, 0.12, 0.11],
     } : {}) });
   });
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } }));
   const valuationRunBodies: Array<{ assumptions: typeof inputs }> = [];
   let blockNextAutomaticRun = false;
@@ -566,7 +566,7 @@ test("financial and quote changes each invalidate the valuation baseline", async
     defaultRequests += 1;
     return route.fulfill({ json: valuationResponse() });
   });
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } }));
   await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
@@ -610,7 +610,7 @@ test("refresh discards a default response started before the refresh", async ({ 
     freshDefaultRequests += 1;
     return route.fulfill({ json: valuationResponse({ revenue_base: 250, net_cash: 30, shares: 20 }) });
   });
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } }));
   await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
@@ -664,7 +664,7 @@ test("retry after a refreshed default failure rebases before recalculating", asy
     }
     return route.fulfill({ json: valuationResponse({ revenue_base: 250, net_cash: 30, shares: 20 }) });
   });
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } }));
   await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };

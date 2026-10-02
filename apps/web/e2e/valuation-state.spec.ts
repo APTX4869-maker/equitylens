@@ -145,7 +145,7 @@ async function stubPage(page: Page) {
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) =>
     route.fulfill({ json: { modules: [], stale_modules: [], hint: null } })
   );
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) =>
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) =>
     route.fulfill({ json: { ticker: "AAPL", plans: [] } })
   );
   await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) =>

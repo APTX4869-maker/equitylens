@@ -58,7 +58,7 @@ async function stub(page: Page) {
   await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: { status: "UNAVAILABLE", reason: "test" } }));
   await page.route("**/api/v1/companies/AAPL/freshness?**", (route) => route.fulfill({ json: { modules: [], stale_modules: [], hint: null } }));
   await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) => route.fulfill({ json: response() }));
-  await page.route("**/api/v1/companies/AAPL/valuation/plans", (route) => route.fulfill({ json: { plans: [] } }));
+  await page.route("**/api/v1/companies/AAPL/valuation/plans?**", (route) => route.fulfill({ json: { plans: [], next_cursor: null } }));
   await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs };
     return route.fulfill({ json: response(body.assumptions) });
@@ -138,6 +138,16 @@ test("beginner can trace the valuation path without losing edits across modes", 
   await page.getByRole("button", { name: "专业模式" }).click();
   await page.getByRole("button", { name: "初学者模式" }).click();
   await expect(growth).toHaveValue("10");
+});
+
+test("invalid reverse price is rejected with a visible message", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "◎ 估值", exact: true }).click();
+
+  await page.getByRole("textbox", { name: "Reverse DCF 参考价" }).fill("不是数字");
+  await page.getByRole("button", { name: "计算隐含增长" }).click();
+  await expect(page.getByText("请输入大于 0 的有效价格")).toBeVisible();
 });
 
 test("financial metric units and drawers stay scoped to the selected company", async ({ page }) => {

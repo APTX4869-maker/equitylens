@@ -126,7 +126,7 @@ async function stubSetupPage(page: Page, valuationReady: () => boolean) {
     } });
   });
   await page.route("**/api/v1/companies/NVDA/valuation/default?**", (route) => route.fulfill({ json: readyValuation() }));
-  await page.route("**/api/v1/companies/NVDA/valuation/plans", (route) => route.fulfill({ json: { ticker: "NVDA", plans: [] } }));
+  await page.route("**/api/v1/companies/NVDA/valuation/plans?**", (route) => route.fulfill({ json: { ticker: "NVDA", plans: [] } }));
 }
 
 test("reviews complete assumptions before confirming valuation", async ({ page }) => {

@@ -7,6 +7,8 @@ import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
 import { ValuationSetupCard } from "@/components/sections/ValuationSetupCard";
 import { ValuationControls } from "@/components/valuation/ValuationControls";
+import { ValuationPlanLibrary } from "@/components/valuation/ValuationPlanLibrary";
+import type { ValuationPlanCopyDraft } from "@/lib/api";
 import type { ResearchIdentity } from "@/lib/types";
 import {
   buildPreviewRequest,
@@ -107,24 +109,6 @@ type AssumptionMeta = {
   historical_reference?: { label: string; value: number | null; period: string | null; rule: string };
 };
 
-type ValuationPlan = {
-  plan_id: string;
-  name: string;
-  valuation_run_id: string | null;
-  scenario_key: "base" | "bear" | "bull" | null;
-  reference_value: number | null;
-  reference_price: number | null;
-  reference_price_reason?: string | null;
-  margin_of_safety: number;
-  notes?: string | null;
-  conditions_to_verify: string[];
-  parent_plan_id?: string | null;
-  version: number | null;
-  review_status: string;
-  review_reason?: string | null;
-  assumptions_json?: Record<string, unknown>;
-};
-
 export function ValuationSection({
   ticker,
   identity,
@@ -161,11 +145,10 @@ export function ValuationSection({
   const [planScenario, setPlanScenario] = useState<"base" | "bear" | "bull">("base");
   const [planNotes, setPlanNotes] = useState("");
   const [planConditions, setPlanConditions] = useState("");
-  const [plans, setPlans] = useState<ValuationPlan[]>([]);
-  const [openedPlan, setOpenedPlan] = useState<ValuationPlan | null>(null);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [changedFields, setChangedFields] = useState<string[]>([]);
+  const [parentPlan, setParentPlan] = useState<{ id: string; name: string; nextVersion: number } | null>(null);
+  const [planLibraryRefresh, setPlanLibraryRefresh] = useState(0);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
+  const [reverseError, setReverseError] = useState<string | null>(null);
   const [rawControlErrors, setRawControlErrors] = useState<ValuationDraftErrors>({});
   const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
   const [draftBaselineRefresh, setDraftBaselineRefresh] = useState(refreshGeneration);
@@ -208,17 +191,6 @@ export function ValuationSection({
     setLastCalculatedRefresh(calculatedRefresh);
     setError(null);
   }, []);
-
-  const loadPlans = useCallback(async () => {
-    try {
-      const d = await api.fetchJson<{ plans: ValuationPlan[] }>(
-        `/api/v1/companies/${ticker}/valuation/plans`
-      );
-      setPlans(d.plans ?? []);
-    } catch {
-      // plans are optional; a fetch failure must not block the valuation page
-    }
-  }, [ticker]);
 
   const preview = useCallback(
     async (
@@ -337,12 +309,6 @@ export function ValuationSection({
   }, [ticker, gate, loadDefault]);
 
   useEffect(() => {
-    if (gate && gate.status !== "READY") return;
-    const timer = window.setTimeout(() => void loadPlans(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refreshGeneration, gate, loadPlans]);
-
-  useEffect(() => {
     if (
       (gate && gate.status !== "READY")
       || !refreshReviewRequired
@@ -385,20 +351,18 @@ export function ValuationSection({
       return;
     }
     try {
-      const d = await api.fetchJson<{ reference_price: number | null; reference_price_reason?: string }>(
-        `/api/v1/companies/${ticker}/valuation/plans`,
+      const d = await api.createValuationPlan(
+        ticker,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: planName || undefined,
-            valuation_run_id: runId,
-            scenario_key: planScenario,
-            margin_of_safety: pct / 100,
-            notes: planNotes || undefined,
-            conditions_to_verify: planConditions.split("\n").map((item) => item.trim()).filter(Boolean),
-          }),
-        }
+          name: planName || undefined,
+          valuation_run_id: runId,
+          scenario_key: planScenario,
+          margin_of_safety: pct / 100,
+          notes: planNotes || undefined,
+          conditions_to_verify: planConditions.split("\n").map((item) => item.trim()).filter(Boolean),
+          parent_plan_id: parentPlan?.id,
+        },
+        crypto.randomUUID(),
       );
       setPlanMsg(d.reference_price != null
         ? `已保存方案：参考价 $${d.reference_price.toFixed(2)}`
@@ -406,57 +370,46 @@ export function ValuationSection({
       setPlanName("");
       setPlanNotes("");
       setPlanConditions("");
-      void loadPlans();
+      setParentPlan(null);
+      setPlanLibraryRefresh((value) => value + 1);
     } catch (e) {
       setPlanMsg(String(e));
     }
-  }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, base, saved, loadPlans]);
+  }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, parentPlan, base, saved]);
 
-  const openPlan = useCallback(async (planId: string) => {
-    try {
-      const plan = await api.fetchJson<ValuationPlan>(
-        `/api/v1/companies/${ticker}/valuation/plans/${planId}`
-      );
-      setOpenedPlan(plan);
-    } catch (e) {
-      setPlanMsg(String(e));
-    }
-  }, [ticker]);
-
-  const copyPlan = useCallback(async (planId: string) => {
-    try {
-      const copy = await api.fetchJson<ValuationPlan>(
-        `/api/v1/companies/${ticker}/valuation/plans/${planId}/copy`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }
-      );
-      setOpenedPlan(copy);
-      setPlanMsg(`已复制为版本 ${copy.version ?? "—"}`);
-      await loadPlans();
-    } catch (e) {
-      setPlanMsg(String(e));
-    }
-  }, [ticker, loadPlans]);
-
-  const comparePlans = useCallback(async () => {
-    if (compareIds.length < 2) {
-      setPlanMsg("请至少选择两个方案比较");
-      return;
-    }
-    try {
-      const result = await api.fetchJson<{ plans: ValuationPlan[]; changed_fields: string[] }>(
-        `/api/v1/companies/${ticker}/valuation/plans/compare?ids=${encodeURIComponent(compareIds.join(","))}`
-      );
-      setChangedFields(result.changed_fields);
-    } catch (e) {
-      setPlanMsg(String(e));
-    }
-  }, [ticker, compareIds]);
+  const copyPlanIntoDraft = useCallback((copy: ValuationPlanCopyDraft) => {
+    const next = draftFromInputs(copy.assumptions as DcfInputs);
+    reqSeq.current += 1;
+    reverseReqSeq.current += 1;
+    draftRef.current = next;
+    setDraft(next);
+    setAppliedInputs(null);
+    setAppliedFingerprint(null);
+    setSaved(false);
+    setReverse(null);
+    setRawControlErrors({});
+    setPlanScenario(copy.plan_defaults.scenario_key);
+    setMarginOfSafety(String(copy.plan_defaults.margin_of_safety * 100));
+    setPlanName(copy.plan_defaults.name);
+    setPlanNotes(copy.plan_defaults.notes ?? "");
+    setPlanConditions(copy.plan_defaults.conditions_to_verify.join("\n"));
+    setParentPlan({
+      id: copy.parent_plan_id,
+      name: copy.source_plan.name,
+      nextVersion: copy.next_version,
+    });
+    setPlanMsg(`正在编辑“${copy.source_plan.name}”的新版本；请修改假设、重算并保存运行。`);
+  }, []);
 
   const runReverse = useCallback(async () => {
     const price = parseFloat(targetPriceRef.current);
-    if (!price || price <= 0) return;
+    if (!Number.isFinite(price) || price <= 0) {
+      setReverseError("请输入大于 0 的有效价格");
+      return;
+    }
     const current = draftRef.current;
     if (!current) return;
+    setReverseError(null);
     const seq = ++reverseReqSeq.current;
     const requestIdentity = [
       ticker,
@@ -811,7 +764,8 @@ export function ValuationSection({
           <div className="reverse-box" style={{ marginTop: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input
-                type="number" step="0.01" min="1"
+                type="text" inputMode="decimal"
+                aria-label="Reverse DCF 参考价"
                 placeholder="输入参考价格 $"
                 value={targetPrice}
                 onChange={(e) => {
@@ -819,6 +773,7 @@ export function ValuationSection({
                   setReverseLoading(false);
                   targetPriceRef.current = e.target.value;
                   setTargetPrice(e.target.value);
+                  setReverseError(null);
                 }}
                 style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", width: 140 }}
               />
@@ -826,6 +781,7 @@ export function ValuationSection({
                 {reverseLoading ? "计算中…" : "计算隐含增长"}
               </button>
             </div>
+            {reverseError ? <div className="dcf-control-error" role="alert">{reverseError}</div> : null}
             {reverse ? (
               <div style={{ marginTop: 14 }}>
                 {reverseStale || refreshStale ? <div className="card-sub" style={{ color: "#b7791f" }}>假设、价格或底层数据已修改，以下结果已过期，请重新计算。</div> : null}
@@ -937,43 +893,21 @@ export function ValuationSection({
             （{planScenario} ${selectedPlanValue.toFixed(2)} × 边际 {marginOfSafety || "0"}%）
           </div>
         ) : null}
+        {parentPlan ? (
+          <div className="plan-lineage-banner">
+            <strong>正在编辑“{parentPlan.name}”的新版本 v{parentPlan.nextVersion}</strong>
+            <span>父方案保持不变；只有重新计算、保存运行并保存方案后，才会创建子版本。</span>
+            <button className="text-link" onClick={() => setParentPlan(null)}>取消复制编辑</button>
+          </div>
+        ) : null}
         {planMsg ? <div className="card-sub" style={{ marginTop: 8 }}>{planMsg}</div> : null}
-        {plans.length ? (
-          <div style={{ marginTop: 12 }}>
-            <div className="card-sub">已保存方案</div>
-            {plans.slice(0, 5).map((p) => (
-              <div key={p.plan_id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 12 }}>
-                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                  <input type="checkbox" aria-label={`比较 ${p.name}`} checked={compareIds.includes(p.plan_id)}
-                    onChange={(e) => setCompareIds((ids) => e.target.checked
-                      ? [...ids, p.plan_id]
-                      : ids.filter((id) => id !== p.plan_id))} />
-                  {p.name}：参考价 {p.reference_price != null ? `$${p.reference_price.toFixed(2)}` : "—（不可买入）"}
-                  · {p.scenario_key ?? "旧来源"} · 边际 {Math.round(p.margin_of_safety * 100)}%
-                  · {p.review_status}
-                </label>
-                <button className="text-link" style={{ marginLeft: 8 }} onClick={() => void openPlan(p.plan_id)}>打开</button>
-                <button className="text-link" style={{ marginLeft: 8 }} onClick={() => void copyPlan(p.plan_id)}>复制</button>
-              </div>
-            ))}
-            <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => void comparePlans()}
-              disabled={compareIds.length < 2}>比较所选方案</button>
-            {changedFields.length ? (
-              <div className="card-sub" data-testid="plan-comparison" style={{ marginTop: 8 }}>
-                差异字段：{changedFields.join("、")}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {openedPlan ? (
-          <div className="plain-box" data-testid="plan-detail" style={{ marginTop: 12 }}>
-            <strong>{openedPlan.name} · v{openedPlan.version ?? "—"} · {openedPlan.review_status}</strong>
-            <div>来源：run {openedPlan.valuation_run_id ?? "缺失"} / {openedPlan.scenario_key ?? "旧方案"}</div>
-            <div>备注：{openedPlan.notes || "—"}</div>
-            <div>待验证：{openedPlan.conditions_to_verify.length ? openedPlan.conditions_to_verify.join("；") : "—"}</div>
-            {openedPlan.review_reason ? <div>{openedPlan.review_reason}</div> : null}
-          </div>
-        ) : null}
+      </Card>
+      <Card className="card-pad" style={{ marginTop: 16 }}>
+        <ValuationPlanLibrary
+          ticker={ticker}
+          refreshToken={planLibraryRefresh}
+          onCopyEdit={copyPlanIntoDraft}
+        />
       </Card>
     </>
   );
