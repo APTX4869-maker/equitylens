@@ -28,8 +28,8 @@ def load_valuation_config() -> dict:
     return _load_wacc_config()
 
 
-def _latest_annual_point(store, company_id: str, metric: str):
-    engine = MetricEngine(store)
+def _latest_annual_point(store, company_id: str, metric: str, *, metric_engine=None):
+    engine = metric_engine or MetricEngine(store)
     pts = engine.compute(metric, company_id, frequency="annual")
     return pts[-1] if pts and pts[-1].value is not None else None
 
@@ -39,8 +39,9 @@ def _latest_annual_value(store, company_id: str, metric: str) -> float | None:
     return float(point.value) if point is not None else None
 
 
-def _latest_instant_point(store, company_id: str, metric: str):
-    points = MetricEngine(store).compute(metric, company_id, frequency="instant")
+def _latest_instant_point(store, company_id: str, metric: str, *, metric_engine=None):
+    engine = metric_engine or MetricEngine(store)
+    points = engine.compute(metric, company_id, frequency="instant")
     return next((point for point in reversed(points) if point.value is not None), None)
 
 
@@ -50,9 +51,10 @@ def _latest_fy(store, company_id: str, metric: str) -> int | None:
     return pts[-1].fiscal_year if pts else None
 
 
-def _annual_point(store, company_id: str, metric: str, fiscal_year: int):
+def _annual_point(store, company_id: str, metric: str, fiscal_year: int, *, metric_engine=None):
     """Return the latest-restated annual point for one exact fiscal year."""
-    points = MetricEngine(store).compute(metric, company_id, frequency="annual")
+    engine = metric_engine or MetricEngine(store)
+    points = engine.compute(metric, company_id, frequency="annual")
     return next(
         (point for point in reversed(points)
          if point.fiscal_year == fiscal_year and point.value is not None),
@@ -61,14 +63,20 @@ def _annual_point(store, company_id: str, metric: str, fiscal_year: int):
 
 
 def _depreciation_selection(store, company_id: str, fiscal_year: int,
-                            unit: str = "USD") -> tuple[float | None, str, list[str]]:
-    combined = _annual_point(store, company_id, "DEPRECIATION_AMORTIZATION", fiscal_year)
+                            unit: str = "USD", *, metric_engine=None) -> tuple[float | None, str, list[str]]:
+    combined = _annual_point(
+        store, company_id, "DEPRECIATION_AMORTIZATION", fiscal_year,
+        metric_engine=metric_engine,
+    )
     if combined is not None and combined.unit == unit:
         ids = [combined.canonical_fact_id] if combined.canonical_fact_id else list(combined.input_fact_ids or [])
         return float(combined.value), "combined", ids
 
-    dep = _annual_point(store, company_id, "DEPRECIATION", fiscal_year)
-    amort = _annual_point(store, company_id, "AMORTIZATION_OF_INTANGIBLE_ASSETS", fiscal_year)
+    dep = _annual_point(store, company_id, "DEPRECIATION", fiscal_year, metric_engine=metric_engine)
+    amort = _annual_point(
+        store, company_id, "AMORTIZATION_OF_INTANGIBLE_ASSETS", fiscal_year,
+        metric_engine=metric_engine,
+    )
     if dep is None or amort is None or dep.unit != unit or amort.unit != unit:
         return None, "missing", []
     dep_ids = [dep.canonical_fact_id] if dep.canonical_fact_id else list(dep.input_fact_ids or [])
@@ -90,7 +98,8 @@ def estimate_depreciation(store, company_id: str, fiscal_year: int,
 
 
 def default_assumption_set(store, company_id: str, ticker: str,
-                           risk_free: float | None = None) -> tuple[DcfInputs, dict]:
+                           risk_free: float | None = None, *,
+                           metric_engine=None) -> tuple[DcfInputs, dict]:
     """Build DcfInputs from latest canonical facts + config assumptions.
 
     Returns (inputs, metadata) where metadata explains each input's source.
@@ -126,24 +135,27 @@ def default_assumption_set(store, company_id: str, ticker: str,
             **extra,
         }
 
-    revenue_point = _latest_annual_point(store, company_id, "REVENUE")
+    engine = metric_engine or MetricEngine(store)
+    revenue_point = _latest_annual_point(store, company_id, "REVENUE", metric_engine=engine)
     fy = revenue_point.fiscal_year if revenue_point is not None else None
     if fy is None:
         raise ValueError("no annual revenue facts; run `equitylens sync` first")
     revenue_history = [
-        point for point in MetricEngine(store).compute("REVENUE", company_id, frequency="annual")
+        point for point in engine.compute("REVENUE", company_id, frequency="annual")
         if point.value is not None and point.value > 0
     ][-6:]
     # Duration inputs form one fiscal-year cohort. Missing members may use an
     # explicit config fallback where documented, but never an older FY value.
-    op_income_point = _annual_point(store, company_id, "OPERATING_INCOME", fy)
-    pretax_point = _annual_point(store, company_id, "PRETAX_INCOME", fy)
-    tax_point = _annual_point(store, company_id, "INCOME_TAX_EXPENSE", fy)
-    capex_point = _annual_point(store, company_id, "CAPITAL_EXPENDITURES", fy)
-    shares_point = _annual_point(store, company_id, "DILUTED_WEIGHTED_AVG_SHARES", fy)
+    op_income_point = _annual_point(store, company_id, "OPERATING_INCOME", fy, metric_engine=engine)
+    pretax_point = _annual_point(store, company_id, "PRETAX_INCOME", fy, metric_engine=engine)
+    tax_point = _annual_point(store, company_id, "INCOME_TAX_EXPENSE", fy, metric_engine=engine)
+    capex_point = _annual_point(store, company_id, "CAPITAL_EXPENDITURES", fy, metric_engine=engine)
+    shares_point = _annual_point(
+        store, company_id, "DILUTED_WEIGHTED_AVG_SHARES", fy, metric_engine=engine
+    )
     # The enterprise-to-equity bridge is a point-in-time input. Use the latest
     # available balance sheet and disclose its actual date independently.
-    net_debt_point = _latest_instant_point(store, company_id, "NET_DEBT")
+    net_debt_point = _latest_instant_point(store, company_id, "NET_DEBT", metric_engine=engine)
     revenue = float(revenue_point.value) if revenue_point is not None else None
     op_income = float(op_income_point.value) if op_income_point is not None else None
     pretax = float(pretax_point.value) if pretax_point is not None else None
@@ -152,7 +164,8 @@ def default_assumption_set(store, company_id: str, ticker: str,
     net_debt = float(net_debt_point.value) if net_debt_point is not None else None
     shares = float(shares_point.value) if shares_point is not None else None
     da, da_source_kind, da_fact_ids = (
-        _depreciation_selection(store, company_id, fy) if fy is not None else (None, "missing", [])
+        _depreciation_selection(store, company_id, fy, metric_engine=engine)
+        if fy is not None else (None, "missing", [])
     )
 
     def fact_ids(point) -> list[str]:

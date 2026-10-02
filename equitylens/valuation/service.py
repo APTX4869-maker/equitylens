@@ -14,6 +14,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from equitylens.storage.duckdb_store import DuckDBStore
+from equitylens.metrics.engine import MetricEngine
 from equitylens.publication.models import canonical_json, sha256_json
 from equitylens.publication.repository import PublicationConflict, PublicationRepository
 from equitylens.valuation import dcf as dcf_mod
@@ -63,6 +64,41 @@ def valuation_confirmation_fingerprint(
 
 def _valuation_error(code: str, message: str, field: str | None = None):
     raise ValuationError(code, message, field)
+
+
+def _json_object(value) -> dict:
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value or {})
+
+
+def _publication_metric_engine(store, company_id: str, publication_id: str):
+    """Return a metric engine pinned to one sealed publication."""
+    repository = PublicationRepository(store)
+    context = repository.context(company_id, publication_id)
+    dataset = store.query_one(
+        "SELECT parser_version FROM dataset_version WHERE dataset_id=?",
+        [context.dataset_id],
+    )
+    if dataset and dataset["parser_version"] == "legacy":
+        return MetricEngine(store)
+    return MetricEngine(store, published_facts=repository.facts(context))
+
+
+def _active_security_ticker(store, security_id: str) -> str:
+    row = store.query_one(
+        """
+        SELECT ticker FROM security_ticker_alias
+        WHERE security_id=?
+          AND valid_from <= CURRENT_DATE
+          AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)
+        ORDER BY valid_from DESC LIMIT 1
+        """,
+        [security_id],
+    )
+    if row is None:
+        _valuation_error("VALUATION_SECURITY_MISMATCH", "security has no active ticker")
+    return row["ticker"]
 
 
 def confirm_valuation_profile(
@@ -148,6 +184,50 @@ def confirm_valuation_profile(
     except TypeError as exc:
         _valuation_error("INVALID_ASSUMPTION", f"complete DCF assumptions are required: {exc}")
 
+    source_bundle = None
+    try:
+        valuation = default_valuation(
+            store,
+            company_id,
+            _active_security_ticker(store, security_id),
+            publication_id=publication_id,
+        )
+        baseline = valuation["assumptions"]
+        meta = {key: dict(value) for key, value in baseline["meta"].items()}
+        for key, value in assumptions.items():
+            if key not in meta:
+                continue
+            if baseline["inputs"].get(key) != value:
+                meta[key] = {
+                    **meta[key],
+                    "value": value,
+                    "source_type": "user_confirmation",
+                    "source": "reviewed valuation confirmation",
+                    "baseline": meta[key],
+                }
+        source_bundle = {
+            "inputs": assumptions,
+            "meta": meta,
+            "source_fact_ids": _source_fact_ids(meta),
+        }
+    except (PublicationConflict, TypeError, ValueError, ValuationError):
+        # Compatibility for historical/minimal fixtures that predate a complete
+        # generated draft. Product confirmations with a reviewable draft take
+        # the provenance-preserving path above.
+        fallback_meta = {
+            key: {
+                "value": value,
+                "source_type": "user_confirmation",
+                "source": "reviewed valuation confirmation",
+            }
+            for key, value in assumptions.items()
+        }
+        source_bundle = {
+            "inputs": assumptions,
+            "meta": fallback_meta,
+            "source_fact_ids": {},
+        }
+
     assumptions_hash = sha256_json(assumptions)
     fingerprint = valuation_confirmation_fingerprint(
         security_id=security_id,
@@ -204,7 +284,7 @@ def confirm_valuation_profile(
                         fingerprint,
                         status_value,
                         confirmed,
-                        canonical_json({"source": "user_confirmation"}),
+                        canonical_json(source_bundle),
                     ],
                 )
         existing = store.query_one(
@@ -233,7 +313,9 @@ def valuation_profile_draft(
 ) -> dict:
     """Build a reviewable, identity-bound valuation draft without writing it."""
     try:
-        valuation = default_valuation(store, company_id, ticker)
+        valuation = default_valuation(
+            store, company_id, ticker, publication_id=publication_id
+        )
     except (TypeError, ValueError) as exc:
         _valuation_error("VALUATION_DEFAULT_UNAVAILABLE", str(exc))
     assumptions = valuation["assumptions"]
@@ -296,6 +378,7 @@ def require_valuation_confirmation(
         )
     row = dict(row)
     row["assumptions"] = json.loads(row["assumptions_json"])
+    row["source_metadata"] = _json_object(row.get("source_metadata_json"))
     return row
 
 
@@ -311,7 +394,10 @@ def confirmed_valuation(
     output = run_dcf(inputs)
     scenarios = scenario_valuation(inputs, ticker)
     sens = sensitivity(inputs)
-    meta = {
+    source_bundle = confirmation.get("source_metadata") or _json_object(
+        confirmation.get("source_metadata_json")
+    )
+    meta = source_bundle.get("meta") or {
         key: {
             "value": value,
             "source_type": "user_confirmation",
@@ -319,6 +405,7 @@ def confirmed_valuation(
         }
         for key, value in _inputs_dict(inputs).items()
     }
+    source_fact_ids = source_bundle.get("source_fact_ids") or _source_fact_ids(meta)
     quality = model_quality_block(meta, output, scenarios)
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     from equitylens.market.service import latest_quote_row
@@ -340,7 +427,11 @@ def confirmed_valuation(
                 "market_observation_id": market_row["quote_id"] if market_row else None,
                 "assumption_set_id": confirmation["assumption_set_id"],
                 "fact_snapshot_json": canonical_json(
-                    {"inputs": _inputs_dict(inputs), "meta": meta, "source_fact_ids": {}}
+                    {
+                        "inputs": _inputs_dict(inputs),
+                        "meta": meta,
+                        "source_fact_ids": source_fact_ids,
+                    }
                 ),
                 "output_json": canonical_json(_output_dict(output)),
                 "warnings_json": canonical_json(output.warnings),
@@ -407,9 +498,21 @@ def _apply_runtime_risk_free(meta: dict, rate: dict) -> None:
     )
 
 
-def default_valuation(store, company_id: str, ticker: str) -> dict:
+def default_valuation(
+    store, company_id: str, ticker: str, *, publication_id: str | None = None
+) -> dict:
     rf = risk_free_rate()
-    inputs, meta = default_assumption_set(store, company_id, ticker, risk_free=rf["value"])
+    metric_engine = (
+        _publication_metric_engine(store, company_id, publication_id)
+        if publication_id else None
+    )
+    inputs, meta = default_assumption_set(
+        store,
+        company_id,
+        ticker,
+        risk_free=rf["value"],
+        metric_engine=metric_engine,
+    )
     _apply_runtime_risk_free(meta, rf)
     output = run_dcf(inputs)
     from equitylens.market.service import valuation_market_block

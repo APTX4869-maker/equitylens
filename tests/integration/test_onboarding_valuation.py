@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from equitylens.api.main import app
@@ -204,6 +206,82 @@ def test_unconfirmed_company_can_load_identity_bound_draft(db, monkeypatch):
     assert body["preview"]["scenarios"]["base"]["status"] == "OK"
     assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before_sets
     assert db.query_one("SELECT count(*) AS n FROM valuation_run")["n"] == before_runs
+
+
+def test_published_baseline_ignores_newer_unreviewed_live_facts(db, monkeypatch):
+    publication = _install_company(
+        db,
+        ticker="AAPL",
+        complete_valuation_facts=True,
+    )
+    db._conn.execute(
+        "UPDATE canonical_fact SET value=9999 WHERE company_id=? AND canonical_metric='REVENUE'",
+        [publication.company_id],
+    )
+    client = _client(db, monkeypatch)
+
+    response = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assumptions = response.json()["assumptions"]
+    assert assumptions["inputs"]["revenue_base"] == 1_000.0
+    assert assumptions["meta"]["revenue_base"]["source_ids"] == ["revenue-401"]
+
+
+def test_confirmation_preserves_provenance_when_reopened(db, monkeypatch):
+    publication = _install_company(
+        db,
+        ticker="AAPL",
+        complete_valuation_facts=True,
+    )
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+        },
+    ).json()
+
+    confirmed = client.put(
+        "/api/v1/companies/AAPL/valuation-profile",
+        json={
+            "security_id": draft["security_id"],
+            "publication_id": draft["publication_id"],
+            "model_version": draft["model_version"],
+            "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True,
+        },
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    stored = db.query_one(
+        "SELECT source_metadata_json FROM valuation_assumption_set WHERE assumption_set_id=?",
+        [confirmed.json()["confirmation_id"]],
+    )["source_metadata_json"]
+    if isinstance(stored, str):
+        stored = json.loads(stored)
+    assert stored["meta"]["revenue_base"]["source_type"] == "canonical_fact"
+    assert stored["source_fact_ids"]["revenue_base"] == ["revenue-401"]
+
+    reopened = client.get(
+        "/api/v1/companies/AAPL/valuation/default",
+        params={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+        },
+    )
+    assert reopened.status_code == 200, reopened.text
+    revenue_meta = reopened.json()["assumptions"]["meta"]["revenue_base"]
+    assert revenue_meta["source_type"] == "canonical_fact"
+    assert revenue_meta["as_of"] == "FY2025"
+    assert revenue_meta["source_ids"] == ["revenue-401"]
 
 
 def test_confirmation_rejects_draft_after_active_publication_changes(db, monkeypatch):

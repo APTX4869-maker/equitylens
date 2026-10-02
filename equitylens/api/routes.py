@@ -1100,7 +1100,12 @@ def valuation_default(
                 persist=False,
             )
         return {
-            **default_valuation(store, company.cik, company.ticker),
+            **default_valuation(
+                store,
+                company.cik,
+                company.ticker,
+                publication_id=context.publication_id,
+            ),
             **_version_fields(company, context),
         }
     except ValuationError as exc:
