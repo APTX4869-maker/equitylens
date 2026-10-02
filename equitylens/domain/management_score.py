@@ -23,9 +23,9 @@ from equitylens.metrics.engine import MetricEngine
 RUBRIC_PATH = CONFIG_DIR / "management" / "management_rubric.yaml"
 
 
-def capital_allocation(store, company_id: str) -> dict:
+def capital_allocation(store, company_id: str, *, metric_engine=None) -> dict:
     """Annual capital allocation series from canonical facts (latest 5 FY)."""
-    engine = MetricEngine(store)
+    engine = metric_engine or MetricEngine(store)
     metrics = [
         "SHARE_REPURCHASES", "DIVIDENDS_PAID", "CAPITAL_EXPENDITURES",
         "SHARE_BASED_COMPENSATION", "OPERATING_CASH_FLOW", "DILUTED_WEIGHTED_AVG_SHARES",
@@ -113,11 +113,13 @@ def _clip(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
-def management_scorecard(store, company_id: str, ticker: str) -> dict:
+def management_scorecard(store, company_id: str, ticker: str, *, metric_engine=None) -> dict:
     """Deterministic rubric scorecard with evidence coverage."""
     rubric = _load_rubric()
-    alloc = capital_allocation(store, company_id)
-    margin_trend = _margin_signal_from_engine(store, company_id)
+    alloc = capital_allocation(store, company_id, metric_engine=metric_engine)
+    margin_trend = _margin_signal_from_engine(
+        store, company_id, metric_engine=metric_engine
+    )
     min_cov = rubric.get("minimum_evidence_coverage_for_score", 0.70)
     dims: list[dict] = []
     covered_weight = 0.0
@@ -173,27 +175,10 @@ def management_scorecard(store, company_id: str, ticker: str) -> dict:
     }
 
 
-def _margin_signal_from_engine(store, company_id: str) -> float | None:
+def _margin_signal_from_engine(store, company_id: str, *, metric_engine=None) -> float | None:
     """3-year operating-margin trend score from canonical facts."""
     try:
-        engine = MetricEngine(store)
-        pts = engine.compute("OPERATING_MARGIN", company_id, frequency="annual")
-    except ValueError:
-        return None
-    annual = [p.value for p in pts if p.value is not None][-3:]
-    if len(annual) < 2:
-        return None
-    first, last = annual[0], annual[-1]
-    if first is None or last is None or first <= 0:
-        return None
-    change = last / first - 1.0  # e.g. +0.05 = 5pp relative improvement
-    return _clip(50 + change * 100 * 6)
-
-
-def _margin_signal_from_engine(store, company_id: str) -> float | None:
-    """3-year operating-margin trend score from canonical facts."""
-    try:
-        engine = MetricEngine(store)
+        engine = metric_engine or MetricEngine(store)
         pts = engine.compute("OPERATING_MARGIN", company_id, frequency="annual")
     except ValueError:
         return None

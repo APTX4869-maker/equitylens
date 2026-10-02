@@ -952,12 +952,14 @@ def management(
     publication_id: str | None = None,
 ):
     from equitylens.domain.management_score import capital_allocation, management_scorecard
+    from equitylens.research.context import PublishedResearchContext
 
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id,
         module="management",
     )
     cik = company.cik
+    research = PublishedResearchContext.from_publication(store, company, context)
 
     execs = store.query(
         """WITH latest_comp AS (
@@ -992,8 +994,10 @@ def management(
            ORDER BY transaction_date DESC LIMIT 20""",
         [cik],
     )
-    alloc = capital_allocation(store, cik)
-    scorecard = management_scorecard(store, cik, ticker)
+    alloc = capital_allocation(store, cik, metric_engine=research.metric_engine)
+    scorecard = management_scorecard(
+        store, cik, ticker, metric_engine=research.metric_engine
+    )
 
     leaders = []
     for e in execs:
@@ -1415,13 +1419,20 @@ def company_promises(
 ):
     """Promise Tracker: evidence cards with deterministic verification (M8.6)."""
     from equitylens.domain.promises import list_promises
+    from equitylens.research.context import PublishedResearchContext
 
     store, company, context = _versioned_company(
         ticker, security_id=security_id, publication_id=publication_id,
         module="promises",
     )
+    research = PublishedResearchContext.from_publication(store, company, context)
     return {
-        **list_promises(store, company.cik, company.ticker),
+        **list_promises(
+            store,
+            company.cik,
+            company.ticker,
+            metric_engine=research.metric_engine,
+        ),
         **_version_fields(company, context),
     }
 

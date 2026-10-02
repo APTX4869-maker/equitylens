@@ -154,16 +154,56 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
 
     # ---- valuation risk (data-driven, no market price needed) ----
     def _valuation():
-        from equitylens.valuation.service import default_valuation
+        if context is None:
+            from equitylens.valuation.service import default_valuation
 
-        dv = default_valuation(store, company_id, ticker)
+            dv = default_valuation(store, company_id, ticker)
+            evidence = sorted({
+                fact_id
+                for item in dv["assumptions"]["meta"].values()
+                if isinstance(item, dict)
+                for fact_id in (item.get("source_ids") or [])
+            })
+        else:
+            from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
+            from equitylens.valuation.service import (
+                confirmed_valuation,
+                require_valuation_confirmation,
+            )
+
+            try:
+                confirmation = require_valuation_confirmation(
+                    store,
+                    company_id=company_id,
+                    security_id=context.security_id,
+                    publication_id=context.publication_id,
+                    model_version=MODEL_VERSION,
+                )
+            except ValuationError as exc:
+                return (
+                    "EVIDENCE_GAP",
+                    str(exc),
+                    [],
+                    "先在估值页审核并确认当前证券和发布版本的模型假设",
+                )
+            if confirmation is None:
+                return (
+                    "EVIDENCE_GAP",
+                    "当前发布版本没有可用的已确认估值假设",
+                    [],
+                    "先完成公司新标准复核，再在估值页确认模型假设",
+                )
+            dv = confirmed_valuation(
+                store,
+                company_id=company_id,
+                ticker=ticker,
+                confirmation=confirmation,
+                persist=False,
+            )
+            evidence = [
+                f"valuation_confirmation:{confirmation['assumption_set_id']}"
+            ]
         tv_share = dv["result"]["terminal_value_share"]
-        evidence = sorted({
-            fact_id
-            for item in dv["assumptions"]["meta"].values()
-            if isinstance(item, dict)
-            for fact_id in (item.get("source_ids") or [])
-        })
         if tv_share > 0.80:
             add("valuation", "MEDIUM", "DCF 价值对终值假设高度敏感",
                 f"终值占企业价值 {tv_share*100:.0f}%（>80%）。永续增长或 WACC 的小幅变动会显著改变结论。",
@@ -230,7 +270,12 @@ def risk_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
     def _management():
         from equitylens.domain.management_score import management_scorecard
 
-        sc = management_scorecard(store, company_id, ticker)
+        sc = management_scorecard(
+            store,
+            company_id,
+            ticker,
+            metric_engine=context.metric_engine if context is not None else None,
+        )
         if sc.get("overall_score") is None:
             add("execution", "LOW", "管理层可验证证据不足",
                 "管理评分未达到规则要求的证据覆盖，战略与治理维度暂不可量化。",

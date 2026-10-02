@@ -57,7 +57,7 @@ def _verify_spec(card: dict) -> dict | None:
             "fiscal_year": int(fy), "operator": op, "target": float(target)}
 
 
-def verify_promise(store, card: dict) -> dict:
+def verify_promise(store, card: dict, *, metric_engine=None) -> dict:
     """Deterministic status over canonical facts (never guesses)."""
     spec = _verify_spec(card)
     deadline = card.get("verification_deadline")
@@ -68,8 +68,9 @@ def verify_promise(store, card: dict) -> dict:
     if not company_id:
         return {"status": "UNVERIFIED", "note": "承诺卡缺少 company_id，无法核对",
                 "evidence_ids": [], "verification": spec}
-    pts = [p for p in MetricEngine(store).compute(spec["metric"], company_id,
-                                                  frequency=spec["frequency"])
+    engine = metric_engine or MetricEngine(store)
+    pts = [p for p in engine.compute(spec["metric"], company_id,
+                                     frequency=spec["frequency"])
            if p.value and p.fiscal_year == spec["fiscal_year"]]
     disclosed = float(pts[-1].value) if pts else None
     evidence_ids: list[str] = []
@@ -99,7 +100,7 @@ def verify_promise(store, card: dict) -> dict:
             "evidence_ids": evidence_ids, "verification": spec}
 
 
-def list_promises(store, company_id: str, ticker: str) -> dict:
+def list_promises(store, company_id: str, ticker: str, *, metric_engine=None) -> dict:
     """Enrich stored promise rows with computed verification status."""
     rows = store.query(
         "SELECT promise_id, source_evidence_id, speaker, statement_date, promise_text, "
@@ -113,7 +114,7 @@ def list_promises(store, company_id: str, ticker: str) -> dict:
         card = dict(r)
         card["verification_metrics"] = json.loads(r["verification_metrics"] or "{}")
         card["company_id"] = company_id
-        verified = verify_promise(store, card)
+        verified = verify_promise(store, card, metric_engine=metric_engine)
         items.append({
             "promise_id": r["promise_id"],
             "speaker": r["speaker"],

@@ -181,15 +181,27 @@ def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
             segs = [s for s in seg["segments"] if s.get("share")]
             if not segs:
                 continue
-            dependency_count += 1
             top = max(segs, key=lambda s: s["share"] or 0)
+            source_ids = [
+                source["source_document_id"]
+                for source in top.get("sources", [])
+                if source.get("source_document_id")
+            ]
+            if not source_ids:
+                gaps.append(_evidence_gap(
+                    f"{label}收入依赖来源",
+                    f"最大{label}「{top['name']}」缺少当前发布版本内可解析的来源文档，依赖度未判定。",
+                    f"补充并审核「{top['name']}」对应的 SEC 分部来源文档",
+                ))
+                continue
+            dependency_count += 1
             share = top["share"] or 0.0
             verdict = "watch" if share >= 0.40 else "strength"
             signals.append(Signal(
                 "收入依赖", verdict,
                 f"最大{label}占比 {share*100:.0f}%（{'依赖度较高，单点集中' if verdict == 'watch' else '结构相对分散'}）",
                 f"{top['name']} 占 FY 收入的 {share*100:.0f}%——{label}级集中度（SEC 分部披露口径）。",
-                evidence_ids=[f"segment:{top['name']}"], value_label=f"{share*100:.0f}%",
+                evidence_ids=source_ids, value_label=f"{share*100:.0f}%",
             ))
     except Exception:
         dependency_count = 0  # segment data unavailable -> honest gap below
@@ -201,7 +213,7 @@ def moat_signals(store, company_id: str, ticker: str, *, context=None) -> dict:
         ))
 
     # ---- 7) board independence (only when the 14A marks it) ----
-    board = store.query(
+    board = [] if context is not None else store.query(
         "SELECT independent FROM board_member WHERE company_id = ?", [company_id])
     if board and any(str(b["independent"] or "").strip() for b in board):
         marked = [b for b in board if str(b["independent"] or "").strip()]

@@ -37,6 +37,7 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
 ):
     from equitylens.companies.models import CompanyIdentity, SecurityIdentity
     from equitylens.companies.registry import CompanyRegistry
+    from equitylens.domain.promises import ingest_cards
     from equitylens.publication.builder import DatasetBuilder
     from equitylens.publication.repository import PublicationRepository
 
@@ -102,6 +103,10 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
             ("NET_INCOME", 15.0),
             ("OPERATING_CASH_FLOW", 25.0),
             ("CAPITAL_EXPENDITURES", 5.0),
+            ("SHARE_REPURCHASES", 8.0),
+            ("DIVIDENDS_PAID", 3.0),
+            ("SHARE_BASED_COMPENSATION", 2.0),
+            ("DILUTED_WEIGHTED_AVG_SHARES", 10.0),
         ):
             fact_id = f"published-{metric.lower()}-{year}"
             published_facts.append(fact(metric, fact_id, value, "FY", year))
@@ -144,6 +149,24 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
         for item in published_facts
     ]
     db._insert_many("canonical_fact", mutable_rows)
+    ingest_cards(
+        db,
+        company_id,
+        "SPLT",
+        [{
+            "promise_id": "split-brain-buybacks",
+            "company_id": company_id,
+            "statement_date": "2024-01-01",
+            "promise_text": "Repurchase at least 50",
+            "verification": {
+                "metric": "SHARE_REPURCHASES",
+                "frequency": "annual",
+                "fiscal_year": 2025,
+                "operator": "gte",
+                "target": 50.0,
+            },
+        }],
+    )
 
     second_dataset = DatasetBuilder(db).seal_rows(
         company_id=company_id,
@@ -183,13 +206,34 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
                 "question": "总览",
             },
         )
+        management_response = split_client.get(
+            f"/api/v1/companies/SPLT/management?{identity}"
+        )
+        promises_response = split_client.get(
+            f"/api/v1/companies/SPLT/promises?{identity}"
+        )
 
     assert overview_response.status_code == 200
     assert risks_response.status_code == 200
     assert moat_response.status_code == 200
     assert ask_response.status_code == 200
+    assert management_response.status_code == 200
+    assert promises_response.status_code == 200
     assert overview_response.json()["publication_id"] == first.publication_id
     assert ask_response.json()["publication_id"] == first.publication_id
+    assert management_response.json()["publication_id"] == first.publication_id
+    assert management_response.json()["capital_allocation"]["latest"]["gross_buybacks"] == 8.0
+    assert promises_response.json()["items"][0]["computed_status"] == "BROKEN"
+    assert all(
+        evidence_id.startswith("published-")
+        for evidence_id in promises_response.json()["items"][0]["evidence_ids"]
+    )
+    valuation_check = next(
+        check for check in risks_response.json()["checks"]
+        if check["key"] == "valuation"
+    )
+    assert valuation_check["status"] == "EVIDENCE_GAP"
+    assert valuation_check["next_evidence"]
     concentration = next(
         check for check in risks_response.json()["checks"]
         if check["key"] == "concentration"
@@ -224,7 +268,7 @@ def test_published_research_endpoints_ignore_mutable_split_brain_rows(
 
 def test_risks_unavailable_module_returns_http_200(client, monkeypatch):
     def unavailable(*args, **kwargs):
-        raise RuntimeError("valuation module unavailable")
+        raise AssertionError("published risks must not call default valuation")
 
     monkeypatch.setattr("equitylens.valuation.service.default_valuation", unavailable)
 
@@ -234,8 +278,8 @@ def test_risks_unavailable_module_returns_http_200(client, monkeypatch):
     valuation = next(
         check for check in response.json()["checks"] if check["key"] == "valuation"
     )
-    assert valuation["status"] == "ERROR"
-    assert valuation["reason"] == "valuation module unavailable"
+    assert valuation["status"] == "EVIDENCE_GAP"
+    assert valuation["next_evidence"]
     assert valuation["next_evidence"]
 
 
@@ -1506,6 +1550,16 @@ def test_moat_endpoint_real_evidence(client):
     assert d["signals"], "moat signals missing"
     assert any(s["evidence_ids"] for s in d["signals"])
     assert d["qualitative_gaps"], "evidence gaps must be explicit"
+    publication_id = d["publication_id"]
+    for signal in d["signals"]:
+        assert signal["evidence_ids"], signal["title"]
+        for evidence_id in signal["evidence_ids"]:
+            provenance = client.get(
+                f"/api/v1/provenance/{evidence_id}",
+                params={"publication_id": publication_id},
+            )
+            assert provenance.status_code == 200, evidence_id
+            assert provenance.json()["tree"]
 
 
 def test_risk_endpoint_exposes_actual_check_coverage(client):
