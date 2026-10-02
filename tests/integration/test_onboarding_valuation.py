@@ -777,5 +777,5 @@ def test_new_publication_marks_plan_for_review_without_mutating_old_run(db, monk
 
     assert saved_after == saved_before
     assert current_plan["review_status"] == "needs_review"
-    assert copied["review_status"] == "needs_review"
-    assert copied["publication_id"] == publication.publication_id
+    assert copied["source_plan"]["review_status"] == "needs_review"
+    assert copied["source_plan"]["publication_id"] == publication.publication_id

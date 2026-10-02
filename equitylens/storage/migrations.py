@@ -607,6 +607,20 @@ def _legacy_rereview_baseline(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def _valuation_plan_library(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "ALTER TABLE valuation_plan ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP"
+    )
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info('valuation_plan')").fetchall()
+    }
+    if {"company_id", "archived_at", "created_at"} <= columns:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS valuation_plan_library_idx "
+            "ON valuation_plan(company_id, archived_at, created_at)"
+        )
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -665,6 +679,12 @@ MIGRATIONS = (
         name="legacy_rereview_baseline",
         signature="company_onboarding:+base_publication_id",
         apply=lambda conn: _legacy_rereview_baseline(conn),
+    ),
+    Migration(
+        version=9,
+        name="valuation_plan_library",
+        signature="valuation_plan:+archived_at;index:company,archive,created",
+        apply=lambda conn: _valuation_plan_library(conn),
     ),
 )
 

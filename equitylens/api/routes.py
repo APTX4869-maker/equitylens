@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from equitylens.config import RAW_DIR
@@ -1281,24 +1281,44 @@ def valuation_run_detail(ticker: str, run_id: str):
 
 
 @router.post("/companies/{ticker}/valuation/plans")
-def valuation_plans_create(ticker: str, payload: ValuationPlanRequest):
-    from equitylens.valuation.service import create_plan
+def valuation_plans_create(
+    ticker: str,
+    payload: ValuationPlanRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    from equitylens.valuation.service import ValuationPlanConflict, create_plan
 
     company = _resolve_company(ticker)
     try:
         return create_plan(
-            _store(), company.cik, company.ticker, payload.model_dump(exclude_none=True)
+            _store(), company.cik, company.ticker,
+            payload.model_dump(exclude_none=True),
+            idempotency_key=idempotency_key,
         )
+    except ValuationPlanConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/companies/{ticker}/valuation/plans")
-def valuation_plans_list(ticker: str):
+def valuation_plans_list(
+    ticker: str,
+    status: str = "active",
+    q: str | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    cursor: str | None = None,
+):
     from equitylens.valuation.service import list_plans
 
     company = _resolve_company(ticker)
-    return {"ticker": ticker, "plans": list_plans(_store(), company.cik)}
+    try:
+        result = list_plans(
+            _store(), company.cik, status=status, query=q, limit=limit, cursor=cursor
+        )
+        return {"ticker": ticker, **result}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/companies/{ticker}/valuation/plans/compare")
@@ -1335,6 +1355,28 @@ def valuation_plan_copy(ticker: str, plan_id: str, payload: ValuationPlanCopyReq
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/companies/{ticker}/valuation/plans/{plan_id}/archive")
+def valuation_plan_archive(ticker: str, plan_id: str):
+    from equitylens.valuation.service import set_plan_archived
+
+    company = _resolve_company(ticker)
+    try:
+        return set_plan_archived(_store(), company.cik, plan_id, True)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/companies/{ticker}/valuation/plans/{plan_id}/restore")
+def valuation_plan_restore(ticker: str, plan_id: str):
+    from equitylens.valuation.service import set_plan_archived
+
+    company = _resolve_company(ticker)
+    try:
+        return set_plan_archived(_store(), company.cik, plan_id, False)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/companies/{ticker}/market/quote")

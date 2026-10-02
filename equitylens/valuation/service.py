@@ -7,6 +7,7 @@ can be reproduced exactly (docs/06 §11).
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import math
 import uuid
@@ -21,6 +22,10 @@ from equitylens.valuation import dcf as dcf_mod
 from equitylens.valuation.dcf import DcfInputs, ValuationError, implied_growth, run_dcf, validate
 from equitylens.valuation.defaults import default_assumption_set, load_valuation_config
 from equitylens.valuation.rates import risk_free_rate
+
+
+class ValuationPlanConflict(ValueError):
+    """The same idempotency key was reused for a different plan request."""
 
 
 PERSONAL_VALUATION_FIELDS = frozenset({
@@ -995,6 +1000,7 @@ def create_plan(
     *,
     review_status: str = "current",
     review_reason: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Create (and immediately persist) a personal reference-price plan.
 
@@ -1027,6 +1033,33 @@ def create_plan(
     margin = float(payload["margin_of_safety"])
     if not math.isfinite(margin) or margin < 0 or margin >= 1.0:
         raise ValueError("安全边际必须在 [0, 1) 区间（负值或 ≥100% 不接受）")
+
+    parent_plan_id = payload.get("parent_plan_id") or payload.get("_parent_plan_id")
+    version = 1
+    if parent_plan_id:
+        parent = get_plan(store, company_id, parent_plan_id)
+        if parent is None:
+            raise ValueError("父方案不存在或不属于当前公司")
+        if parent.get("valuation_run_id") == run_id:
+            raise ValueError("复制并编辑后须先保存新的估值运行，再创建子版本")
+        version = int(parent.get("version") or 1) + 1
+        if parent.get("review_status") != "current":
+            review_status = parent.get("review_status") or review_status
+            review_reason = parent.get("review_reason") or review_reason
+
+    request_hash = None
+    scoped_key = None
+    if idempotency_key:
+        scoped_key = f"valuation-plan:{company_id}:{idempotency_key}"
+        request_hash = sha256_json({"company_id": company_id, "payload": payload})
+        existing_key = store.query_one(
+            "SELECT request_hash, response_json FROM api_idempotency WHERE key=?",
+            [scoped_key],
+        )
+        if existing_key:
+            if existing_key["request_hash"] != request_hash:
+                raise ValuationPlanConflict("Idempotency-Key 已用于不同的方案请求")
+            return _json_object(existing_key["response_json"])
 
     price = None
     reason = None
@@ -1074,12 +1107,13 @@ def create_plan(
         "source_input_fingerprint": run["input_fingerprint"],
         "reference_price_reason": reason,
         "conditions_json": json.dumps(payload.get("conditions_to_verify") or [], ensure_ascii=False),
-        "parent_plan_id": payload.get("_parent_plan_id"),
-        "version": int(payload.get("_version") or 1),
+        "parent_plan_id": parent_plan_id,
+        "version": version,
         "review_status": review_status,
         "review_reason": review_reason,
         "source_filing_as_of": filing_as_of,
         "source_quote_observed_at": quote_observed_at,
+        "archived_at": None,
         "created_at": _now(),
     }
     from equitylens.storage.writer import writer_for
@@ -1088,11 +1122,25 @@ def create_plan(
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
     with writer_for(store).transaction(store):
+        if scoped_key:
+            locked = store._conn.execute(
+                "SELECT request_hash, response_json FROM api_idempotency WHERE key=?",
+                [scoped_key],
+            ).fetchone()
+            if locked:
+                if locked[0] != request_hash:
+                    raise ValuationPlanConflict("Idempotency-Key 已用于不同的方案请求")
+                return _json_object(locked[1])
         store._conn.execute(
             f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
             [row[c] for c in cols],
         )
-    out = dict(row)
+        if scoped_key:
+            response = _plan_out(row)
+            store._conn.execute(
+                "INSERT INTO api_idempotency VALUES (?, ?, ?, now())",
+                [scoped_key, request_hash, canonical_json(response)],
+            )
     return _plan_out(row)
 
 
@@ -1109,13 +1157,63 @@ def _plan_out(row: dict) -> dict:
     return out
 
 
-def list_plans(store, company_id: str) -> list[dict]:
+def _encode_plan_cursor(row: dict) -> str:
+    payload = canonical_json({
+        "created_at": str(row["created_at"]),
+        "plan_id": row["plan_id"],
+    }).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_plan_cursor(cursor: str) -> tuple[str, str]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        return str(payload["created_at"]), str(payload["plan_id"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("无效的方案分页游标") from exc
+
+
+def list_plans(
+    store,
+    company_id: str,
+    *,
+    status: str = "active",
+    query: str | None = None,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict:
     store.connect()
+    if status not in {"active", "archived", "all"}:
+        raise ValueError("status 必须是 active、archived 或 all")
+    if limit < 1 or limit > 100:
+        raise ValueError("limit 必须在 1 到 100 之间")
+    conditions = ["company_id = ?"]
+    params: list = [company_id]
+    if status == "active":
+        conditions.append("archived_at IS NULL")
+    elif status == "archived":
+        conditions.append("archived_at IS NOT NULL")
+    if query and query.strip():
+        conditions.append("(lower(name) LIKE ? OR lower(coalesce(notes, '')) LIKE ?)")
+        needle = f"%{query.strip().lower()}%"
+        params.extend([needle, needle])
+    if cursor:
+        created_at, plan_id = _decode_plan_cursor(cursor)
+        conditions.append("(created_at < ? OR (created_at = ? AND plan_id < ?))")
+        params.extend([created_at, created_at, plan_id])
+    params.append(limit + 1)
     rows = store.query(
-        "SELECT * FROM valuation_plan WHERE company_id = ? ORDER BY created_at DESC",
-        [company_id],
+        f"SELECT * FROM valuation_plan WHERE {' AND '.join(conditions)} "
+        "ORDER BY created_at DESC, plan_id DESC LIMIT ?",
+        params,
     )
-    return [_plan_out(row) for row in rows]
+    has_more = len(rows) > limit
+    visible = rows[:limit]
+    return {
+        "plans": [_plan_out(row) for row in visible],
+        "next_cursor": _encode_plan_cursor(visible[-1]) if has_more and visible else None,
+    }
 
 
 def get_plan(store, company_id: str, plan_id: str) -> dict | None:
@@ -1135,17 +1233,52 @@ def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) 
         raise ValueError("方案不存在或不属于当前公司")
     if not original.get("valuation_run_id"):
         raise ValueError("历史不完整方案不能直接复制为普通参考价方案")
-    return create_plan(store, company_id, ticker, {
-        "valuation_run_id": original["valuation_run_id"],
-        "scenario_key": payload.get("scenario_key", original["scenario_key"]),
-        "margin_of_safety": payload.get("margin_of_safety", original["margin_of_safety"]),
-        "name": payload.get("name", f"{original['name']} 副本"),
-        "notes": payload.get("notes", original.get("notes")),
-        "conditions_to_verify": payload.get("conditions_to_verify", original.get("conditions_to_verify") or []),
-        "_parent_plan_id": plan_id,
-        "_version": int(original.get("version") or 1) + 1,
-    }, review_status=original.get("review_status") or "needs_review",
-       review_reason=original.get("review_reason"))
+    run = store.query_one(
+        "SELECT fact_snapshot_json FROM valuation_run WHERE valuation_run_id=? AND company_id=?",
+        [original["valuation_run_id"], company_id],
+    )
+    if run is None:
+        raise ValueError("父方案的估值运行不存在")
+    snapshot = _json_object(run.get("fact_snapshot_json"))
+    return {
+        "parent_plan_id": plan_id,
+        "next_version": int(original.get("version") or 1) + 1,
+        "assumptions": snapshot.get("inputs") or {},
+        "source_plan": original,
+        "plan_defaults": {
+            "scenario_key": payload.get("scenario_key", original["scenario_key"]),
+            "margin_of_safety": payload.get("margin_of_safety", original["margin_of_safety"]),
+            "name": payload.get("name", f"{original['name']} 副本"),
+            "notes": payload.get("notes", original.get("notes")),
+            "conditions_to_verify": (
+                payload["conditions_to_verify"]
+                if "conditions_to_verify" in payload
+                else original.get("conditions_to_verify")
+            ) or [],
+        },
+    }
+
+
+def set_plan_archived(store, company_id: str, plan_id: str, archived: bool) -> dict:
+    current = get_plan(store, company_id, plan_id)
+    if current is None:
+        raise ValueError("方案不存在或不属于当前公司")
+    already = current.get("archived_at") is not None
+    if already == archived:
+        return current
+    from equitylens.storage.writer import writer_for
+
+    with writer_for(store).transaction(store):
+        store._conn.execute(
+            "UPDATE valuation_plan SET archived_at="
+            + ("now()" if archived else "NULL")
+            + " WHERE plan_id=? AND company_id=?",
+            [plan_id, company_id],
+        )
+    updated = get_plan(store, company_id, plan_id)
+    if updated is None:
+        raise ValueError("方案不存在或不属于当前公司")
+    return updated
 
 
 def compare_plans(store, company_id: str, plan_ids: list[str]) -> dict:
@@ -1154,8 +1287,37 @@ def compare_plans(store, company_id: str, plan_ids: list[str]) -> dict:
     plans = [get_plan(store, company_id, plan_id) for plan_id in plan_ids]
     if any(plan is None for plan in plans):
         raise ValueError("比较列表包含不存在或跨公司的方案")
-    fields = ("scenario_key", "reference_value", "margin_of_safety", "reference_price",
-              "notes", "conditions_to_verify", "review_status")
-    changed = [field for field in fields if len({json.dumps(plan.get(field), sort_keys=True, ensure_ascii=False)
-                                                 for plan in plans}) > 1]
-    return {"plans": plans, "changed_fields": changed}
+    field_labels = {
+        "revenue_growth": "五年收入增速路径",
+        "op_margin_end": "第 5 年营业利润率",
+        "wacc": "WACC",
+        "terminal_growth": "永续增长率",
+        "terminal_roic": "稳定期 ROIC",
+        "scenario_key": "情景",
+        "reference_value": "情景参考值",
+        "margin_of_safety": "安全边际",
+        "reference_price": "参考价",
+        "notes": "备注",
+        "conditions_to_verify": "待验证条件",
+        "review_status": "复核状态",
+    }
+    fields = []
+    changed = []
+    for key, label in field_labels.items():
+        values = []
+        serialized = set()
+        for plan in plans:
+            assumptions = plan.get("assumptions_json") or {}
+            value = assumptions.get(key) if key in assumptions else plan.get(key)
+            values.append({"plan_id": plan["plan_id"], "value": value})
+            serialized.add(canonical_json(value))
+        is_changed = len(serialized) > 1
+        if is_changed:
+            changed.append(key)
+        fields.append({"key": key, "label": label, "values": values, "changed": is_changed})
+    return {
+        "plans": plans,
+        "fields": fields,
+        "changed_fields": changed,
+        "has_differences": bool(changed),
+    }

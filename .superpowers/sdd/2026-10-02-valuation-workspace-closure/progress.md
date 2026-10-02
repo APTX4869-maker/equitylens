@@ -1,0 +1,16 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-10-02-valuation-workspace-closure.md
+
+Pre-flight: Task 1 produces a persisted publication-bound baseline bundle consumed by Task 2's override merge; interfaces agree on inputs/meta/source_fact_ids plus confirmation identity.
+Pre-flight: Task 2 produces the five-field override contract consumed by Task 3 controls; fields agree: revenue_growth, op_margin_end, wacc, terminal_growth, terminal_roic.
+Pre-flight: Task 4 produces cursor/search/archive/restore/comparison/lineage API contracts consumed by Task 5; response additions remain backward-compatible with current plans payload.
+Pre-flight: Task 3 and Task 5 both modify ValuationSection; extract focused controls and library components to minimize state overlap and keep the parent as orchestration boundary.
+Pre-flight: Task 6 consumes all earlier behaviors through copied-data acceptance; no interface conflict found.
+Task 1: Ruling: installed executing-plans package lacks the documented task-start/task-done scripts — use task-brief plus explicit BASE capture, run the named completion command directly, and append the same ledger evidence manually — cost if wrong: process automation is absent, but test/commit evidence remains equivalent and auditable.
+Task 1: complete (commits e3c559d..50b738f, tests: uv run pytest tests/integration/test_onboarding_valuation.py -q → 15 passed; uv run pytest -q → 507 passed)
+Task 2: complete (commits 50b738f..c048e54, tests: uv run pytest tests/integration/test_onboarding_valuation.py tests/integration/test_api.py -q → 118 passed; uv run pytest -q → 517 passed)
+Task 3: Ruling: the web package had no unit-test runner despite the plan naming npm test — add Vitest with a src-only config so pure domain helpers have fast repeatable coverage — cost if wrong: one additional development dependency and lockfile surface.
+Task 3: Ruling: use the extracted exact/adaptive controls in both ValuationSection and ValuationSetupCard — confirmation and daily editing are the same five-field contract, so separate controls would recreate clipping drift — cost if wrong: the shared component couples both screens' control presentation.
+Task 3: complete (commits c048e54..20a028c, tests: npm test -- --run → 5 passed; pnpm run build → pass; Playwright full suite → 50 passed)
+Task 4: Ruling: the plan named a SQLite store path, but this repository's active persistence and migration path is DuckDB in equitylens/storage/migrations.py — extend the existing versioned migration system instead of introducing a parallel store — cost if wrong: none beyond correcting the stale implementation path.
+Task 4: Ruling: legacy migration fixtures may contain a minimal valuation_plan table without company_id/created_at — always add archived_at, but create the library index only when all indexed columns exist — cost if wrong: extremely old incomplete schemas omit a nonessential index until their full schema is restored.
+Task 4: complete (commits 20a028c..WORKTREE, tests: uv run pytest tests/integration/test_onboarding_valuation.py tests/integration/test_api.py -q → 120 passed; uv run pytest tests/integration/test_onboarding_migration.py -q → 3 passed; uv run pytest -q → 519 passed; git diff --check → pass)

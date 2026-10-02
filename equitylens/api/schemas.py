@@ -72,6 +72,7 @@ class ValuationPlanRequest(StrictRequest):
     name: StrictStr | None = None
     notes: StrictStr | None = None
     conditions_to_verify: list[StrictStr] = Field(default_factory=list)
+    parent_plan_id: StrictStr | None = None
 
 
 class ValuationPlanCopyRequest(StrictRequest):

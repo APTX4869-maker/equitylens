@@ -1041,19 +1041,179 @@ def test_plan_copy_compare_and_company_isolation(client):
     assert copied_response.status_code == 200
     copied = copied_response.json()
     assert copied["parent_plan_id"] == first["plan_id"]
-    assert copied["version"] == first["version"] + 1
-    assert copied["reference_price"] == pytest.approx(copied["reference_value"] * 0.7)
-
-    compared = client.get(
-        "/api/v1/companies/AAPL/valuation/plans/compare",
-        params={"ids": f"{first['plan_id']},{copied['plan_id']}"},
-    )
-    assert compared.status_code == 200
-    assert "margin_of_safety" in compared.json()["changed_fields"]
+    assert copied["next_version"] == first["version"] + 1
+    assert copied["plan_defaults"]["margin_of_safety"] == pytest.approx(0.3)
 
     assert client.get(
         f"/api/v1/companies/MSFT/valuation/plans/{first['plan_id']}"
     ).status_code == 404
+
+
+def test_plan_library_paginates_searches_archives_and_restores(client):
+    run = _save_v2_run(client)
+    created = []
+    for index in range(21):
+        response = client.post(
+            "/api/v1/companies/AAPL/valuation/plans",
+            json={
+                "valuation_run_id": run["valuation_run_id"],
+                "scenario_key": "base",
+                "margin_of_safety": 0.2,
+                "name": f"LIBRARY-PAGE-20261002 {index:02d}",
+                "notes": "needle note" if index == 13 else f"note {index}",
+            },
+        )
+        assert response.status_code == 200, response.text
+        created.append(response.json())
+
+    seen = []
+    cursor = None
+    while True:
+        page = client.get(
+            "/api/v1/companies/AAPL/valuation/plans",
+            params={
+                "q": "LIBRARY-PAGE-20261002",
+                "limit": 6,
+                **({"cursor": cursor} if cursor else {}),
+            },
+        )
+        assert page.status_code == 200, page.text
+        payload = page.json()
+        seen.extend(item["plan_id"] for item in payload["plans"])
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+    assert len(seen) == 21
+    assert len(set(seen)) == 21
+
+    search = client.get(
+        "/api/v1/companies/AAPL/valuation/plans",
+        params={"q": "needle", "limit": 20},
+    ).json()
+    assert [item["name"] for item in search["plans"]] == [
+        "LIBRARY-PAGE-20261002 13"
+    ]
+
+    archived_id = created[13]["plan_id"]
+    first_archive = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{archived_id}/archive"
+    )
+    second_archive = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{archived_id}/archive"
+    )
+    assert first_archive.status_code == second_archive.status_code == 200
+    assert first_archive.json()["archived_at"] == second_archive.json()["archived_at"]
+    assert archived_id not in {
+        item["plan_id"]
+        for item in client.get(
+            "/api/v1/companies/AAPL/valuation/plans", params={"limit": 100}
+        ).json()["plans"]
+    }
+    archived = client.get(
+        "/api/v1/companies/AAPL/valuation/plans",
+        params={"status": "archived", "limit": 20},
+    ).json()
+    assert [item["plan_id"] for item in archived["plans"]] == [archived_id]
+    assert client.get(
+        f"/api/v1/companies/AAPL/valuation/plans/{archived_id}"
+    ).status_code == 200
+
+    restored = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{archived_id}/restore"
+    )
+    assert restored.status_code == 200
+    assert restored.json()["archived_at"] is None
+
+
+def test_plan_library_copy_waits_for_recalculation_and_compare_returns_values(
+    client, company_db
+):
+    first_run = _save_v2_run(client)
+    original = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        headers={"Idempotency-Key": "plan-original"},
+        json={
+            "valuation_run_id": first_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "原方案",
+        },
+    )
+    repeated = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        headers={"Idempotency-Key": "plan-original"},
+        json={
+            "valuation_run_id": first_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "原方案",
+        },
+    )
+    assert original.status_code == repeated.status_code == 200
+    assert original.json()["plan_id"] == repeated.json()["plan_id"]
+
+    conflict = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        headers={"Idempotency-Key": "plan-original"},
+        json={
+            "valuation_run_id": first_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "不同的请求",
+        },
+    )
+    assert conflict.status_code == 409
+
+    before_copy = company_db.query_one(
+        "SELECT count(*) AS n FROM valuation_plan WHERE company_id='0000320193'"
+    )["n"]
+    copy_draft = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{original.json()['plan_id']}/copy",
+        json={},
+    )
+    after_copy = company_db.query_one(
+        "SELECT count(*) AS n FROM valuation_plan WHERE company_id='0000320193'"
+    )["n"]
+    assert copy_draft.status_code == 200, copy_draft.text
+    assert after_copy == before_copy
+    assert copy_draft.json()["parent_plan_id"] == original.json()["plan_id"]
+    assert copy_draft.json()["next_version"] == 2
+    assert copy_draft.json()["assumptions"]["wacc"] == pytest.approx(
+        first_run["assumptions"]["inputs"]["wacc"]
+    )
+
+    second_run = _save_v2_run(client, {"wacc": 0.12})
+    child = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": second_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "调整 WACC",
+            "parent_plan_id": original.json()["plan_id"],
+        },
+    )
+    assert child.status_code == 200, child.text
+    assert child.json()["parent_plan_id"] == original.json()["plan_id"]
+    assert child.json()["version"] == 2
+
+    compared = client.get(
+        "/api/v1/companies/AAPL/valuation/plans/compare",
+        params={"ids": f"{original.json()['plan_id']},{child.json()['plan_id']}"},
+    )
+    assert compared.status_code == 200, compared.text
+    comparison = compared.json()
+    wacc = next(field for field in comparison["fields"] if field["key"] == "wacc")
+    assert wacc["label"] == "WACC"
+    assert wacc["values"] == [
+        {
+            "plan_id": original.json()["plan_id"],
+            "value": pytest.approx(first_run["assumptions"]["inputs"]["wacc"]),
+        },
+        {"plan_id": child.json()["plan_id"], "value": 0.12},
+    ]
+    assert wacc["changed"] is True
+    assert comparison["has_differences"] is True
 
 
 def test_plan_copy_distinguishes_omitted_fields_from_explicit_null(client):
@@ -1075,8 +1235,8 @@ def test_plan_copy_distinguishes_omitted_fields_from_explicit_null(client):
     )
 
     assert copied.status_code == 200
-    assert copied.json()["notes"] is None
-    assert copied.json()["conditions_to_verify"] == []
+    assert copied.json()["plan_defaults"]["notes"] is None
+    assert copied.json()["plan_defaults"]["conditions_to_verify"] == []
 
 
 def test_raw_non_finite_plan_copy_margin_returns_4xx_without_write(
@@ -1170,8 +1330,8 @@ def test_copying_review_required_plan_preserves_review_state(client, company_db)
     )
 
     assert copied.status_code == 200
-    assert copied.json()["review_status"] == "needs_review"
-    assert copied.json()["review_reason"] == "财务披露已更新"
+    assert copied.json()["source_plan"]["review_status"] == "needs_review"
+    assert copied.json()["source_plan"]["review_reason"] == "财务披露已更新"
 
 
 def test_refresh_reports_all_modules_and_partial_failure(client, monkeypatch):

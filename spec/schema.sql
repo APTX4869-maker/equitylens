@@ -389,5 +389,6 @@ CREATE TABLE IF NOT EXISTS valuation_plan (
   review_reason VARCHAR,
   source_filing_as_of TIMESTAMP,
   source_quote_observed_at VARCHAR,
+  archived_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL
 );
