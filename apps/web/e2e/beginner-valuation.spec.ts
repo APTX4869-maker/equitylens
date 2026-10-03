@@ -148,6 +148,11 @@ test("invalid reverse price is rejected with a visible message", async ({ page }
   await page.getByRole("textbox", { name: "Reverse DCF 参考价" }).fill("不是数字");
   await page.getByRole("button", { name: "计算隐含增长" }).click();
   await expect(page.getByText("请输入大于 0 的有效价格")).toBeVisible();
+
+  const margin = page.getByRole("spinbutton", { name: "安全边际 %" });
+  await margin.fill("100");
+  await expect(page.getByText("安全边际必须大于等于 0 且小于 100")).toBeVisible();
+  await expect(page.getByText(/预览：参考价/)).toHaveCount(0);
 });
 
 test("financial metric units and drawers stay scoped to the selected company", async ({ page }) => {

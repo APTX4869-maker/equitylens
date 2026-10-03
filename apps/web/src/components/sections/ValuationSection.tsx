@@ -456,6 +456,11 @@ export function ValuationSection({
   const bull = base?.scenarios.bull.result?.fair_value_per_share;
   const refRange = fair != null && bear != null && bull != null ? [Math.min(bear, bull), Math.max(bear, bull)] : null;
   const selectedPlanValue = base?.scenarios[planScenario]?.result?.fair_value_per_share ?? null;
+  const parsedMarginOfSafety = Number(marginOfSafety);
+  const marginOfSafetyValid = marginOfSafety.trim() !== ""
+    && Number.isFinite(parsedMarginOfSafety)
+    && parsedMarginOfSafety >= 0
+    && parsedMarginOfSafety < 100;
 
   const draftErrors = useMemo(
     () => draft ? validateValuationDraft(draft) : {},
@@ -872,10 +877,15 @@ export function ValuationSection({
             style={{ width: 160, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}
           />
           <button className="tab-btn" onClick={savePlan}
-            disabled={loading || refreshStale || !saved || !base.valuation_run_id || selectedPlanValue == null}>
+            disabled={loading || refreshStale || !saved || !base.valuation_run_id || selectedPlanValue == null || !marginOfSafetyValid}>
             保存参考价方案
           </button>
         </div>
+        {marginOfSafety !== "" && !marginOfSafetyValid ? (
+          <div className="action-error" role="alert" style={{ marginTop: 8 }}>
+            安全边际必须大于等于 0 且小于 100
+          </div>
+        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
           <textarea aria-label="方案备注" value={planNotes} onChange={(e) => setPlanNotes(e.target.value)}
             placeholder="备注：为什么选择这个情景？"
@@ -887,9 +897,9 @@ export function ValuationSection({
         {!saved || !base.valuation_run_id ? (
           <div className="card-sub" style={{ marginTop: 8 }}>先点击“保存本次运行”，方案才能绑定不可变输入与情景。</div>
         ) : null}
-        {marginOfSafety !== "" && selectedPlanValue != null ? (
+        {marginOfSafetyValid && selectedPlanValue != null ? (
           <div className="card-sub" style={{ marginTop: 8 }}>
-            预览：参考价 ≈ ${(selectedPlanValue * (1 - (parseFloat(marginOfSafety) || 0) / 100)).toFixed(2)}
+            预览：参考价 ≈ ${(selectedPlanValue * (1 - parsedMarginOfSafety / 100)).toFixed(2)}
             （{planScenario} ${selectedPlanValue.toFixed(2)} × 边际 {marginOfSafety || "0"}%）
           </div>
         ) : null}
