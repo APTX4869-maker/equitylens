@@ -175,7 +175,7 @@
 
 ## P2估值工作区实施与验收（2026-10-03）
 
-本批按[估值工作区闭环计划](../superpowers/plans/2026-10-02-valuation-workspace-closure.md)实施。最终复审后的验收数据库重新复制自正式数据到`/tmp/equitylens-valuation-final.6e1Sze/equitylens.duckdb`，只对副本写入；复制前源库与副本 SHA-256 均为`1c6453b11dc2cea69f64f876ac7c6ee1e45147c354ee5b75033c1869ab98227b`，验收后正式数据库仍为同一摘要。验收覆盖AAPL、MSFT、NVDA，不把mock结果代替真实发布数据。
+本批按[估值工作区闭环计划](../superpowers/plans/2026-10-02-valuation-workspace-closure.md)实施。最终复审后的验收数据库重新复制自正式数据到`/tmp/equitylens-valuation-merge.kOZW51/equitylens.duckdb`，只对副本写入；复制前源库与副本 SHA-256 均为`1c6453b11dc2cea69f64f876ac7c6ee1e45147c354ee5b75033c1869ab98227b`，验收后正式数据库仍为同一摘要。验收覆盖AAPL、MSFT、NVDA，不把mock结果代替真实发布数据。
 
 ### 问题状态
 
@@ -195,10 +195,11 @@
 - NVDA：父方案`plan_90f49f45ca66`、子方案`plan_e3560e775725`；WACC由`0.12669531990102512`改为`0.12769531990102512`。默认终期营业利润率`0.6088168363141272`保持精确；篡改`revenue_base`被409拒绝，拒绝前后运行数量不变。
 - 三家公司均依次修改收入增长路径、终期营业利润率、WACC、永续增长率、稳定期ROIC，保存run后创建父方案；重新打开、复制编辑、重算并保存子方案。比较返回实际值而非只有字段名。
 - AAPL旧publication `1d3d7c88-60c3-4195-913a-70a323543741`、MSFT旧publication `0805471a-f420-4473-815c-631814cb9c72`请求均进入待复核，不复用当前发布的确认。
+- 最终复审后在全新副本追加非Base路径：AAPL Bear父/子`plan_1c1b6722a473`/`plan_1c34d1a248f0`，MSFT `plan_feb7cb3896a1`/`plan_16514467057d`，NVDA `plan_8593c9d2958c`/`plan_92399870c0c7`。三家公司复制均返回Bear冻结的五项输入，原样重算保存均409，修改WACC后均生成v2；比较、归档和恢复通过。
 
 ### 自动化与边界
 
-- 后端全量：`uv run pytest -q` → **531 passed, 1 warning**；warning为既有Starlette/httpx弃用提示。
+- 后端全量：`uv run pytest -q` → **531 passed, 1 warning in 156.19s**；warning为既有Starlette/httpx弃用提示。
 - 前端：`pnpm lint`通过；`pnpm test -- --run` → **5 passed**；`pnpm run build`生产构建通过。
 - 全量Playwright（系统Chrome、单worker稳定复跑）：**52 passed (1.2m)**。专项覆盖刷新失败重试、精确控件、非法边际、方案库错误恢复、分页、复制血缘、比较、归档和恢复。
 - 独立代码复审提出的阻断项均以回归测试关闭：确认接口不再接受不可变事实或未知字段，无法重建审核基线时零写入；目录就绪状态绑定当前模型版本；复制只带五项个人字段且无实际修改不能保存；Bear/Bull详情、复制和无变化判断均使用所选情景冻结输入；同一血缘的并列子版本单调递增且复制页预告下一真实版本；保存双击只发一个请求并复用幂等键；方案详情显示所选情景值；Reverse DCF历史参照固定在确认元数据；分页游标绑定公司与筛选条件。
