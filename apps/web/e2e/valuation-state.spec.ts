@@ -28,7 +28,7 @@ function defaults(): Assumptions {
     revenue_base: 416_161_000_000,
     revenue_growth: [0.30, 0.24, 0.18, 0.14, 0.10],
     op_margin_start: 0.32,
-    op_margin_end: 0.6088,
+    op_margin_end: 0.608816,
     tax_rate: 0.16,
     da_pct: 0.03,
     capex_pct: 0.04,
@@ -53,7 +53,7 @@ test("shows exact issuer values with adaptive sliders and blocks invalid text", 
   await page.goto("/");
   await page.getByRole("button", { name: "估值" }).click();
   await expect(page.getByTestId("valuation-input-growth")).toHaveValue("30");
-  await expect(page.getByTestId("valuation-input-margin")).toHaveValue("60.88");
+  await expect(page.getByTestId("valuation-input-margin")).toHaveValue("60.8816");
   await expect(page.getByTestId("valuation-slider-growth")).toHaveAttribute("max", "30");
   await expect(page.getByTestId("valuation-slider-margin")).toHaveAttribute("max", "61");
 
@@ -62,7 +62,7 @@ test("shows exact issuer values with adaptive sliders and blocks invalid text", 
   await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
   expect(runRequests).toBe(0);
 
-  await page.getByTestId("valuation-input-margin").fill("60.88");
+  await page.getByTestId("valuation-input-margin").fill("60.8816");
   await expect.poll(() => runRequests).toBe(1);
   await page.getByTestId("valuation-input-terminal").fill("9.5");
   await expect(page.getByText("WACC 必须至少高于永续增长率 1 个百分点")).toBeVisible();

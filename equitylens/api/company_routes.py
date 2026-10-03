@@ -30,7 +30,7 @@ from equitylens.onboarding.repository import OnboardingConflict, OnboardingRepos
 from equitylens.onboarding.service import OnboardingService
 from equitylens.publication.models import sha256_json
 from equitylens.publication.repository import PublicationConflict, PublicationRepository
-from equitylens.valuation.dcf import ValuationError
+from equitylens.valuation.dcf import MODEL_VERSION, ValuationError
 from equitylens.valuation.service import (
     confirm_valuation_profile,
     valuation_profile_draft,
@@ -220,10 +220,11 @@ def companies(
                 confirmation = store.query_one(
                     """
                     SELECT 1 FROM valuation_assumption_set
-                    WHERE security_id=? AND publication_id=? AND status='CONFIRMED'
+                    WHERE security_id=? AND publication_id=? AND model_version=?
+                      AND status='CONFIRMED'
                     LIMIT 1
                     """,
-                    [item["security_id"], item["publication_id"]],
+                    [item["security_id"], item["publication_id"], MODEL_VERSION],
                 )
                 if confirmation:
                     capability["status"] = "READY"
@@ -627,7 +628,8 @@ def valuation_profile(ticker: str, body: ValuationProfileRequest):
         return confirm_valuation_profile(
             store,
             company_id=security.company_id,
-            **body.model_dump(),
+            **body.model_dump(exclude={"assumptions"}),
+            assumptions=body.assumptions.model_dump(exclude_none=True),
         )
     except CompanyRegistryError as exc:
         _raise_service_error(exc)

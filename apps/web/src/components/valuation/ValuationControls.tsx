@@ -56,7 +56,8 @@ function percentages(draft: DcfInputs): Record<Field, number> {
 }
 
 function displayNumber(value: number, decimals: number): string {
-  return Number(value.toFixed(decimals)).toString();
+  void decimals;
+  return Number(value.toPrecision(15)).toString();
 }
 
 export function ValuationControls({

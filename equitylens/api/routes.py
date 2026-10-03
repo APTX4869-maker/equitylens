@@ -1205,6 +1205,13 @@ def valuation_reverse(
             confirmed_personal_assumptions(confirmation, body.get("assumptions"))
             if confirmation else None
         )
+        growth_meta = (
+            (assumption_bundle.get("meta") or {}).get("revenue_growth") or {}
+            if assumption_bundle else {}
+        )
+        historical_reference = (
+            (growth_meta.get("historical_reference") or {}).get("value")
+        )
         return {
             **reverse_dcf(
                 store,
@@ -1214,6 +1221,7 @@ def valuation_reverse(
                 confirmed_assumptions=(
                     assumption_bundle["inputs"] if assumption_bundle else None
                 ),
+                historical_revenue_cagr=historical_reference,
                 security_id=company.security_id,
             ),
             **_version_fields(company, context),

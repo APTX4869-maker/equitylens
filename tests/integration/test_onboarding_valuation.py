@@ -41,7 +41,7 @@ def _install_company(
     instrument_type="COMMON_STOCK",
     evidence=None,
     profile_version=401,
-    complete_valuation_facts=False,
+    complete_valuation_facts=True,
     fact_currency="USD",
 ):
     registry = CompanyRegistry(db)
@@ -150,19 +150,32 @@ def _install_company(
 
 def _client(db, monkeypatch):
     monkeypatch.setattr("equitylens.api.routes.DuckDBStore", lambda: db)
+    from equitylens.valuation.defaults import _load_wacc_config
+
+    config = json.loads(json.dumps(_load_wacc_config()))
+    config["issuers"]["NEWCO"] = config["issuers"]["AAPL"]
+    monkeypatch.setattr("equitylens.valuation.defaults._load_wacc_config", lambda: config)
+    monkeypatch.setattr("equitylens.valuation.service.load_valuation_config", lambda: config)
     return TestClient(app, raise_server_exceptions=False)
 
 
 def _confirm(client, publication, **overrides):
+    ticker = overrides.pop("ticker", "NEWCO")
+    assumption_overrides = overrides.pop("assumptions", {})
+    security_id = overrides.get("security_id", "security-newco")
+    draft = client.get(
+        f"/api/v1/companies/{ticker}/valuation-profile/draft",
+        params={"security_id": security_id, "publication_id": publication.publication_id},
+    ).json()
     body = {
-        "security_id": "security-newco",
+        "security_id": security_id,
         "publication_id": publication.publication_id,
         "model_version": MODEL_VERSION,
-        "assumptions": ASSUMPTIONS,
+        "assumptions": {**draft["assumptions"]["inputs"], **assumption_overrides},
         "confirmed": True,
     }
     body.update(overrides)
-    return client.put("/api/v1/companies/NEWCO/valuation-profile", json=body)
+    return client.put(f"/api/v1/companies/{ticker}/valuation-profile", json=body)
 
 
 def test_new_security_requires_confirmed_assumptions(db, monkeypatch):
@@ -285,6 +298,96 @@ def test_confirmation_preserves_provenance_when_reopened(db, monkeypatch):
     assert revenue_meta["source_ids"] == ["revenue-401"]
 
 
+@pytest.mark.parametrize(
+    "field,replacement",
+    [
+        ("revenue_base", 1_001.0),
+        ("shares", 11.0),
+        ("net_cash", 101.0),
+        ("tax_rate", 0.22),
+        ("op_margin_start", 0.21),
+        ("da_pct", 0.04),
+        ("capex_pct", 0.06),
+        ("nwc_pct", 0.02),
+    ],
+)
+def test_confirmation_rejects_changed_immutable_facts_without_writing(
+    db, monkeypatch, field, replacement
+):
+    publication = _install_company(db, complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/NEWCO/valuation-profile/draft",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+    ).json()
+    assumptions = dict(draft["assumptions"]["inputs"])
+    assumptions[field] = replacement
+    before = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+    response = client.put(
+        "/api/v1/companies/NEWCO/valuation-profile",
+        json={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+            "model_version": MODEL_VERSION,
+            "assumptions": assumptions,
+            "confirmed": True,
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "VALUATION_FACT_BASELINE_CHANGED"
+    assert response.json()["error"]["field"] == field
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
+
+
+def test_confirmation_rejects_unknown_assumption_field_without_writing(db, monkeypatch):
+    publication = _install_company(db, ticker="AAPL", complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/AAPL/valuation-profile/draft",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+    ).json()
+    before = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+    response = client.put(
+        "/api/v1/companies/AAPL/valuation-profile",
+        json={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+            "model_version": MODEL_VERSION,
+            "assumptions": {**draft["assumptions"]["inputs"], "surprise": 1.0},
+            "confirmed": True,
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
+
+
+def test_confirmation_baseline_generation_failure_writes_nothing(db, monkeypatch):
+    publication = _install_company(db, complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    draft = client.get(
+        "/api/v1/companies/NEWCO/valuation-profile/draft",
+        params={"security_id": "security-newco", "publication_id": publication.publication_id},
+    ).json()
+    before = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+    monkeypatch.setattr(
+        "equitylens.valuation.service.default_valuation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("baseline unavailable")),
+    )
+    response = client.put(
+        "/api/v1/companies/NEWCO/valuation-profile",
+        json={
+            "security_id": "security-newco",
+            "publication_id": publication.publication_id,
+            "model_version": MODEL_VERSION,
+            "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True,
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "VALUATION_DEFAULT_UNAVAILABLE"
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
+
+
 def test_confirmation_rejects_draft_after_active_publication_changes(db, monkeypatch):
     publication = _install_company(
         db,
@@ -319,22 +422,22 @@ def test_confirmation_rejects_draft_after_active_publication_changes(db, monkeyp
 
 
 def test_confirmation_binds_security_publication_model_and_assumptions(db, monkeypatch):
-    publication = _install_company(db)
+    publication = _install_company(db, ticker="AAPL", complete_valuation_facts=True)
     client = _client(db, monkeypatch)
-    confirmed = _confirm(client, publication)
+    confirmed = _confirm(client, publication, ticker="AAPL")
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "READY"
 
     result = client.get(
-        "/api/v1/companies/NEWCO/valuation/default",
+        "/api/v1/companies/AAPL/valuation/default",
         params={"security_id": "security-newco"},
     )
     assert result.status_code == 200
     assert result.json()["security_id"] == "security-newco"
     assert result.json()["publication_id"] == publication.publication_id
-    assert result.json()["assumptions"]["inputs"] == ASSUMPTIONS
+    assert result.json()["assumptions"]["inputs"]["revenue_base"] == 1_000.0
     reverse = client.post(
-        "/api/v1/companies/NEWCO/valuation/reverse-dcf",
+        "/api/v1/companies/AAPL/valuation/reverse-dcf",
         params={"security_id": "security-newco"},
         json={"target_price": 100.0},
     )
@@ -343,11 +446,29 @@ def test_confirmation_binds_security_publication_model_and_assumptions(db, monke
 
     newer = _install_new_publication(db, publication.company_id, version=402)
     stale = client.get(
-        "/api/v1/companies/NEWCO/valuation/default",
+        "/api/v1/companies/AAPL/valuation/default",
         params={"security_id": "security-newco", "publication_id": newer.publication_id},
     )
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "VALUATION_NEEDS_CONFIGURATION"
+
+
+def test_company_directory_requires_current_model_confirmation(db, monkeypatch):
+    publication = _install_company(db, complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    confirmed = _confirm(client, publication)
+    assert confirmed.status_code == 200, confirmed.text
+    db._conn.execute(
+        "UPDATE valuation_assumption_set SET model_version='fcff_dcf.v1' "
+        "WHERE assumption_set_id=?",
+        [confirmed.json()["confirmation_id"]],
+    )
+
+    response = client.get("/api/v1/companies", params={"limit": 200})
+    assert response.status_code == 200, response.text
+    company = next(item for item in response.json()["items"] if item["ticker"] == "NEWCO")
+    valuation = next(item for item in company["capabilities"] if item["module"] == "valuation")
+    assert valuation["status"] == "NEEDS_CONFIGURATION"
 
 
 def _confirmed_aapl_draft(db, monkeypatch):
@@ -471,9 +592,9 @@ def test_personal_override_invalid_model_input_never_persists(db, monkeypatch):
     assert db.query_one("SELECT count(*) AS n FROM valuation_run")["n"] == before_runs
 
 
-def _ask_research_valuation(client, publication_id=None):
+def _ask_research_valuation(client, publication_id=None, *, ticker="NEWCO"):
     body = {
-        "ticker": "NEWCO",
+        "ticker": ticker,
         "security_id": "security-newco",
         "question": "估值怎么看？",
     }
@@ -506,12 +627,12 @@ def test_research_valuation_gate_blocks_unconfirmed_conclusion(db, monkeypatch):
 
 
 def test_research_valuation_gate_uses_bound_confirmation_and_evidence(db, monkeypatch):
-    publication = _install_company(db)
+    publication = _install_company(db, ticker="AAPL")
     client = _client(db, monkeypatch)
-    confirmed = _confirm(client, publication)
+    confirmed = _confirm(client, publication, ticker="AAPL")
     assert confirmed.status_code == 200, confirmed.text
 
-    response = _ask_research_valuation(client, publication.publication_id)
+    response = _ask_research_valuation(client, publication.publication_id, ticker="AAPL")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -547,12 +668,12 @@ def test_research_valuation_gate_uses_bound_confirmation_and_evidence(db, monkey
 
 
 def test_research_valuation_gate_does_not_compare_a_stale_quote(db, monkeypatch):
-    publication = _install_company(db)
+    publication = _install_company(db, ticker="AAPL")
     db.insert_market_quote({
         "quote_id": "quote-stale-newco",
         "company_id": publication.company_id,
         "security_id": "security-newco",
-        "ticker": "NEWCO",
+        "ticker": "AAPL",
         "provider": "fixture",
         "observed_at": "2020-01-02 00:00:00",
         "price": 42.0,
@@ -560,9 +681,9 @@ def test_research_valuation_gate_does_not_compare_a_stale_quote(db, monkeypatch)
         "fetched_at": "2020-01-02 00:00:00",
     })
     client = _client(db, monkeypatch)
-    assert _confirm(client, publication).status_code == 200
+    assert _confirm(client, publication, ticker="AAPL").status_code == 200
 
-    response = _ask_research_valuation(client, publication.publication_id)
+    response = _ask_research_valuation(client, publication.publication_id, ticker="AAPL")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -574,13 +695,13 @@ def test_research_valuation_gate_does_not_compare_a_stale_quote(db, monkeypatch)
 
 
 def test_research_valuation_gate_rechecks_changed_active_publication(db, monkeypatch):
-    original = _install_company(db)
+    original = _install_company(db, ticker="AAPL")
     client = _client(db, monkeypatch)
-    assert _confirm(client, original).status_code == 200
+    assert _confirm(client, original, ticker="AAPL").status_code == 200
     newer = _install_new_publication(db, original.company_id, version=402)
 
-    active = _ask_research_valuation(client)
-    pinned = _ask_research_valuation(client, original.publication_id)
+    active = _ask_research_valuation(client, ticker="AAPL")
+    pinned = _ask_research_valuation(client, original.publication_id, ticker="AAPL")
 
     assert active.status_code == 200, active.text
     assert active.json()["publication_id"] == newer.publication_id
@@ -662,10 +783,10 @@ def test_currency_and_adr_identity_gates_cannot_be_confirmed(db, monkeypatch):
 
 
 def test_currency_gate_normalizes_published_unit_case(db, monkeypatch):
-    publication = _install_company(db, fact_currency="usd")
+    publication = _install_company(db, ticker="AAPL", fact_currency="usd")
     client = _client(db, monkeypatch)
 
-    response = _confirm(client, publication)
+    response = _confirm(client, publication, ticker="AAPL")
 
     assert response.status_code == 200, response.text
 
@@ -714,12 +835,12 @@ def test_quote_identity_is_separate_for_each_security(db, monkeypatch):
 
 
 def test_multiple_share_classes_require_security_level_share_basis(db, monkeypatch):
-    publication = _install_company(db)
+    publication = _install_company(db, ticker="AAPL")
     CompanyRegistry(db).register_security(
         SecurityIdentity(
             security_id="security-newco-b",
             company_id=publication.company_id,
-            ticker="NEWCO.B",
+            ticker="AAPL.B",
             exchange="NASDAQ",
             currency="USD",
             instrument_type="COMMON_STOCK",
@@ -728,14 +849,15 @@ def test_multiple_share_classes_require_security_level_share_basis(db, monkeypat
     )
     client = _client(db, monkeypatch)
 
-    blocked = _confirm(client, publication)
+    blocked = _confirm(client, publication, ticker="AAPL")
     assert blocked.status_code == 409
     assert blocked.json()["error"]["code"] == "VALUATION_SHARE_BASIS_UNVERIFIED"
 
     scoped = _confirm(
         client,
         publication,
-        assumptions={**ASSUMPTIONS, "share_basis_security_id": "security-newco"},
+        ticker="AAPL",
+        assumptions={"share_basis_security_id": "security-newco"},
     )
     assert scoped.status_code == 200
 
@@ -753,14 +875,16 @@ def test_new_publication_marks_plan_for_review_without_mutating_old_run(db, monk
         "SELECT * FROM valuation_run WHERE valuation_run_id=?",
         [run["valuation_run_id"]],
     )
-    plan = client.post(
+    plan_response = client.post(
         "/api/v1/companies/NEWCO/valuation/plans",
         json={
             "valuation_run_id": run["valuation_run_id"],
             "scenario_key": "base",
             "margin_of_safety": 0.2,
         },
-    ).json()
+    )
+    assert plan_response.status_code == 200, plan_response.text
+    plan = plan_response.json()
 
     _install_new_publication(db, publication.company_id, version=403)
     saved_after = db.query_one(

@@ -175,7 +175,7 @@
 
 ## P2估值工作区实施与验收（2026-10-03）
 
-本批按[估值工作区闭环计划](../superpowers/plans/2026-10-02-valuation-workspace-closure.md)实施。验收数据库复制自正式数据到`/tmp/equitylens-valuation-acceptance.TP1Qt1/equitylens.duckdb`，只对副本写入；正式数据库未写入。验收覆盖AAPL、MSFT、NVDA，不把mock结果代替真实发布数据。
+本批按[估值工作区闭环计划](../superpowers/plans/2026-10-02-valuation-workspace-closure.md)实施。最终复审后的验收数据库重新复制自正式数据到`/tmp/equitylens-valuation-final.6e1Sze/equitylens.duckdb`，只对副本写入；复制前源库与副本 SHA-256 均为`1c6453b11dc2cea69f64f876ac7c6ee1e45147c354ee5b75033c1869ab98227b`，验收后正式数据库仍为同一摘要。验收覆盖AAPL、MSFT、NVDA，不把mock结果代替真实发布数据。
 
 ### 问题状态
 
@@ -190,17 +190,18 @@
 
 ### 真实副本用户流程
 
-- AAPL：父方案`plan_bccbde6de805`、子方案`plan_33cf9927f922`；WACC由`0.086373`改为`0.087373`，版本为v1/v2。归档列表出现1条，恢复后`archived_at=null`且有效列表2条。
-- MSFT：父方案`plan_4a3ce3163efd`、子方案`plan_ab8c00bcd0b1`；WACC由`0.08224`改为`0.08324`，完整完成打开、复制、比较、归档和恢复。
-- NVDA：父方案`plan_22da3a3023ed`、子方案`plan_f511bbb02a81`；WACC由`0.1276953`改为`0.1286953`。实际浏览器打开不可变详情、父子比较和完整假设结果，控制台无应用错误。
+- AAPL：父方案`plan_1d2bfe086d8b`、子方案`plan_d61db6833b34`；WACC由`0.085373`改为`0.086373`，版本为v1/v2。归档后从有效列表消失，恢复后`archived_at=null`。
+- MSFT：父方案`plan_7b3f90864c75`、子方案`plan_f3ac164677d3`；WACC由`0.08124`改为`0.08224`，完整完成打开、复制、比较、归档和恢复。
+- NVDA：父方案`plan_90f49f45ca66`、子方案`plan_e3560e775725`；WACC由`0.12669531990102512`改为`0.12769531990102512`。默认终期营业利润率`0.6088168363141272`保持精确；篡改`revenue_base`被409拒绝，拒绝前后运行数量不变。
 - 三家公司均依次修改收入增长路径、终期营业利润率、WACC、永续增长率、稳定期ROIC，保存run后创建父方案；重新打开、复制编辑、重算并保存子方案。比较返回实际值而非只有字段名。
 - AAPL旧publication `1d3d7c88-60c3-4195-913a-70a323543741`、MSFT旧publication `0805471a-f420-4473-815c-631814cb9c72`请求均进入待复核，不复用当前发布的确认。
 
 ### 自动化与边界
 
-- 后端全量：`uv run pytest -q` → **519 passed, 1 warning in 148.31s**；warning为既有Starlette/httpx弃用提示。
+- 后端全量：`uv run pytest -q` → **530 passed, 1 warning in 156.58s**；warning为既有Starlette/httpx弃用提示。
 - 前端：`pnpm lint`通过；`pnpm test -- --run` → **5 passed**；`pnpm run build`生产构建通过。
-- 全量Playwright（系统Chrome、单worker稳定复跑）：**52 passed (1.1m)**。专项覆盖刷新失败重试、精确控件、非法边际、方案库错误恢复、分页、复制血缘、比较、归档和恢复。
+- 全量Playwright（系统Chrome、单worker稳定复跑）：**52 passed (1.2m)**。专项覆盖刷新失败重试、精确控件、非法边际、方案库错误恢复、分页、复制血缘、比较、归档和恢复。
+- 独立代码复审提出的阻断项均以回归测试关闭：确认接口不再接受不可变事实或未知字段，无法重建审核基线时零写入；目录就绪状态绑定当前模型版本；复制只带五项个人字段且无实际修改不能保存；同一血缘的并列子版本单调递增；保存双击只发一个请求并复用幂等键；方案详情显示所选情景值；Reverse DCF历史参照固定在确认元数据；分页游标绑定公司与筛选条件。
 - 首轮并发运行曾出现一个研究页30秒超时；该测试单独复跑及全量单worker复跑均通过。另一个刷新用例仍断言旧版通用500文案，已改为当前API返回的具体失败原因；重试和rebase行为均通过。
 - 930px真实页面检查仍有横向溢出，来源是情景网格/DCF控件；这是既有F09/P4响应式事项，不在本批估值数据与方案闭环范围内，保持开放。
 - 行情刷新与公司页面数据刷新优化仍按已记录的独立待办保留，本批没有将其标为完成。

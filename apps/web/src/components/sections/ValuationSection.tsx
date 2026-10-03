@@ -148,6 +148,7 @@ export function ValuationSection({
   const [parentPlan, setParentPlan] = useState<{ id: string; name: string; nextVersion: number } | null>(null);
   const [planLibraryRefresh, setPlanLibraryRefresh] = useState(0);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
+  const [planSaving, setPlanSaving] = useState(false);
   const [reverseError, setReverseError] = useState<string | null>(null);
   const [rawControlErrors, setRawControlErrors] = useState<ValuationDraftErrors>({});
   const [lastCalculatedRefresh, setLastCalculatedRefresh] = useState(refreshGeneration);
@@ -158,6 +159,8 @@ export function ValuationSection({
   const draftRef = useRef<DcfInputs | null>(null);
   const targetPriceRef = useRef("");
   const refreshGenerationRef = useRef(refreshGeneration);
+  const planSavePendingRef = useRef(false);
+  const planIdempotencyRef = useRef<{ signature: string; key: string } | null>(null);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -335,6 +338,7 @@ export function ValuationSection({
   }, [preview]);
 
   const savePlan = useCallback(async () => {
+    if (planSavePendingRef.current) return;
     const pct = parseFloat(marginOfSafety);
     if (Number.isNaN(pct) || pct < 0 || pct >= 100) {
       setPlanMsg("安全边际必须是 0–99 之间的百分比（0 表示无边际）");
@@ -350,19 +354,26 @@ export function ValuationSection({
       setPlanMsg("所选情景当前不可用");
       return;
     }
+    const payload = {
+      name: planName || undefined,
+      valuation_run_id: runId,
+      scenario_key: planScenario,
+      margin_of_safety: pct / 100,
+      notes: planNotes || undefined,
+      conditions_to_verify: planConditions.split("\n").map((item) => item.trim()).filter(Boolean),
+      parent_plan_id: parentPlan?.id,
+    };
+    const signature = JSON.stringify(payload);
+    if (planIdempotencyRef.current?.signature !== signature) {
+      planIdempotencyRef.current = { signature, key: crypto.randomUUID() };
+    }
+    planSavePendingRef.current = true;
+    setPlanSaving(true);
     try {
       const d = await api.createValuationPlan(
         ticker,
-        {
-          name: planName || undefined,
-          valuation_run_id: runId,
-          scenario_key: planScenario,
-          margin_of_safety: pct / 100,
-          notes: planNotes || undefined,
-          conditions_to_verify: planConditions.split("\n").map((item) => item.trim()).filter(Boolean),
-          parent_plan_id: parentPlan?.id,
-        },
-        crypto.randomUUID(),
+        payload,
+        planIdempotencyRef.current.key,
       );
       setPlanMsg(d.reference_price != null
         ? `已保存方案：参考价 $${d.reference_price.toFixed(2)}`
@@ -371,14 +382,20 @@ export function ValuationSection({
       setPlanNotes("");
       setPlanConditions("");
       setParentPlan(null);
+      planIdempotencyRef.current = null;
       setPlanLibraryRefresh((value) => value + 1);
     } catch (e) {
       setPlanMsg(String(e));
+    } finally {
+      planSavePendingRef.current = false;
+      setPlanSaving(false);
     }
   }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, parentPlan, base, saved]);
 
   const copyPlanIntoDraft = useCallback((copy: ValuationPlanCopyDraft) => {
-    const next = draftFromInputs(copy.assumptions as DcfInputs);
+    const current = draftRef.current;
+    if (!current) return;
+    const next = draftFromInputs({ ...current, ...copy.assumptions } as DcfInputs);
     reqSeq.current += 1;
     reverseReqSeq.current += 1;
     draftRef.current = next;
@@ -877,8 +894,8 @@ export function ValuationSection({
             style={{ width: 160, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)" }}
           />
           <button className="tab-btn" onClick={savePlan}
-            disabled={loading || refreshStale || !saved || !base.valuation_run_id || selectedPlanValue == null || !marginOfSafetyValid}>
-            保存参考价方案
+            disabled={loading || planSaving || refreshStale || !saved || !base.valuation_run_id || selectedPlanValue == null || !marginOfSafetyValid}>
+            {planSaving ? "正在保存方案…" : "保存参考价方案"}
           </button>
         </div>
         {marginOfSafety !== "" && !marginOfSafetyValid ? (

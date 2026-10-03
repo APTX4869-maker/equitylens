@@ -79,6 +79,9 @@ async function openValuation(page: Page) {
 test("plan library exposes retry, all pages, search, archive, restore and immutable detail", async ({ page }) => {
   await stubShell(page);
   const plans: Plan[] = Array.from({ length: 20 }, (_, index) => plan(20 - index));
+  const bearPlan = plans.find((item) => item.plan_id === "plan-13")!;
+  bearPlan.scenario_key = "bear";
+  bearPlan.reference_value = 70;
   let failList = true;
 
   await page.route("**/api/v1/companies/AAPL/valuation/runs/**", (route) => {
@@ -155,16 +158,20 @@ test("plan library exposes retry, all pages, search, archive, restore and immuta
   await expect(detail).toContainText("第 13 个方案备注");
   await expect(detail).toContainText("条件 13");
   await expect(detail).toContainText("WACC");
-  await expect(detail).toContainText("每股公允价值");
+  await expect(detail).toContainText("所选情景每股价值");
+  await expect(detail.getByText("$70.00", { exact: true })).toBeVisible();
 });
 
 test("copy-and-edit saves lineage and comparison shows actual values including equal fields", async ({ page }) => {
   await stubShell(page);
   const plans: Plan[] = [plan(20), plan(19), plan(18)];
   let savedRequest: Record<string, unknown> | null = null;
+  let createRequests = 0;
+  const runBodies: Array<{ assumptions: typeof inputs; persist?: boolean }> = [];
 
   await page.route("**/api/v1/companies/AAPL/valuation/run?**", (route) => {
     const body = route.request().postDataJSON() as { assumptions: typeof inputs; persist?: boolean };
+    runBodies.push(body);
     return route.fulfill({ json: runResponse(Boolean(body.persist), body.assumptions) });
   });
   await page.route("**/api/v1/companies/AAPL/valuation/plans**", async (route) => {
@@ -177,7 +184,13 @@ test("copy-and-edit saves lineage and comparison shows actual values including e
     if (request.method() === "POST" && path.endsWith("/copy")) {
       return route.fulfill({ json: {
         parent_plan_id: "plan-20", next_version: 2,
-        assumptions: plans[0].assumptions_json, source_plan: plans[0],
+        assumptions: {
+          revenue_growth: plans[0].assumptions_json.revenue_growth,
+          op_margin_end: plans[0].assumptions_json.op_margin_end,
+          wacc: plans[0].assumptions_json.wacc,
+          terminal_growth: plans[0].assumptions_json.terminal_growth,
+          terminal_roic: plans[0].assumptions_json.terminal_roic,
+        }, source_plan: plans[0],
         plan_defaults: { scenario_key: "base", margin_of_safety: 0.2,
           name: "方案 20 副本", notes: "复制后调整", conditions_to_verify: ["条件 20"] },
       }});
@@ -194,7 +207,9 @@ test("copy-and-edit saves lineage and comparison shows actual values including e
       ], changed_fields: hasDifferences ? ["wacc"] : [], has_differences: hasDifferences } });
     }
     if (request.method() === "POST" && path.endsWith("/plans")) {
+      createRequests += 1;
       savedRequest = request.postDataJSON() as Record<string, unknown>;
+      await new Promise((resolve) => setTimeout(resolve, 200));
       const created = plan(21, { ...savedRequest, plan_id: "plan-21", version: 2 });
       plans.unshift(created);
       return route.fulfill({ json: created });
@@ -206,10 +221,13 @@ test("copy-and-edit saves lineage and comparison shows actual values including e
   await page.getByRole("button", { name: "复制并编辑方案 20" }).click();
   await expect(page.getByText("正在编辑“方案 20”的新版本 v2")).toBeVisible();
   await page.getByTestId("valuation-input-wacc").fill("11");
+  await expect.poll(() => runBodies.length).toBeGreaterThan(0);
+  expect(runBodies.at(-1)?.assumptions.revenue_base).toBe(inputs.revenue_base);
   await page.getByRole("button", { name: "保存本次运行" }).click();
   await expect(page.getByText(/已保存 · run run-0.11/)).toBeVisible();
-  await page.getByRole("button", { name: "保存参考价方案" }).click();
+  await page.getByRole("button", { name: "保存参考价方案" }).dblclick();
   await expect.poll(() => savedRequest).not.toBeNull();
+  expect(createRequests).toBe(1);
   expect(savedRequest).toMatchObject({ parent_plan_id: "plan-20", valuation_run_id: "run-0.11" });
 
   await page.getByLabel("比较 方案 20").check();

@@ -44,7 +44,7 @@ function displayValue(key: string, value: unknown): string {
 
 function PlanDetail({ plan, run }: { plan: ValuationPlan; run: ValuationRunSnapshot | null }) {
   const assumptions = run?.assumptions.inputs ?? plan.assumptions_json ?? {};
-  const fairValue = run?.output.fair_value_per_share ?? plan.reference_value;
+  const fairValue = plan.reference_value;
   return (
     <section className="plan-detail" data-testid="plan-detail" aria-label="方案不可变快照">
       <div className="plan-detail-head">
@@ -57,7 +57,7 @@ function PlanDetail({ plan, run }: { plan: ValuationPlan; run: ValuationRunSnaps
         </span>
       </div>
       <div className="plan-detail-metrics">
-        <div><span>每股公允价值</span><strong>{fairValue == null ? "—" : `$${Number(fairValue).toFixed(2)}`}</strong></div>
+        <div><span>所选情景每股价值</span><strong>{fairValue == null ? "—" : `$${Number(fairValue).toFixed(2)}`}</strong></div>
         <div><span>安全边际</span><strong>{displayValue("margin_of_safety", plan.margin_of_safety)}</strong></div>
         <div><span>个人参考价</span><strong>{plan.reference_price == null ? "—" : `$${plan.reference_price.toFixed(2)}`}</strong></div>
         <div><span>模型 / 运行</span><strong>{run?.model_version ?? "—"}</strong><small>{plan.valuation_run_id ?? "历史记录不完整"}</small></div>

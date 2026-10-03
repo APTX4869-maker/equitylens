@@ -192,13 +192,14 @@ def confirm_valuation_profile(
             "VALUATION_SHARE_BASIS_UNVERIFIED",
             "issuer-level share count cannot be paired with one security price",
         )
+    assumptions = dict(assumptions)
+    assumptions.pop("share_basis_security_id", None)
     try:
         inputs = _inputs_from_dict(assumptions)
         validate(inputs)
     except TypeError as exc:
         _valuation_error("INVALID_ASSUMPTION", f"complete DCF assumptions are required: {exc}")
 
-    source_bundle = None
     try:
         valuation = default_valuation(
             store,
@@ -206,41 +207,21 @@ def confirm_valuation_profile(
             _active_security_ticker(store, security_id),
             publication_id=publication_id,
         )
-        baseline = valuation["assumptions"]
-        meta = {key: dict(value) for key, value in baseline["meta"].items()}
-        for key, value in assumptions.items():
-            if key not in meta:
-                continue
-            if baseline["inputs"].get(key) != value:
-                meta[key] = {
-                    **meta[key],
-                    "value": value,
-                    "source_type": "user_confirmation",
-                    "source": "reviewed valuation confirmation",
-                    "baseline": meta[key],
-                }
-        source_bundle = {
-            "inputs": assumptions,
-            "meta": meta,
-            "source_fact_ids": _source_fact_ids(meta),
-        }
-    except (PublicationConflict, TypeError, ValueError, ValuationError):
-        # Compatibility for historical/minimal fixtures that predate a complete
-        # generated draft. Product confirmations with a reviewable draft take
-        # the provenance-preserving path above.
-        fallback_meta = {
-            key: {
-                "value": value,
-                "source_type": "user_confirmation",
-                "source": "reviewed valuation confirmation",
-            }
-            for key, value in assumptions.items()
-        }
-        source_bundle = {
-            "inputs": assumptions,
-            "meta": fallback_meta,
-            "source_fact_ids": {},
-        }
+    except (PublicationConflict, TypeError, ValueError) as exc:
+        _valuation_error("VALUATION_DEFAULT_UNAVAILABLE", str(exc))
+    baseline = valuation["assumptions"]
+    source_bundle = confirmed_personal_assumptions(
+        {
+            "assumptions": baseline["inputs"],
+            "source_metadata": {
+                "inputs": baseline["inputs"],
+                "meta": baseline["meta"],
+                "source_fact_ids": _source_fact_ids(baseline["meta"]),
+            },
+        },
+        assumptions,
+    )
+    assumptions = source_bundle["inputs"]
 
     assumptions_hash = sha256_json(assumptions)
     fingerprint = valuation_confirmation_fingerprint(
@@ -863,6 +844,7 @@ def reverse_dcf(
     payload: dict,
     *,
     confirmed_assumptions: dict | None = None,
+    historical_revenue_cagr: float | None = None,
     security_id: str | None = None,
 ) -> dict:
     if confirmed_assumptions is None:
@@ -926,14 +908,15 @@ def reverse_dcf(
     validate(base)
     implied = implied_growth(base, target)
     from equitylens.market.service import valuation_market_block
-    from equitylens.metrics.engine import MetricEngine
+    hist_cagr = historical_revenue_cagr
+    if confirmed_assumptions is None:
+        from equitylens.metrics.engine import MetricEngine
 
-    hist = MetricEngine(store)
-    rev_pts = hist.compute("REVENUE", company_id, frequency="annual")
-    annual = [p.value for p in rev_pts if p.value][-6:]
-    hist_cagr = None
-    if len(annual) >= 2 and annual[0]:
-        hist_cagr = (annual[-1] / annual[0]) ** (1 / (len(annual) - 1)) - 1.0
+        hist = MetricEngine(store)
+        rev_pts = hist.compute("REVENUE", company_id, frequency="annual")
+        annual = [p.value for p in rev_pts if p.value][-6:]
+        if len(annual) >= 2 and annual[0]:
+            hist_cagr = (annual[-1] / annual[0]) ** (1 / (len(annual) - 1)) - 1.0
     return {
         "model_version": dcf_mod.MODEL_VERSION,
         "implied_revenue_cagr": implied,
@@ -1036,13 +1019,15 @@ def create_plan(
 
     parent_plan_id = payload.get("parent_plan_id") or payload.get("_parent_plan_id")
     version = 1
+    parent = None
     if parent_plan_id:
         parent = get_plan(store, company_id, parent_plan_id)
         if parent is None:
             raise ValueError("父方案不存在或不属于当前公司")
         if parent.get("valuation_run_id") == run_id:
             raise ValueError("复制并编辑后须先保存新的估值运行，再创建子版本")
-        version = int(parent.get("version") or 1) + 1
+        if parent.get("source_input_fingerprint") == run.get("input_fingerprint"):
+            raise ValuationPlanConflict("复制并编辑后须实际修改假设并重新计算，不能保存无变化副本")
         if parent.get("review_status") != "current":
             review_status = parent.get("review_status") or review_status
             review_reason = parent.get("review_reason") or review_reason
@@ -1131,6 +1116,27 @@ def create_plan(
                 if locked[0] != request_hash:
                     raise ValuationPlanConflict("Idempotency-Key 已用于不同的方案请求")
                 return _json_object(locked[1])
+        if parent_plan_id:
+            lineage_rows = store._conn.execute(
+                "SELECT plan_id, parent_plan_id, version FROM valuation_plan WHERE company_id=?",
+                [company_id],
+            ).fetchall()
+            parents = {plan_id: parent_id for plan_id, parent_id, _ in lineage_rows}
+            root_id = parent_plan_id
+            while parents.get(root_id):
+                root_id = parents[root_id]
+            lineage = {root_id}
+            changed = True
+            while changed:
+                changed = False
+                for plan_id, parent_id, _ in lineage_rows:
+                    if parent_id in lineage and plan_id not in lineage:
+                        lineage.add(plan_id)
+                        changed = True
+            row["version"] = max(
+                [int(item_version or 1) for plan_id, _, item_version in lineage_rows if plan_id in lineage]
+                or [1]
+            ) + 1
         store._conn.execute(
             f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
             [row[c] for c in cols],
@@ -1157,19 +1163,25 @@ def _plan_out(row: dict) -> dict:
     return out
 
 
-def _encode_plan_cursor(row: dict) -> str:
+def _encode_plan_cursor(row: dict, *, company_id: str, status: str, query: str) -> str:
     payload = canonical_json({
         "created_at": str(row["created_at"]),
         "plan_id": row["plan_id"],
+        "company_id": company_id,
+        "status": status,
+        "query": query,
     }).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def _decode_plan_cursor(cursor: str) -> tuple[str, str]:
+def _decode_plan_cursor(cursor: str) -> tuple[str, str, str, str, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
-        return str(payload["created_at"]), str(payload["plan_id"])
+        return (
+            str(payload["created_at"]), str(payload["plan_id"]),
+            str(payload["company_id"]), str(payload["status"]), str(payload["query"]),
+        )
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError("无效的方案分页游标") from exc
 
@@ -1194,12 +1206,15 @@ def list_plans(
         conditions.append("archived_at IS NULL")
     elif status == "archived":
         conditions.append("archived_at IS NOT NULL")
-    if query and query.strip():
+    normalized_query = query.strip().lower() if query else ""
+    if normalized_query:
         conditions.append("(lower(name) LIKE ? OR lower(coalesce(notes, '')) LIKE ?)")
-        needle = f"%{query.strip().lower()}%"
+        needle = f"%{normalized_query}%"
         params.extend([needle, needle])
     if cursor:
-        created_at, plan_id = _decode_plan_cursor(cursor)
+        created_at, plan_id, cursor_company, cursor_status, cursor_query = _decode_plan_cursor(cursor)
+        if (cursor_company, cursor_status, cursor_query) != (company_id, status, normalized_query):
+            raise ValueError("方案分页游标与当前筛选条件不匹配")
         conditions.append("(created_at < ? OR (created_at = ? AND plan_id < ?))")
         params.extend([created_at, created_at, plan_id])
     params.append(limit + 1)
@@ -1212,7 +1227,9 @@ def list_plans(
     visible = rows[:limit]
     return {
         "plans": [_plan_out(row) for row in visible],
-        "next_cursor": _encode_plan_cursor(visible[-1]) if has_more and visible else None,
+        "next_cursor": _encode_plan_cursor(
+            visible[-1], company_id=company_id, status=status, query=normalized_query
+        ) if has_more and visible else None,
     }
 
 
@@ -1240,10 +1257,15 @@ def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) 
     if run is None:
         raise ValueError("父方案的估值运行不存在")
     snapshot = _json_object(run.get("fact_snapshot_json"))
+    historical_inputs = snapshot.get("inputs") or {}
     return {
         "parent_plan_id": plan_id,
         "next_version": int(original.get("version") or 1) + 1,
-        "assumptions": snapshot.get("inputs") or {},
+        "assumptions": {
+            field: historical_inputs[field]
+            for field in PERSONAL_VALUATION_FIELDS
+            if field in historical_inputs
+        },
         "source_plan": original,
         "plan_defaults": {
             "scenario_key": payload.get("scenario_key", original["scenario_key"]),

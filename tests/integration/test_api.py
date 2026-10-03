@@ -1086,6 +1086,16 @@ def test_plan_library_paginates_searches_archives_and_restores(client):
     assert len(seen) == 21
     assert len(set(seen)) == 21
 
+    first_page = client.get(
+        "/api/v1/companies/AAPL/valuation/plans",
+        params={"q": "LIBRARY-PAGE-20261002", "limit": 6},
+    ).json()
+    mismatched_cursor = client.get(
+        "/api/v1/companies/AAPL/valuation/plans",
+        params={"q": "needle", "limit": 6, "cursor": first_page["next_cursor"]},
+    )
+    assert mismatched_cursor.status_code == 400
+
     search = client.get(
         "/api/v1/companies/AAPL/valuation/plans",
         params={"q": "needle", "limit": 20},
@@ -1178,9 +1188,25 @@ def test_plan_library_copy_waits_for_recalculation_and_compare_returns_values(
     assert after_copy == before_copy
     assert copy_draft.json()["parent_plan_id"] == original.json()["plan_id"]
     assert copy_draft.json()["next_version"] == 2
+    assert set(copy_draft.json()["assumptions"]) == {
+        "revenue_growth", "op_margin_end", "wacc", "terminal_growth", "terminal_roic"
+    }
     assert copy_draft.json()["assumptions"]["wacc"] == pytest.approx(
         first_run["assumptions"]["inputs"]["wacc"]
     )
+
+    unchanged_run = _save_v2_run(client)
+    unchanged = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": unchanged_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "没有实际修改",
+            "parent_plan_id": original.json()["plan_id"],
+        },
+    )
+    assert unchanged.status_code == 409, unchanged.text
 
     second_run = _save_v2_run(client, {"wacc": 0.12})
     child = client.post(
@@ -1196,6 +1222,20 @@ def test_plan_library_copy_waits_for_recalculation_and_compare_returns_values(
     assert child.status_code == 200, child.text
     assert child.json()["parent_plan_id"] == original.json()["plan_id"]
     assert child.json()["version"] == 2
+
+    third_run = _save_v2_run(client, {"wacc": 0.13})
+    sibling = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": third_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "第二个子版本",
+            "parent_plan_id": original.json()["plan_id"],
+        },
+    )
+    assert sibling.status_code == 200, sibling.text
+    assert sibling.json()["version"] == 3
 
     compared = client.get(
         "/api/v1/companies/AAPL/valuation/plans/compare",
