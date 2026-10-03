@@ -1236,6 +1236,12 @@ def test_plan_library_copy_waits_for_recalculation_and_compare_returns_values(
     )
     assert sibling.status_code == 200, sibling.text
     assert sibling.json()["version"] == 3
+    next_copy = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{original.json()['plan_id']}/copy",
+        json={},
+    )
+    assert next_copy.status_code == 200, next_copy.text
+    assert next_copy.json()["next_version"] == 4
 
     compared = client.get(
         "/api/v1/companies/AAPL/valuation/plans/compare",
@@ -1254,6 +1260,51 @@ def test_plan_library_copy_waits_for_recalculation_and_compare_returns_values(
     ]
     assert wacc["changed"] is True
     assert comparison["has_differences"] is True
+
+
+def test_copy_plan_uses_the_selected_scenario_inputs(client):
+    run = _save_v2_run(client)
+    bear_inputs = run["scenarios"]["bear"]["inputs"]
+    assert bear_inputs["wacc"] != run["assumptions"]["inputs"]["wacc"]
+    bear_plan = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": run["valuation_run_id"],
+            "scenario_key": "bear",
+            "margin_of_safety": 0.2,
+            "name": "Bear 情景",
+        },
+    )
+    assert bear_plan.status_code == 200, bear_plan.text
+
+    copied = client.post(
+        f"/api/v1/companies/AAPL/valuation/plans/{bear_plan.json()['plan_id']}/copy",
+        json={},
+    )
+
+    assert copied.status_code == 200, copied.text
+    assert copied.json()["assumptions"] == {
+        field: bear_inputs[field]
+        for field in (
+            "revenue_growth",
+            "op_margin_end",
+            "wacc",
+            "terminal_growth",
+            "terminal_roic",
+        )
+    }
+    unchanged_run = _save_v2_run(client, bear_inputs)
+    unchanged = client.post(
+        "/api/v1/companies/AAPL/valuation/plans",
+        json={
+            "valuation_run_id": unchanged_run["valuation_run_id"],
+            "scenario_key": "base",
+            "margin_of_safety": 0.2,
+            "name": "未修改 Bear 副本",
+            "parent_plan_id": bear_plan.json()["plan_id"],
+        },
+    )
+    assert unchanged.status_code == 409, unchanged.text
 
 
 def test_plan_copy_distinguishes_omitted_fields_from_explicit_null(client):

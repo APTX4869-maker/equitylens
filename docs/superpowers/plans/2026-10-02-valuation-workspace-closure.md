@@ -372,8 +372,8 @@ Before claiming completion:
 
 ## Closure evidence (2026-10-03)
 
-- Full backend regression: `530 passed, 1 warning`.
+- Full backend regression: `531 passed, 1 warning`.
 - Frontend verification: lint passed, 5 Vitest tests passed, production build passed, and 52 Playwright tests passed.
 - Fresh copied-primary acceptance passed for AAPL, MSFT, and NVDA through confirmation, exact personal edit, saved run, parent/child plan, actual-value comparison, archive, and restore. Immutable-fact tampering returned 409 with zero run writes. The primary database SHA-256 remained `1c6453b11dc2cea69f64f876ac7c6ee1e45147c354ee5b75033c1869ab98227b`.
-- Independent review findings were fixed with regressions covering confirmation trust boundaries, current-model readiness, copy/recalculation invariants, monotonic lineage versions, save idempotency, exact controls, scenario detail values, publication-bound Reverse DCF history, and filter-bound cursors.
+- Independent review findings were fixed with regressions covering confirmation trust boundaries, current-model readiness, base/bear/bull copy and recalculation invariants, monotonic lineage versions and accurate next-version previews, save idempotency, exact controls, scenario detail values and assumptions, publication-bound Reverse DCF history, and filter-bound cursors.
 - F09/P4 responsive layout and the separate market/company refresh backlog remain explicitly out of scope and open.

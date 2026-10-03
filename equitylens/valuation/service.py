@@ -1026,7 +1026,9 @@ def create_plan(
             raise ValueError("父方案不存在或不属于当前公司")
         if parent.get("valuation_run_id") == run_id:
             raise ValueError("复制并编辑后须先保存新的估值运行，再创建子版本")
-        if parent.get("source_input_fingerprint") == run.get("input_fingerprint"):
+        parent_inputs = parent.get("assumptions_json") or {}
+        parent_fingerprint = valuation_input_fingerprint(_inputs_from_dict(parent_inputs))
+        if parent_fingerprint == run.get("input_fingerprint"):
             raise ValuationPlanConflict("复制并编辑后须实际修改假设并重新计算，不能保存无变化副本")
         if parent.get("review_status") != "current":
             review_status = parent.get("review_status") or review_status
@@ -1089,7 +1091,9 @@ def create_plan(
         "assumptions_json": json.dumps(scenario.get("inputs") or {}, ensure_ascii=False),
         "valuation_run_id": run_id,
         "scenario_key": scenario_key,
-        "source_input_fingerprint": run["input_fingerprint"],
+        "source_input_fingerprint": valuation_input_fingerprint(
+            _inputs_from_dict(scenario.get("inputs") or {})
+        ),
         "reference_price_reason": reason,
         "conditions_json": json.dumps(payload.get("conditions_to_verify") or [], ensure_ascii=False),
         "parent_plan_id": parent_plan_id,
@@ -1121,22 +1125,7 @@ def create_plan(
                 "SELECT plan_id, parent_plan_id, version FROM valuation_plan WHERE company_id=?",
                 [company_id],
             ).fetchall()
-            parents = {plan_id: parent_id for plan_id, parent_id, _ in lineage_rows}
-            root_id = parent_plan_id
-            while parents.get(root_id):
-                root_id = parents[root_id]
-            lineage = {root_id}
-            changed = True
-            while changed:
-                changed = False
-                for plan_id, parent_id, _ in lineage_rows:
-                    if parent_id in lineage and plan_id not in lineage:
-                        lineage.add(plan_id)
-                        changed = True
-            row["version"] = max(
-                [int(item_version or 1) for plan_id, _, item_version in lineage_rows if plan_id in lineage]
-                or [1]
-            ) + 1
+            row["version"] = _next_lineage_version(lineage_rows, parent_plan_id)
         store._conn.execute(
             f"INSERT INTO valuation_plan ({', '.join(cols)}) VALUES ({placeholders})",
             [row[c] for c in cols],
@@ -1244,6 +1233,35 @@ def get_plan(store, company_id: str, plan_id: str) -> dict | None:
     return None
 
 
+def _next_lineage_version(
+    lineage_rows: list[tuple[str, str | None, int | None]], parent_plan_id: str
+) -> int:
+    parents = {plan_id: parent_id for plan_id, parent_id, _ in lineage_rows}
+    root_id = parent_plan_id
+    visited: set[str] = set()
+    while parents.get(root_id):
+        if root_id in visited:
+            raise ValueError("方案版本血缘存在循环")
+        visited.add(root_id)
+        root_id = parents[root_id]
+    lineage = {root_id}
+    changed = True
+    while changed:
+        changed = False
+        for plan_id, parent_id, _ in lineage_rows:
+            if parent_id in lineage and plan_id not in lineage:
+                lineage.add(plan_id)
+                changed = True
+    return max(
+        [
+            int(item_version or 1)
+            for plan_id, _, item_version in lineage_rows
+            if plan_id in lineage
+        ]
+        or [1]
+    ) + 1
+
+
 def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) -> dict:
     original = get_plan(store, company_id, plan_id)
     if original is None:
@@ -1251,16 +1269,22 @@ def copy_plan(store, company_id: str, ticker: str, plan_id: str, payload: dict) 
     if not original.get("valuation_run_id"):
         raise ValueError("历史不完整方案不能直接复制为普通参考价方案")
     run = store.query_one(
-        "SELECT fact_snapshot_json FROM valuation_run WHERE valuation_run_id=? AND company_id=?",
+        "SELECT 1 FROM valuation_run WHERE valuation_run_id=? AND company_id=?",
         [original["valuation_run_id"], company_id],
     )
     if run is None:
         raise ValueError("父方案的估值运行不存在")
-    snapshot = _json_object(run.get("fact_snapshot_json"))
-    historical_inputs = snapshot.get("inputs") or {}
+    historical_inputs = original.get("assumptions_json") or {}
+    lineage_rows = [
+        (row["plan_id"], row.get("parent_plan_id"), row.get("version"))
+        for row in store.query(
+            "SELECT plan_id, parent_plan_id, version FROM valuation_plan WHERE company_id=?",
+            [company_id],
+        )
+    ]
     return {
         "parent_plan_id": plan_id,
-        "next_version": int(original.get("version") or 1) + 1,
+        "next_version": _next_lineage_version(lineage_rows, plan_id),
         "assumptions": {
             field: historical_inputs[field]
             for field in PERSONAL_VALUATION_FIELDS

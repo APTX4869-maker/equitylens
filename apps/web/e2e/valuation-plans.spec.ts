@@ -82,6 +82,7 @@ test("plan library exposes retry, all pages, search, archive, restore and immuta
   const bearPlan = plans.find((item) => item.plan_id === "plan-13")!;
   bearPlan.scenario_key = "bear";
   bearPlan.reference_value = 70;
+  bearPlan.assumptions_json = { ...bearPlan.assumptions_json, wacc: 0.2 };
   let failList = true;
 
   await page.route("**/api/v1/companies/AAPL/valuation/runs/**", (route) => {
@@ -158,6 +159,7 @@ test("plan library exposes retry, all pages, search, archive, restore and immuta
   await expect(detail).toContainText("第 13 个方案备注");
   await expect(detail).toContainText("条件 13");
   await expect(detail).toContainText("WACC");
+  await expect(detail).toContainText("20.00%");
   await expect(detail).toContainText("所选情景每股价值");
   await expect(detail.getByText("$70.00", { exact: true })).toBeVisible();
 });

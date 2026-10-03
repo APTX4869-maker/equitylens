@@ -43,7 +43,7 @@ function displayValue(key: string, value: unknown): string {
 }
 
 function PlanDetail({ plan, run }: { plan: ValuationPlan; run: ValuationRunSnapshot | null }) {
-  const assumptions = run?.assumptions.inputs ?? plan.assumptions_json ?? {};
+  const assumptions = plan.assumptions_json ?? run?.assumptions.inputs ?? {};
   const fairValue = plan.reference_value;
   return (
     <section className="plan-detail" data-testid="plan-detail" aria-label="方案不可变快照">
