@@ -1027,7 +1027,9 @@ def create_plan(
         if parent.get("valuation_run_id") == run_id:
             raise ValueError("复制并编辑后须先保存新的估值运行，再创建子版本")
         parent_inputs = parent.get("assumptions_json") or {}
-        parent_fingerprint = valuation_input_fingerprint(_inputs_from_dict(parent_inputs))
+        parent_fingerprint = _scenario_input_fingerprint(
+            parent_inputs, parent.get("source_input_fingerprint")
+        )
         if parent_fingerprint == run.get("input_fingerprint"):
             raise ValuationPlanConflict("复制并编辑后须实际修改假设并重新计算，不能保存无变化副本")
         if parent.get("review_status") != "current":
@@ -1091,8 +1093,8 @@ def create_plan(
         "assumptions_json": json.dumps(scenario.get("inputs") or {}, ensure_ascii=False),
         "valuation_run_id": run_id,
         "scenario_key": scenario_key,
-        "source_input_fingerprint": valuation_input_fingerprint(
-            _inputs_from_dict(scenario.get("inputs") or {})
+        "source_input_fingerprint": _scenario_input_fingerprint(
+            scenario.get("inputs") or {}, run["input_fingerprint"]
         ),
         "reference_price_reason": reason,
         "conditions_json": json.dumps(payload.get("conditions_to_verify") or [], ensure_ascii=False),
@@ -1231,6 +1233,14 @@ def get_plan(store, company_id: str, plan_id: str) -> dict | None:
     if row:
         return _plan_out(row)
     return None
+
+
+def _scenario_input_fingerprint(inputs: dict, fallback: str | None) -> str | None:
+    """Fingerprint complete scenario inputs while preserving legacy partial snapshots."""
+    try:
+        return valuation_input_fingerprint(_inputs_from_dict(inputs))
+    except TypeError:
+        return fallback
 
 
 def _next_lineage_version(
