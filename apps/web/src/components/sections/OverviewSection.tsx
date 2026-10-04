@@ -103,7 +103,14 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         { label: "毛利率", value: grossLast != null ? fmtPct(grossLast) : "—", note: withPeriod("最近季度", "GROSS_MARGIN"), tone: grossLast != null && grossLast > 0.3 ? "good" : "", metricKey: "grossMargin", fact: kpiFact("GROSS_MARGIN") },
         { label: "TTM 自由现金流", value: fmtMoney(fcfTtm), note: withPeriod("经营现金流 − 资本开支", "TTM_FCF"), tone: fcfTtm != null && fcfTtm > 0 ? "good" : "warn", metricKey: "fcf", fact: kpiFact("TTM_FCF") },
         { label: "FCF 率", value: fcfMargin != null ? fmtPct(fcfMargin) : "—", note: withPeriod("最近季度", "FCF_MARGIN"), tone: fcfMargin != null && fcfMargin > 0.15 ? "good" : "", metricKey: "fcfMargin", fact: kpiFact("FCF_MARGIN") },
-        { label: "净现金 / 净债务", value: netDebt != null ? fmtMoney(netDebt) : "—", note: withPeriod(netDebt != null && netDebt < 0 ? "净现金状态" : "净负债状态", "NET_DEBT"), tone: netDebt != null && netDebt > 0 ? "warn" : "good", metricKey: "netCash", fact: kpiFact("NET_DEBT") },
+        {
+          label: "净现金 / 净债务", value: fmtMoney(netDebt),
+          note: netDebt == null
+            ? `证据不足 · ${k.NET_DEBT?.missing_reason || "当前发布未覆盖完整净债务指标，无法判断。"}`
+            : withPeriod(netDebt < 0 ? "净现金状态" : netDebt > 0 ? "净负债状态" : "现金与债务持平（含短期投资）", "NET_DEBT"),
+          tone: netDebt == null || netDebt === 0 ? "" : netDebt > 0 ? "warn" : "good",
+          metricKey: "netCash", fact: kpiFact("NET_DEBT"),
+        },
         {
           label: "最新财报期",
           value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",

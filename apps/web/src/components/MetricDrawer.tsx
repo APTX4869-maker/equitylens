@@ -78,6 +78,8 @@ export function MetricDrawer({
                 </div>
               ) : null}
             </div>
+          ) : metricKey === "netCash" ? (
+            <div className="warning-box">当前公司值未覆盖：缺少完整净债务指标，不能判断净现金或净负债。暂无可查看的指标来源。</div>
           ) : null}
         </div>
       </div>

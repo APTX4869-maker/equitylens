@@ -61,3 +61,53 @@ test("overview chart and KPI source follow the selected metric", async ({ page }
   await expect(page.getByRole("heading", { name: "数据来源与溯源" })).toBeVisible();
   await expect(page.getByRole("dialog")).toContainText("REVENUE");
 });
+
+for (const sample of [
+  { label: "null", value: null, note: "证据不足", display: "—", tone: "", missing: true },
+  { label: "zero", value: 0, note: "现金与债务持平", display: "$0", tone: "", missing: false },
+  { label: "positive", value: 2_000_000_000, note: "净负债状态", display: "$2B", tone: "warn", missing: false },
+  { label: "negative", value: -2_000_000_000, note: "净现金状态", display: "$-2B", tone: "good", missing: false },
+] as const) {
+  test(`net debt ${sample.label} has consistent value, meaning and evidence`, async ({ page }) => {
+    await stubOverview(page);
+    await page.route("**/api/v1/companies/AAPL/overview?**", (route) => route.fulfill({ json: {
+      ticker: "AAPL", latest_period: null, trend: {}, provenance_available: true,
+      kpis: { NET_DEBT: {
+        metric: "NET_DEBT", value: sample.value, unit: "USD", period: "FY2025Q4",
+        status: sample.missing ? "MISSING" : "CALCULATED", result_id: sample.missing ? null : "derived-net-debt",
+        canonical_fact_id: null, input_fact_ids: sample.missing ? [] : ["debt", "cash"],
+        missing_reason: sample.missing ? "缺少现金或债务事实" : null,
+      } },
+    } }));
+    await page.route("**/api/v1/provenance/derived-net-debt*", (route) => {
+      expect(new URL(route.request().url()).searchParams.get("publication_id")).toBe("pub-aapl");
+      return route.fulfill({ json: { entity_id: "derived-net-debt", kind: "derived_metric", tree: {
+        entity_id: "derived-net-debt", kind: "derived_metric", label: "NET_DEBT · FY2025Q4",
+        fields: { metric: "NET_DEBT", value: sample.value, unit: "USD", status: "CALCULATED" }, parents: [],
+      } } });
+    });
+    await page.goto("/");
+    const card = page.getByRole("button", { name: /净现金 \/ 净债务/ });
+    await expect(card.locator(".brief-value")).toHaveText(sample.display);
+    await expect(card.locator(".brief-note")).toContainText(sample.note);
+    await expect(card.locator(".brief-note")).toHaveClass(`brief-note ${sample.tone}`);
+    if (!sample.missing) await expect(card.locator(".brief-note")).toContainText("FY2025Q4");
+    if (sample.missing) {
+      await expect(card).toContainText("缺少现金或债务事实");
+      await expect(card).not.toContainText("净负债状态");
+    }
+    await card.click();
+    const drawer = page.getByRole("dialog");
+    await expect(drawer).toContainText("正数表示净负债，负数表示净现金");
+    await expect(drawer.locator(".formula")).toHaveText("Net Debt = Interest-bearing Debt − Cash & Equivalents − Short-term Investments");
+    if (sample.missing) {
+      await expect(drawer).toContainText("当前公司值未覆盖");
+      await expect(drawer.getByRole("button", { name: "查看来源 →" })).toHaveCount(0);
+    } else {
+      await expect(drawer).toContainText(`当前公司值：${sample.value!.toLocaleString("en-US")} USD`);
+      await drawer.getByRole("button", { name: "查看来源 →" }).click();
+      await expect(page.getByRole("heading", { name: "数据来源与溯源" })).toBeVisible();
+      await expect(page.getByRole("dialog")).toContainText("NET_DEBT");
+    }
+  });
+}
