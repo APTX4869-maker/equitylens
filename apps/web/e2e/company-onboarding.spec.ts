@@ -214,6 +214,132 @@ test("add-company dialog supports Escape and restores focus", async ({ page }) =
   await expect(trigger).toBeFocused();
 });
 
+for (const closeMethod of ["button", "Escape", "backdrop"] as const) {
+  test(`closing pending discovery via ${closeMethod} allows another discovery`, async ({ page }) => {
+    await installOnboardingApiFixture(page);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let pending = false;
+    await page.route("**/api/v1/companies/discover", async (route) => {
+      if (route.request().postDataJSON().ticker === "AMD") {
+        pending = true;
+        await gate;
+        await route.abort().catch(() => {});
+      } else await route.fallback();
+    });
+    await page.goto("/");
+    const trigger = page.getByRole("button", { name: "添加公司" });
+    await trigger.click();
+    await page.getByLabel("股票代码").fill("AMD");
+    await page.getByRole("button", { name: "识别公司" }).click();
+    await expect.poll(() => pending).toBe(true);
+    if (closeMethod === "button") await page.getByRole("button", { name: "关闭添加公司" }).click();
+    else if (closeMethod === "Escape") await page.keyboard.press("Escape");
+    else await page.locator(".onboarding-backdrop").click({ position: { x: 2, y: 2 } });
+    await expect(page.getByRole("dialog", { name: "添加研究公司" })).toBeHidden();
+    await trigger.click();
+    try {
+      await expect(page.locator(".ticker-entry button")).toBeEnabled();
+      await page.getByLabel("股票代码").fill("KO");
+      await page.getByRole("button", { name: "识别公司" }).click();
+      await expect(page.getByText("The Coca-Cola Company")).toBeVisible();
+    } finally { release(); }
+  });
+}
+
+for (const interruption of ["edit", "reopen"] as const) {
+for (const order of ["old-first", "new-first"] as const) {
+for (const outcome of ["success", "error"] as const) {
+  test(`${interruption} invalidates old discovery ${outcome} with ${order} completion`, async ({ page }) => {
+    await installOnboardingApiFixture(page);
+    // Model a transport that has already accepted the response and cannot be
+    // cancelled: the component must guard late results, not rely on fetch abort.
+    await page.addInitScript(() => {
+      const original = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        if (!String(input).includes("/companies/discover")) return original(input, init);
+        const ticker = JSON.parse(String(init?.body)).ticker;
+        const response = await original(input, { ...init, signal: undefined });
+        const consumed = () => window.setTimeout(() => {
+          document.documentElement.setAttribute(`data-consumed-${ticker.toLowerCase()}`, "true");
+        }, 0);
+        const json = response.json.bind(response);
+        const text = response.text.bind(response);
+        response.json = () => json().finally(consumed);
+        response.text = () => text().finally(consumed);
+        return response;
+      };
+    });
+    const gates = new Map<string, () => void>();
+    await page.route("**/api/v1/companies/discover", async (route) => {
+      const ticker = route.request().postDataJSON().ticker;
+      await new Promise<void>((resolve) => gates.set(ticker, resolve));
+      if (ticker === "AMD") {
+        await route.fulfill(outcome === "error" ? { status: 500, json: { detail: "old discovery failed" } } : { json: {
+          discovery_id: "old-amd", ticker: "AMD", identity_hash: "old", expires_at: "2026-10-05T00:00:00Z",
+          candidates: [], eligibility: { status: "SUPPORTED" }, coverage: { form_counts: {} }, evidence: [],
+        } });
+      } else await route.fallback();
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "添加公司" }).click();
+    const input = page.getByLabel("股票代码");
+    await input.fill("AMD");
+    await page.getByRole("button", { name: "识别公司" }).click();
+    await expect.poll(() => gates.has("AMD")).toBe(true);
+    if (interruption === "reopen") {
+      await page.getByRole("button", { name: "关闭添加公司" }).click();
+      await page.getByRole("button", { name: "添加公司" }).click();
+    }
+    await input.fill("KO");
+    try {
+      await expect(page.locator(".ticker-entry button")).toBeEnabled();
+      await page.getByRole("button", { name: "识别公司" }).click();
+      await expect.poll(() => gates.has("KO")).toBe(true);
+      if (order === "new-first") {
+        gates.get("KO")!();
+        await expect(page.getByText("The Coca-Cola Company")).toBeVisible();
+      }
+      gates.get("AMD")!();
+      await expect(page.locator("html")).toHaveAttribute("data-consumed-amd", "true");
+      await expect(input).toHaveValue("KO");
+      if (order === "old-first") await expect(page.getByRole("button", { name: "识别中…" })).toBeDisabled();
+      await expect(page.locator(".action-error")).toHaveCount(0);
+      gates.get("KO")!();
+      await expect(page.getByText("The Coca-Cola Company")).toBeVisible();
+      await expect(input).toHaveValue("KO");
+      await expect(page.getByRole("button", { name: "确认并建档" })).toBeEnabled();
+    } finally { for (const resolve of gates.values()) resolve(); }
+  });
+}
+}
+}
+
+test("Enter while discovery is pending does not submit duplicate requests", async ({ page }) => {
+  await installOnboardingApiFixture(page);
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/companies/discover", async (route) => {
+    calls += 1;
+    await gate;
+    await route.fallback();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "添加公司" }).click();
+  const input = page.getByLabel("股票代码");
+  await input.fill("KO");
+  await input.press("Enter");
+  await expect.poll(() => calls).toBe(1);
+  try {
+    await input.press("Enter");
+    await input.press("Enter");
+    release();
+    await expect(page.getByText("The Coca-Cola Company")).toBeVisible();
+    expect(calls).toBe(1);
+  } finally { release(); }
+});
+
 test("supported SEC discovery is presented as eligible for onboarding", async ({ page }) => {
   await installOnboardingApiFixture(page);
   await page.goto("/");

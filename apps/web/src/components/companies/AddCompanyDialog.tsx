@@ -41,7 +41,11 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      requestRef.current?.abort();
+      if (requestRef.current) {
+        requestRef.current.abort();
+        requestRef.current = null;
+        setBusy(false);
+      }
       window.setTimeout(() => triggerRef.current?.focus(), 0);
     };
   }, [open]);
@@ -49,6 +53,7 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
   if (!open) return null;
 
   const discover = async () => {
+    if (busy) return;
     const normalized = ticker.trim().toUpperCase();
     if (!normalized) { setError("请输入股票代码，例如 KO。"); return; }
     requestRef.current?.abort();
@@ -57,14 +62,18 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
     setBusy(true); setError(null); setDiscovery(null); idempotencyRef.current = null;
     try {
       const result = await api.discoverCompany(normalized, controller.signal);
+      if (controller.signal.aborted || requestRef.current !== controller) return;
       setTicker(result.ticker);
       setDiscovery(result);
       setCandidateId(result.candidates[0]?.candidate_id ?? "");
       if (!result.candidates.length) setError("未找到可建档证券，请核对代码或交易所。");
     } catch (reason) {
-      if (!controller.signal.aborted) setError(`识别失败：${userErrorMessage(reason)} 请核对代码后重试。`);
+      if (!controller.signal.aborted && requestRef.current === controller) setError(`识别失败：${userErrorMessage(reason)} 请核对代码后重试。`);
     } finally {
-      if (!controller.signal.aborted) setBusy(false);
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -93,8 +102,16 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
         <div className="onboarding-dialog-body">
           <label className="field-label" htmlFor="onboarding-ticker">股票代码</label>
           <div className="ticker-entry">
-            <input ref={inputRef} id="onboarding-ticker" value={ticker} maxLength={12} autoComplete="off"
-              onChange={(event) => { setTicker(event.target.value.toUpperCase()); setDiscovery(null); setError(null); }}
+            <input ref={inputRef} id="onboarding-ticker" value={ticker} maxLength={12} autoComplete="off" disabled={busy && !!discovery}
+              onChange={(event) => {
+                if (requestRef.current) {
+                  requestRef.current.abort();
+                  requestRef.current = null;
+                  setBusy(false);
+                }
+                setTicker(event.target.value.toUpperCase()); setDiscovery(null); setCandidateId(""); setError(null);
+                idempotencyRef.current = null;
+              }}
               onKeyDown={(event) => { if (event.key === "Enter") void discover(); }} placeholder="例如 KO" />
             <button className="primary-action" onClick={() => void discover()} disabled={busy}>{busy && !discovery ? "识别中…" : "识别公司"}</button>
           </div>
