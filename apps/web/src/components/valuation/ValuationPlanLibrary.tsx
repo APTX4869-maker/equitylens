@@ -116,10 +116,12 @@ function Comparison({ result }: { result: ValuationPlanComparison }) {
 export function ValuationPlanLibrary({
   ticker,
   refreshToken,
+  copyContext,
   onCopyEdit,
 }: {
   ticker: string;
   refreshToken: number;
+  copyContext: string;
   onCopyEdit: (draft: ValuationPlanCopyDraft) => void;
 }) {
   const [status, setStatus] = useState<"active" | "archived">("active");
@@ -137,6 +139,11 @@ export function ValuationPlanLibrary({
   const [opened, setOpened] = useState<{ plan: ValuationPlan; run: ValuationRunSnapshot | null } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const requestSeq = useRef(0);
+  const copySeq = useRef(0);
+
+  useEffect(() => {
+    return () => { copySeq.current += 1; };
+  }, [copyContext]);
 
   const load = useCallback(async (append = false, cursor: string | null = null) => {
     const seq = ++requestSeq.current;
@@ -212,13 +219,15 @@ export function ValuationPlanLibrary({
   };
 
   const copyPlan = async (plan: ValuationPlan) => {
+    const seq = ++copySeq.current;
     setError(null);
     try {
       const draft = await api.copyValuationPlan(ticker, plan.plan_id);
+      if (seq !== copySeq.current) return;
       onCopyEdit(draft);
       setMessage(`已载入“${plan.name}”的可编辑草稿；重算并保存后才会生成 v${draft.next_version}。`);
     } catch (reason) {
-      setError(userErrorMessage(reason));
+      if (seq === copySeq.current) setError(userErrorMessage(reason));
     }
   };
 

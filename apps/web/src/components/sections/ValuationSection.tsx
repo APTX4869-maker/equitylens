@@ -125,6 +125,8 @@ export function ValuationSection({
   onConfirmed?: () => Promise<void> | void;
 }) {
   const identitySuffix = `?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
+  const gateStatus = gate?.status ?? "READY";
+  const [appliedIdentity, setAppliedIdentity] = useState<string | null>(null);
   const [base, setBase] = useState<RunResponse | null>(null);
   const [draft, setDraft] = useState<DcfInputs | null>(null);
   const [appliedInputs, setAppliedInputs] = useState<DcfInputs | null>(null);
@@ -161,6 +163,12 @@ export function ValuationSection({
   const refreshGenerationRef = useRef(refreshGeneration);
   const planSavePendingRef = useRef(false);
   const planIdempotencyRef = useRef<{ signature: string; key: string } | null>(null);
+  const planFormIdentity = JSON.stringify([identitySuffix, draft, base?.valuation_run_id, planName, marginOfSafety, planScenario, planNotes, planConditions, parentPlan]);
+  const latestPlanFormIdentity = useRef(planFormIdentity);
+
+  useEffect(() => {
+    latestPlanFormIdentity.current = planFormIdentity;
+  }, [planFormIdentity]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -186,6 +194,7 @@ export function ValuationSection({
   const applyResponse = useCallback((d: RunResponse, persist: boolean, calculatedRefresh: number) => {
     const inputs = draftFromInputs(d.assumptions.inputs);
     setBase(d);
+    setAppliedIdentity(identitySuffix);
     setDraft(inputs);
     draftRef.current = inputs;
     setAppliedInputs(inputs);
@@ -193,7 +202,7 @@ export function ValuationSection({
     setSaved(persist);
     setLastCalculatedRefresh(calculatedRefresh);
     setError(null);
-  }, []);
+  }, [identitySuffix]);
 
   const preview = useCallback(
     async (
@@ -234,6 +243,12 @@ export function ValuationSection({
       setReverseLoading(false);
       draftRef.current = next;
       setDraft(next);
+      if (appliedIdentity !== identitySuffix) {
+        reqSeq.current += 1;
+        setLoading(false);
+        setSaved(false);
+        return;
+      }
       if (Object.keys(validateValuationDraft(next)).length === 0) {
         void preview(next, false);
       } else {
@@ -242,7 +257,7 @@ export function ValuationSection({
         setSaved(false);
       }
     },
-    [preview]
+    [preview, appliedIdentity, identitySuffix]
   );
 
   const loadDefault = useCallback(async () => {
@@ -306,14 +321,27 @@ export function ValuationSection({
   }, [ticker, identitySuffix, preview]);
 
   useEffect(() => {
-    if (gate && gate.status !== "READY") return;
-    const timer = window.setTimeout(() => void loadDefault(), 0);
-    return () => window.clearTimeout(timer);
-  }, [ticker, gate, loadDefault]);
+    // Same-publication directory reloads must not initialize a new draft.
+    // A new publication retains the draft until the user explicitly rebases it.
+    const timer = window.setTimeout(() => {
+      if (gateStatus === "READY" && !draftRef.current) void loadDefault();
+      else {
+        setLoading(false);
+        setReverseLoading(false);
+      }
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      defaultReqSeq.current += 1;
+      reqSeq.current += 1;
+      reverseReqSeq.current += 1;
+    };
+  }, [gateStatus, loadDefault]);
 
   useEffect(() => {
     if (
-      (gate && gate.status !== "READY")
+      gateStatus !== "READY"
+      || (appliedIdentity != null && appliedIdentity !== identitySuffix)
       || !refreshReviewRequired
       || refreshGeneration <= lastCalculatedRefresh
     ) return;
@@ -327,7 +355,9 @@ export function ValuationSection({
     refreshGeneration,
     refreshReviewRequired,
     lastCalculatedRefresh,
-    gate,
+    gateStatus,
+    appliedIdentity,
+    identitySuffix,
     rebaseOnLatestDefault,
   ]);
 
@@ -378,10 +408,14 @@ export function ValuationSection({
       setPlanMsg(d.reference_price != null
         ? `已保存方案：参考价 $${d.reference_price.toFixed(2)}`
         : `已保存（仅供研究）：${d.reference_price_reason ?? "不可买入"}`);
-      setPlanName("");
-      setPlanNotes("");
-      setPlanConditions("");
-      setParentPlan(null);
+      // The submitted plan can finish saving while the user works on another
+      // form/publication. Never clear that newer work on the old response.
+      if (latestPlanFormIdentity.current === planFormIdentity) {
+        setPlanName("");
+        setPlanNotes("");
+        setPlanConditions("");
+        setParentPlan(null);
+      }
       planIdempotencyRef.current = null;
       setPlanLibraryRefresh((value) => value + 1);
     } catch (e) {
@@ -390,7 +424,7 @@ export function ValuationSection({
       planSavePendingRef.current = false;
       setPlanSaving(false);
     }
-  }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, parentPlan, base, saved]);
+  }, [ticker, marginOfSafety, planName, planScenario, planNotes, planConditions, parentPlan, base, saved, planFormIdentity]);
 
   const copyPlanIntoDraft = useCallback((copy: ValuationPlanCopyDraft) => {
     const current = draftRef.current;
@@ -398,6 +432,8 @@ export function ValuationSection({
     const next = draftFromInputs({ ...current, ...copy.assumptions } as DcfInputs);
     reqSeq.current += 1;
     reverseReqSeq.current += 1;
+    setLoading(false);
+    setReverseLoading(false);
     draftRef.current = next;
     setDraft(next);
     setAppliedInputs(null);
@@ -502,7 +538,8 @@ export function ValuationSection({
   const isDirty = appliedInputs != null && draft != null
     ? draftFingerprint(draft) !== draftFingerprint(appliedInputs)
     : true;
-  const refreshStale = refreshReviewRequired && refreshGeneration > lastCalculatedRefresh;
+  const publicationStale = appliedIdentity != null && appliedIdentity !== identitySuffix;
+  const refreshStale = publicationStale || (refreshReviewRequired && refreshGeneration > lastCalculatedRefresh);
   const currentReverseIdentity = draft ? [
     ticker,
     draftFingerprint(draft),
@@ -597,9 +634,9 @@ export function ValuationSection({
       </Card>
 
       {refreshStale ? (
-        <Card data-testid="refresh-review-warning" style={{ marginBottom: 16 }}>
+        <Card data-testid={publicationStale ? "publication-review-warning" : "refresh-review-warning"} style={{ marginBottom: 16 }}>
           <div className="card-sub" style={{ color: "#b7791f" }}>
-            财务或行情快照已更新。当前草稿仍保留，但页面上的估值结果来自刷新前的数据，请重新计算后再保存。
+            {publicationStale ? "研究发布版本已更新。个人假设与方案草稿仍保留，当前结果属于旧版本；请按新版本重新计算并复核后再保存。" : "财务或行情快照已更新。当前草稿仍保留，但页面上的估值结果来自刷新前的数据，请重新计算后再保存。"}
           </div>
           <button className="tab-btn" style={{ marginTop: 8 }} onClick={() => void rebaseOnLatestDefault()} disabled={loading}>
             按当前草稿重新计算
@@ -799,7 +836,7 @@ export function ValuationSection({
                 }}
                 style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", width: 140 }}
               />
-              <button className="tab-btn" onClick={runReverse} disabled={reverseLoading}>
+              <button className="tab-btn" onClick={runReverse} disabled={reverseLoading || publicationStale}>
                 {reverseLoading ? "计算中…" : "计算隐含增长"}
               </button>
             </div>
@@ -930,9 +967,10 @@ export function ValuationSection({
         {planMsg ? <div className="card-sub" style={{ marginTop: 8 }}>{planMsg}</div> : null}
       </Card>
       <Card className="card-pad" style={{ marginTop: 16 }}>
-        <ValuationPlanLibrary
+      <ValuationPlanLibrary
           ticker={ticker}
           refreshToken={planLibraryRefresh}
+          copyContext={planFormIdentity}
           onCopyEdit={copyPlanIntoDraft}
         />
       </Card>

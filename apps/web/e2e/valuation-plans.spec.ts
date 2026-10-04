@@ -247,3 +247,61 @@ test("copy-and-edit saves lineage and comparison shows actual values including e
   await page.getByRole("button", { name: "比较所选方案" }).click();
   await expect(comparison).toContainText("方案完全相同");
 });
+
+test("a late plan save preserves a form edited after submission", async ({ page }) => {
+  await stubShell(page);
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", route => route.fulfill({ json: runResponse(true) }));
+  let started!: () => void;
+  const pending = new Promise<void>(resolve => { started = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v1/companies/AAPL/valuation/plans**", async route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { plans: [], next_cursor: null } });
+    started(); await held;
+    await route.fulfill({ json: plan(1) });
+  });
+  await openValuation(page);
+  await page.getByRole("button", { name: "保存本次运行" }).click();
+  await expect(page.getByText(/已保存 · run/)).toBeVisible();
+  await page.getByLabel("方案名", { exact: true }).fill("已提交方案");
+  await page.getByLabel("安全边际 %", { exact: true }).fill("20");
+  await page.getByRole("button", { name: "保存参考价方案" }).click();
+  await pending;
+  await page.getByLabel("方案名", { exact: true }).fill("后续新草稿");
+  await page.getByLabel("方案备注", { exact: true }).fill("新备注");
+  await page.getByLabel("待验证条件", { exact: true }).fill("新条件");
+  release();
+  await expect(page.getByText(/已保存方案：/)).toBeVisible();
+  await expect(page.getByLabel("方案名", { exact: true })).toHaveValue("后续新草稿");
+  await expect(page.getByLabel("方案备注", { exact: true })).toHaveValue("新备注");
+  await expect(page.getByLabel("待验证条件", { exact: true })).toHaveValue("新条件");
+});
+
+test("a late copy cannot overwrite a draft edited while copying", async ({ page }) => {
+  await stubShell(page);
+  let started!: () => void;
+  const pending = new Promise<void>(resolve => { started = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v1/companies/AAPL/valuation/run?**", route => {
+    return route.fulfill({ json: runResponse(false, route.request().postDataJSON().assumptions) });
+  });
+  await page.route("**/api/v1/companies/AAPL/valuation/plans**", async route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { plans: [plan(1)], next_cursor: null } });
+    started(); await held;
+    await route.fulfill({ json: {
+      parent_plan_id: "plan-1", next_version: 2, assumptions: inputs, source_plan: plan(1),
+      plan_defaults: { scenario_key: "base", margin_of_safety: 0.2, name: "旧复制草稿", notes: "", conditions_to_verify: [] },
+    } });
+  });
+  await openValuation(page);
+  await page.getByRole("button", { name: "复制并编辑方案 01" }).click();
+  await pending;
+  await page.getByTestId("valuation-input-wacc").fill("12");
+  await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
+  await page.getByLabel("方案名", { exact: true }).fill("新草稿");
+  const copied = page.waitForResponse(response => response.url().endsWith("/copy"));
+  release(); await copied;
+  await expect(page.getByTestId("valuation-input-wacc")).toHaveValue("12");
+  await expect(page.getByLabel("方案名", { exact: true })).toHaveValue("新草稿");
+});

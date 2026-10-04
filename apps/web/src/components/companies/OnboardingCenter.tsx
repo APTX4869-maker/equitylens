@@ -16,9 +16,12 @@ export function OnboardingCenter({ open, seed, onClose, onPublished, onTaskChang
   const [loading, setLoading] = useState(false);
   const requestSeq = useRef(0);
   const listController = useRef<AbortController | null>(null);
+  const knownTasks = useRef(new Map(seed ? [[seed.onboarding_id, seed]] : []));
   const changed = useCallback((task: OnboardingTask) => {
+    const previous = knownTasks.current.get(task.onboarding_id);
+    knownTasks.current.set(task.onboarding_id, task);
     setTasks((items) => items.some((item) => item.onboarding_id === task.onboarding_id) ? items.map((item) => item.onboarding_id === task.onboarding_id ? { ...item, ...task } : item) : [task, ...items]);
-    if (task.state === "PUBLISHED") onPublished();
+    if (previous && task.state === "PUBLISHED" && (previous.state !== "PUBLISHED" || previous.publication_id !== task.publication_id)) onPublished();
     onTaskChanged?.(task);
   }, [onPublished, onTaskChanged]);
 
@@ -36,6 +39,11 @@ export function OnboardingCenter({ open, seed, onClose, onPublished, onTaskChang
     try {
       const response = await api.onboardings(controller.signal);
       if (controller.signal.aborted || seq !== requestSeq.current) return;
+      for (const item of response.items) {
+        const previous = knownTasks.current.get(item.onboarding_id);
+        knownTasks.current.set(item.onboarding_id, item);
+        if (previous && item.state === "PUBLISHED" && (previous.state !== "PUBLISHED" || previous.publication_id !== item.publication_id)) onPublished();
+      }
       setTasks((current) => response.items.map((item) => ({ ...current.find((known) => known.onboarding_id === item.onboarding_id), ...item })));
       setSelected((current) => {
         if (current && response.items.some((item) => item.onboarding_id === current)) return current;
@@ -49,7 +57,7 @@ export function OnboardingCenter({ open, seed, onClose, onPublished, onTaskChang
       if (!controller.signal.aborted && seq === requestSeq.current) setLoading(false);
       if (listController.current === controller) listController.current = null;
     }
-  }, []);
+  }, [onPublished]);
   useEffect(() => {
     if (!open) return;
     const timer = window.setTimeout(() => void loadTasks(), 0);

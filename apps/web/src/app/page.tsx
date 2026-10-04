@@ -515,7 +515,7 @@ export default function Home() {
           {tab === "valuation" ? (
             <section className="section active" id="section-valuation">
               <ValuationSection
-                key={`${company}:${companies.find((item) => item.ticker === company)?.publication_id ?? "none"}`}
+                key={`${company}:${researchIdentity.security_id}`}
                 ticker={company}
                 identity={researchIdentity}
                 gate={selectedCompany?.capabilities.find((capability) => capability.module === "valuation") ?? null}

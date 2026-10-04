@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { stubPublishedCompanyDirectory } from "./company-directory-fixture";
+import { publishedCompanies, stubPublishedCompanyDirectory } from "./company-directory-fixture";
 
 test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page); });
 
@@ -151,6 +151,128 @@ async function stubPage(page: Page) {
   await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) =>
     route.fulfill({ json: runResponse(300, defaults()) })
   );
+}
+
+function onboardingTask(state = "PUBLISHED") {
+  return {
+    onboarding_id: "draft-task", company_id: "0000320193", ticker: "AAPL",
+    company_name: "Apple Inc.", state, current_step: "PUBLISH", revision: 5,
+    cancel_requested: false, input_fingerprint: "draft-test", discovery_id: "discovery",
+    profile_id: "profile", dataset_id: "dataset", quality_report_id: "quality",
+    review_id: "review", publication_id: state === "PUBLISHED" ? "pub-aapl" : null,
+    error: null, actions: [], steps: [], checks: [],
+    created_at: "2026-10-04T00:00:00Z", updated_at: "2026-10-04T00:00:00Z",
+  };
+}
+
+for (const persist of [false, true]) {
+  test(`reading a completed onboarding preserves ${persist ? "saved" : "unsaved"} valuation draft`, async ({ page }) => {
+    await stubPage(page);
+    const task = onboardingTask();
+    await page.route("**/api/v1/company-onboardings?**", route => route.fulfill({ json: { items: [task], next_cursor: null } }));
+    await page.route("**/api/v1/company-onboardings/draft-task", route => route.fulfill({ json: task }));
+    await page.route("**/api/v1/companies/AAPL/valuation/run?**", route => {
+      const body = route.request().postDataJSON();
+      return route.fulfill({ json: { ...runResponse(250, body.assumptions), valuation_run_id: body.persist ? "saved-draft" : null } });
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "估值" }).click();
+    const inputs = { growth: "10", margin: "40", wacc: "9.7", terminal: "2", roic: "25" };
+    for (const [field, value] of Object.entries(inputs)) {
+      await page.getByTestId(`valuation-input-${field}`).fill(value);
+      await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
+    }
+    await page.getByLabel("方案名", { exact: true }).fill("草稿保护测试");
+    await page.getByLabel("安全边际 %", { exact: true }).fill("20");
+    if (persist) {
+      await page.getByRole("button", { name: "保存本次运行" }).click();
+      await expect(page.getByText("已保存 · run saved-draft")).toBeVisible();
+    }
+    await page.getByRole("button", { name: "建档中心" }).click();
+    await expect(page.locator(".task-ledger")).toContainText("pub-aapl");
+    await page.getByRole("button", { name: "关闭建档中心" }).click();
+    for (const [field, value] of Object.entries(inputs)) await expect(page.getByTestId(`valuation-input-${field}`)).toHaveValue(value);
+    await expect(page.getByLabel("方案名", { exact: true })).toHaveValue("草稿保护测试");
+    await expect(page.getByLabel("安全边际 %", { exact: true })).toHaveValue("20");
+    await expect(page.getByTestId("fair-value")).toHaveText("$250");
+    if (persist) await expect(page.getByText("已保存 · run saved-draft")).toBeVisible();
+  });
+}
+
+for (const changePublication of [false, true]) {
+  test(`new publication ${changePublication ? "requires rebase without losing" : "for another company preserves"} personal assumptions`, async ({ page }) => {
+    await stubPage(page);
+    let published = false;
+    let requestReady!: () => void;
+    const ready = new Promise<void>(resolve => { requestReady = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const task = onboardingTask("PUBLISHING");
+    await page.route("**/api/v1/company-onboardings?**", route => route.fulfill({ json: { items: [task], next_cursor: null } }));
+    await page.route("**/api/v1/company-onboardings/draft-task", async route => {
+      requestReady(); await held;
+      published = true;
+      await route.fulfill({ json: { ...task, state: "PUBLISHED", publication_id: "pub-new", revision: 6 } });
+    });
+    await page.route("**/api/v1/companies?**", route => route.fulfill({ json: {
+      items: publishedCompanies.map(item => ({ ...item, publication_id: published && changePublication && item.ticker === "AAPL" ? "pub-new" : item.publication_id })), next_cursor: null,
+    } }));
+    const bodies: Assumptions[] = [];
+    let releaseCopy!: () => void;
+    const heldCopy = new Promise<void>(resolve => { releaseCopy = resolve; });
+    let copyStarted!: () => void;
+    const pendingCopy = new Promise<void>(resolve => { copyStarted = resolve; });
+    const sourcePlan = {
+      plan_id: "old-plan", name: "旧版方案", valuation_run_id: "old-run", scenario_key: "base",
+      reference_value: 300, reference_price: 240, margin_of_safety: 0.2,
+      version: 1, review_status: "current", review_reason: null,
+      assumptions_json: defaults(), conditions_to_verify: [],
+    };
+    if (changePublication) {
+      await page.route("**/api/v1/companies/AAPL/valuation/plans?**", route => route.fulfill({ json: { plans: [sourcePlan], next_cursor: null } }));
+      await page.route("**/api/v1/companies/AAPL/valuation/plans/old-plan/copy", async route => {
+        copyStarted(); await heldCopy;
+        await route.fulfill({ json: {
+          parent_plan_id: "old-plan", next_version: 2, assumptions: defaults(), source_plan: sourcePlan,
+          plan_defaults: { scenario_key: "base", margin_of_safety: 0.2, name: "迟到的旧草稿", notes: "", conditions_to_verify: [] },
+        } });
+      });
+    }
+    await page.route("**/api/v1/companies/AAPL/valuation/default?**", route => route.fulfill({ json: runResponse(300, { ...defaults(), revenue_base: published ? 500_000_000_000 : defaults().revenue_base }) }));
+    await page.route("**/api/v1/companies/AAPL/valuation/run?**", route => {
+      const body = route.request().postDataJSON(); bodies.push(body.assumptions);
+      return route.fulfill({ json: runResponse(250, body.assumptions) });
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "估值" }).click();
+    await page.getByTestId("valuation-input-wacc").fill("9.7");
+    await expect(page.getByTestId("fair-value")).toHaveText("$250");
+    if (changePublication) {
+      await page.getByRole("button", { name: "复制并编辑旧版方案" }).click();
+      await pendingCopy;
+    }
+    await page.getByRole("button", { name: "建档中心" }).click();
+    await ready;
+    const directoryReload = page.waitForResponse(response => response.url().includes("/api/v1/companies?") && response.status() === 200);
+    release(); await directoryReload;
+    await expect(page.locator(".task-state")).toHaveText("已发布");
+    await page.getByRole("button", { name: "关闭建档中心" }).click();
+    await expect(page.getByTestId("valuation-input-wacc")).toHaveValue("9.7");
+    if (changePublication) {
+      await expect(page.getByTestId("publication-review-warning")).toBeVisible();
+      await expect(page.getByRole("button", { name: "保存本次运行" })).toBeDisabled();
+      await page.getByRole("button", { name: "按当前草稿重新计算" }).click();
+      await expect(page.getByTestId("publication-review-warning")).toHaveCount(0);
+      expect(bodies.at(-1)?.revenue_base).toBe(500_000_000_000);
+      expect(bodies.at(-1)?.wacc).toBeCloseTo(0.097, 12);
+      await expect(page.getByRole("button", { name: "保存本次运行" })).toBeEnabled();
+      const copyResponse = page.waitForResponse(response => response.url().endsWith("/old-plan/copy"));
+      releaseCopy(); await copyResponse;
+      await expect(page.getByTestId("valuation-input-wacc")).toHaveValue("9.7");
+      await expect(page.getByTestId("publication-review-warning")).toHaveCount(0);
+      await expect(page.getByLabel("方案名", { exact: true })).not.toHaveValue("迟到的旧草稿");
+    } else await expect(page.getByTestId("fair-value")).toHaveText("$250");
+  });
 }
 
 test("keeps the newest complete draft when previews return out of order", async ({ page }) => {
