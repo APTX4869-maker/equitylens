@@ -5,6 +5,66 @@ test.beforeEach(async ({ page }) => { await stubPublishedCompanyDirectory(page);
 
 const derivedId = "derived.v2.overview-revenue";
 
+test("missing report metadata never promotes a KPI quarter into a disclosed report", async ({ page }) => {
+  await stubOverview(page);
+  await page.goto("/");
+  await expect(page.getByTestId("report-period-toolbar")).toContainText("报告元数据未覆盖");
+  await expect(page.getByTestId("reporting-summary")).toContainText("不能把原始季度或抓取时间当作最近披露报告");
+  await expect(page.getByTestId("reporting-summary").getByRole("button", { name: "查看报告来源" })).toHaveCount(0);
+});
+
+test("cash flow snapshot keeps different TTM periods visible instead of implying one subtraction", async ({ page }) => {
+  await stubOverview(page);
+  await page.route("**/api/v1/companies/AAPL/overview?**", route => route.fulfill({ json: {
+    ticker: "AAPL", latest_period: null, trend: {}, provenance_available: true,
+    kpis: {
+      TTM_OPERATING_CASH_FLOW: { value: 80, period: "FY2026Q1" },
+      TTM_CAPITAL_EXPENDITURES: { value: 20, period: "FY2026Q2" },
+      TTM_FCF: { value: null, period: "FY2026Q3", missing_reason: "OPERATING_CASH_FLOW missing FY2026Q3" },
+    },
+  }}));
+  await page.goto("/");
+  const snapshot = page.locator(".card").filter({ has: page.getByText("现金流转化快照（真实）", { exact: true }) });
+  await expect(snapshot.locator(".cash-step").nth(0)).toContainText("FY2026Q1");
+  await expect(snapshot.locator(".cash-step").nth(1)).toContainText("FY2026Q2");
+  await expect(snapshot.locator(".cash-step").nth(2)).toContainText("经营现金流缺少 FY2026Q3");
+  await expect(snapshot.locator(".cash-step").nth(2).locator(".cash-fill")).toHaveCSS("width", "0px");
+  await expect(snapshot).toContainText("只有期间一致且输入完整才能相减");
+});
+
+for (const annual of [true, false]) {
+  test(`report period and ${annual ? "derived Q4" : "coverage gaps"} remain distinct`, async ({ page }) => {
+    await stubOverview(page);
+    await page.route("**/api/v1/companies/AAPL/overview?**", route => route.fulfill({ json: {
+      ticker: "AAPL", latest_period: { fiscal_year: 2026, fiscal_quarter: annual ? 4 : 3, period_end: annual ? "2026-06-30" : "2026-05-10" },
+      reporting: {
+        latest_report: { fiscal_year: 2026, fiscal_quarter: annual ? 4 : 3, report_date: annual ? "2026-06-30" : "2026-05-10", filed_at: "2026-07-29", form_type: annual ? "10-K" : "10-Q", source_document_id: "current-report" },
+        derived_q4_metrics: annual ? ["REVENUE"] : [],
+        gaps: annual ? [] : [{ key: "REVENUE_LATEST", available_period: "FY2026Q2", target_period: "FY2026Q3", reason: "当前发布缺少该报告期的完整可计算输入" }],
+      },
+      period_alignment: { status: "aligned", reference_period: annual ? "FY2026Q4" : "FY2026Q2", reference_period_end: annual ? "2026-06-30" : "2026-02-15", periods: {}, mismatches: [] },
+      kpis: { REVENUE_LATEST: { metric: "REVENUE", value: 40, period: annual ? "FY2026Q4" : "FY2026Q2", period_end: annual ? "2026-06-30" : "2026-02-15", status: "CALCULATED" } },
+      trend: {}, provenance_available: true,
+    }}));
+    await page.route("**/api/v1/provenance/current-report?**", route => {
+      expect(new URL(route.request().url()).searchParams.get("publication_id")).toBe("pub-aapl");
+      return route.fulfill({ json: { entity_id: "current-report", kind: "source_document", tree: { entity_id: "current-report", kind: "source_document", label: "SEC report", fields: { report_date: annual ? "2026-06-30" : "2026-05-10", source_url: "https://www.sec.gov/Archives/current-report" }, parents: [] } } });
+    });
+    await page.goto("/");
+    const summary = page.getByTestId("reporting-summary");
+    await expect(summary).toContainText(annual ? "FY2026 年度" : "FY2026 Q3");
+    await expect(summary).toContainText(annual ? "年度累计值减前三季度累计值" : "最近季度收入");
+    if (!annual) {
+      await expect(summary).toContainText("FY2026Q2");
+      await expect(summary).toContainText("FY2026Q3");
+      await expect(summary).toContainText("当前发布");
+    }
+    await expect(page.getByTestId("report-period-toolbar")).toContainText(annual ? "FY2026 年度" : "FY2026 Q3");
+    await summary.getByRole("button", { name: "查看报告来源" }).click();
+    await expect(page.getByRole("dialog").getByRole("link")).toHaveAttribute("href", "https://www.sec.gov/Archives/current-report");
+  });
+}
+
 async function stubOverview(page: Page) {
   await page.route("**/api/v1/companies/AAPL?**", (route) => route.fulfill({ json: {
     ticker: "AAPL", cik: "0000320193", name: "Apple Inc.", exchange: "NASDAQ",

@@ -224,6 +224,11 @@ export type ProvenanceNode = {
 
 export type OverviewResponse = {
   ticker: string;
+  reporting?: {
+    latest_report: { fiscal_year: number | null; fiscal_quarter: number | null; report_date: string; filed_at: string | null; form_type: string; source_document_id: string } | null;
+    derived_q4_metrics: string[];
+    gaps: { key: string; available_period: string | null; target_period: string; reason: string }[];
+  };
   latest_period: {
     fiscal_year: number;
     fiscal_quarter: number;

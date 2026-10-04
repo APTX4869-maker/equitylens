@@ -59,3 +59,16 @@ def test_negative_base_growth_remains_non_comparable(db):
 
     assert point.status == "INCOMPARABLE_BASE"
     assert point.value is None
+
+
+def test_report_gap_does_not_call_a_null_result_period_an_available_value():
+    from equitylens.api.routes import _reporting_metadata
+    from equitylens.metrics.engine import MetricEngine
+
+    result = _reporting_metadata([], [{
+        "form_type": "10-Q", "report_date": "2026-06-30", "source_document_id": "report",
+    }], {"TTM_FCF": {"value": None, "period": "FY2026Q2", "period_end": "2026-06-30"}},
+        MetricEngine(None, published_facts=[]))
+    gap = next(item for item in result["gaps"] if item["key"] == "TTM_FCF")
+    assert gap["available_period"] is None
+    assert gap["target_period"] == "2026-06-30"

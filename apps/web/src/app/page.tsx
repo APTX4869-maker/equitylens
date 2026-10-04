@@ -5,6 +5,7 @@ import { api, userErrorMessage } from "@/lib/api";
 import type { CompanyInfo, CompanyListItem, Fact, MarketQuote, OnboardingTask, OverviewResponse, ResearchIdentity } from "@/lib/types";
 import { Sidebar, Topbar, Hero, type TabKey } from "@/components/Shell";
 import { OverviewSection } from "@/components/sections/OverviewSection";
+import { reportPeriodLabel } from "@/lib/reporting";
 import { FinancialsSection } from "@/components/sections/FinancialsSection";
 import { BusinessSection } from "@/components/sections/BusinessSection";
 import { ManagementSection } from "@/components/sections/ManagementSection";
@@ -411,9 +412,9 @@ export default function Home() {
               </div>
               <div className="tool-group">
                 <span className="fresh-dot" />
-                <span className="tool-label">最新财报期</span>
-                <span className="tool-value">
-                  {entry?.overview?.latest_period ? `FY${entry.overview.latest_period.fiscal_year} Q${entry.overview.latest_period.fiscal_quarter}` : "—"}
+                <span className="tool-label">已发布最近报告</span>
+                <span className="tool-value" data-testid="report-period-toolbar">
+                  {reportPeriodLabel(entry?.overview)}
                 </span>
               </div>
               <div
@@ -477,6 +478,7 @@ export default function Home() {
                 onRetry={() => setReloadKey((k) => k + 1)}
                 onGotoTab={setTab}
                 onOpenMetric={openMetric}
+                onOpenSource={openSource}
               />
             </section>
           ) : null}

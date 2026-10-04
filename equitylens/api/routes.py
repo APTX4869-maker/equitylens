@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -227,6 +228,59 @@ def _period_alignment(kpis: dict[str, dict]) -> dict:
         "periods": periods,
         "mismatches": mismatches,
     }
+
+
+def _fact_period(fact: dict) -> dict | None:
+    quarter = 4 if fact.get("period_type") == "FY" else fact.get("fiscal_quarter")
+    end = fact.get("period_end") or fact.get("instant_date")
+    if not end or not fact.get("fiscal_year") or quarter not in (1, 2, 3, 4):
+        return None
+    return {"fiscal_year": fact["fiscal_year"], "fiscal_quarter": quarter, "period_end": str(end)[:10]}
+
+
+def _reporting_metadata(facts: list[dict], documents: list[dict], kpis: dict, engine) -> dict:
+    # Only immutable publication documents are eligible. A later amendment to
+    # an older report must not move the report period backwards.
+    reports = []
+    for doc in documents:
+        if doc.get("form_type") not in ("10-K", "10-K/A", "10-Q", "10-Q/A"):
+            continue
+        try:
+            date.fromisoformat(str(doc.get("report_date")))
+        except ValueError:
+            continue
+        reports.append(doc)
+    doc = max(reports, key=lambda d: (d["report_date"], str(d.get("filed_at") or "")), default=None)
+    report = None
+    if doc:
+        matching = [period for f in facts if (period := _fact_period(f)) and period["period_end"] == doc["report_date"]]
+        period = max(matching, key=lambda p: (p["fiscal_year"], p["fiscal_quarter"]), default={})
+        report = {key: doc.get(key) for key in ("source_document_id", "form_type", "report_date", "filed_at")}
+        report.update(fiscal_year=period.get("fiscal_year"), fiscal_quarter=period.get("fiscal_quarter"))
+    gaps = []
+    displayed = ("REVENUE_LATEST", "TTM_REVENUE", "REVENUE_GROWTH_YOY", "OPERATING_MARGIN",
+                 "GROSS_MARGIN", "NET_MARGIN", "TTM_FCF", "FCF_MARGIN", "NET_DEBT",
+                 "OPERATING_CASH_FLOW_LATEST", "TTM_OPERATING_CASH_FLOW",
+                 "CAPITAL_EXPENDITURES_LATEST", "TTM_CAPITAL_EXPENDITURES")
+    if report:
+        target = (f"FY{report['fiscal_year']}Q{report['fiscal_quarter']}"
+                  if report["fiscal_year"] and report["fiscal_quarter"] else report["report_date"])
+        for key in displayed:
+            item = kpis.get(key) or {}
+            if item.get("value") is None or str(item.get("period_end") or "") < report["report_date"]:
+                gaps.append({
+                    "key": key, "available_period": item.get("period") if item.get("value") is not None else None, "target_period": target,
+                    "reason": "当前发布缺少该报告期的完整可计算输入；季度值需要当期事实，TTM需要连续四季，复合指标需要完整组成项。",
+                })
+    derived = []
+    if report and report["fiscal_quarter"] == 4:
+        for metric in ("REVENUE", "OPERATING_CASH_FLOW", "CAPITAL_EXPENDITURES"):
+            series = engine.standalone_series([f for f in facts if f.get("canonical_metric") == metric])
+            point = series.get((report["fiscal_year"], 4))
+            if point and (point.get("formula_id") == "standalone_quarter.ytd_diff.v1"
+                          or point.get("mapping_rule_id") == "standalone_quarter.ytd_diff.v1"):
+                derived.append(metric)
+    return {"latest_report": report, "gaps": gaps, "derived_q4_metrics": derived}
 
 
 def _published_entity(
@@ -665,19 +719,8 @@ def overview(
             "period_end": latest_point.period_end,
         } if latest_point is not None else None)
     else:
-        latest = max(
-            (
-                fact for fact in published
-                if fact.get("period_type") == "Q_STANDALONE"
-                and fact.get("fiscal_quarter") is not None
-            ),
-            key=lambda fact: (
-                fact.get("fiscal_year") or 0,
-                fact.get("fiscal_quarter") or 0,
-                str(fact.get("period_end") or ""),
-            ),
-            default=None,
-        )
+        latest = max((p for fact in published if (p := _fact_period(fact))),
+                     key=lambda p: p["period_end"], default=None)
     if latest is not None and isinstance(latest, dict):
         latest = {
             "fiscal_year": latest.get("fiscal_year"),
@@ -688,6 +731,9 @@ def overview(
         "ticker": ticker,
         **_version_fields(company, context),
         "latest_period": latest,
+        "reporting": _reporting_metadata(
+            published, PublicationRepository(store).entities(context, "source_document"), kpis, engine,
+        ),
         "kpis": kpis,
         "period_alignment": _period_alignment(kpis),
         "trend": trend,

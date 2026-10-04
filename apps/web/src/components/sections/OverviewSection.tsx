@@ -4,6 +4,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { CompanyInfo, Fact, OverviewResponse } from "@/lib/types";
 import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
+import { cashPeriodNote, KPI_PERIOD_NAMES, reportPeriodLabel } from "@/lib/reporting";
 import { Card, Pill } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
 
@@ -14,6 +15,7 @@ type Props = {
   onRetry: () => void;
   onGotoTab: (tab: import("@/components/Shell").TabKey) => void;
   onOpenMetric: (key: string, fact: Fact | null) => void;
+  onOpenSource: (id: string) => void;
 };
 
 type KpiItem = { label: string; value: string; note: string; tone?: string; metricKey?: string; fact?: Fact | null };
@@ -32,7 +34,7 @@ function KpiCard({ label, value, note, tone, metricKey, fact, onOpenMetric }: Kp
   );
 }
 
-export function OverviewSection({ company, overview, error, onRetry, onGotoTab, onOpenMetric }: Props) {
+export function OverviewSection({ company, overview, error, onRetry, onGotoTab, onOpenMetric, onOpenSource }: Props) {
   const trend = useMemo(() => overview?.trend ?? {}, [overview]);
   const [activeChart, setActiveChart] = useState("revenue");
 
@@ -112,9 +114,9 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
           metricKey: "netCash", fact: kpiFact("NET_DEBT"),
         },
         {
-          label: "最新财报期",
-          value: overview.latest_period ? `FY${overview.latest_period.fiscal_year} Q${overview.latest_period.fiscal_quarter}` : "—",
-          note: "SEC 10-Q / 10-K",
+          label: "指标最晚参考期",
+          value: overview.period_alignment?.reference_period ?? "—",
+          note: "各指标仍以各自标注期间为准，不等于最近报告期",
           tone: "",
         },
       ],
@@ -223,10 +225,32 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
         </div>
         <Pill tone="good">真实数据</Pill>
       </div>
+      <Card className="card-pad">
+        <div data-testid="reporting-summary">
+          <strong>已发布最近报告：{reportPeriodLabel(overview)}</strong>
+          {overview.reporting?.latest_report ? <p className="card-sub">
+            {overview.reporting.latest_report.form_type} · 报告截止 {overview.reporting.latest_report.report_date}
+            {overview.reporting.latest_report.filed_at ? ` · 披露于 ${overview.reporting.latest_report.filed_at}` : " · 披露日期未覆盖"}
+            {" "}<button className="text-link" onClick={() => onOpenSource(overview.reporting!.latest_report!.source_document_id)}>查看报告来源</button>
+          </p> : <p className="card-sub">当前发布缺少报告元数据，不能把原始季度或抓取时间当作最近披露报告。</p>}
+          <p className="card-sub">指标最晚参考期：{overview.period_alignment?.reference_period ?? "未覆盖"}；各卡片的实际期间可能不同，TTM表示截至该期的连续四季。</p>
+          {overview.reporting?.derived_q4_metrics.length ? <p className="card-sub">
+            Q4 派生口径：{overview.reporting.derived_q4_metrics.map(key => KPI_PERIOD_NAMES[key] ?? key).join("、")}使用年度累计值减前三季度累计值，不是单独披露的第四季度报告。
+          </p> : null}
+          {overview.reporting?.gaps.length ? <div role="status">
+            <strong>报告已覆盖，不代表所有指标都能计算到该期：</strong>
+            {Object.entries(Object.groupBy(overview.reporting.gaps, gap => gap.available_period ?? "未覆盖")).map(([period, gaps]) => <p className="card-sub" key={period}>
+              {gaps!.map(gap => KPI_PERIOD_NAMES[gap.key] ?? gap.key).join("、")}：{period === "未覆盖" ? "暂无可用值" : `可用值截至 ${period}`}；目标报告期 {gaps![0].target_period}。
+            </p>)}
+            <p className="card-sub">{[...new Set(overview.reporting.gaps.map(gap => gap.reason))].join("；")}</p>
+            <p className="card-sub">这是当前发布的证据/计算覆盖缺口，并非公司没有披露。请查看报告来源核对，不能将旧指标改标为新期间。</p>
+          </div> : null}
+        </div>
+      </Card>
       {overview.period_alignment?.status === "mixed" ? (
         <div className="action-error" data-testid="kpi-period-warning" role="status">
           <strong>指标期间不一致：</strong>{" "}
-          {overview.period_alignment.mismatches.map((item) => item.reason).join("；")}。
+          {overview.period_alignment.mismatches.map((item) => `${KPI_PERIOD_NAMES[item.key] ?? item.key} 截至 ${overview.period_alignment!.periods[item.key]?.period ?? "未覆盖"}`).join("；")}；指标最晚参考期为 {overview.period_alignment.reference_period}。
           请按每张卡片标注的期间分别解读，不能视为同一时点快照。
         </div>
       ) : null}
@@ -290,22 +314,25 @@ export function OverviewSection({ company, overview, error, onRetry, onGotoTab, 
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <Card className="card-pad">
           <div className="card-title">现金流转化快照（真实）</div>
-          <div className="card-sub">利润好不好，最终还要看能不能变成现金。</div>
+          <div className="card-sub">各列按各自期间展示，只有期间一致且输入完整才能相减；缺值不按零处理。</div>
           <div className="cash-waterfall">
             <div className="cash-step">
               <label>TTM 经营现金流</label>
-              <div className="cash-bar"><div className="cash-fill" style={{ width: "100%" }} /></div>
+              <div className="cash-bar"><div className="cash-fill" style={{ width: overview.kpis.TTM_OPERATING_CASH_FLOW?.value == null ? "0%" : "100%" }} /></div>
               <strong>{fmtMoney(overview.kpis.TTM_OPERATING_CASH_FLOW?.value)}</strong>
+              <p className="card-sub" title={overview.kpis.TTM_OPERATING_CASH_FLOW?.missing_reason ?? undefined}>{cashPeriodNote(overview.kpis.TTM_OPERATING_CASH_FLOW)}</p>
             </div>
             <div className="cash-step">
               <label>TTM 资本开支</label>
-              <div className="cash-bar"><div className="cash-fill" style={{ width: "100%" }} /></div>
+              <div className="cash-bar"><div className="cash-fill" style={{ width: overview.kpis.TTM_CAPITAL_EXPENDITURES?.value == null ? "0%" : "100%" }} /></div>
               <strong>-{fmtMoney(overview.kpis.TTM_CAPITAL_EXPENDITURES?.value)}</strong>
+              <p className="card-sub" title={overview.kpis.TTM_CAPITAL_EXPENDITURES?.missing_reason ?? undefined}>{cashPeriodNote(overview.kpis.TTM_CAPITAL_EXPENDITURES)}</p>
             </div>
             <div className="cash-step">
               <label>TTM 自由现金流</label>
-              <div className="cash-bar"><div className="cash-fill" style={{ width: "100%" }} /></div>
+              <div className="cash-bar"><div className="cash-fill" style={{ width: overview.kpis.TTM_FCF?.value == null ? "0%" : "100%" }} /></div>
               <strong>{fmtMoney(overview.kpis.TTM_FCF?.value)}</strong>
+              <p className="card-sub" title={overview.kpis.TTM_FCF?.missing_reason ?? undefined}>{cashPeriodNote(overview.kpis.TTM_FCF)}</p>
             </div>
           </div>
           <div className="beginner-note beginner-only">
