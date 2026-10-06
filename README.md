@@ -1,19 +1,19 @@
 # EquityLens — 本地优先的美股基本面研究系统
 
 > 事实来自权威数据源（SEC EDGAR）；计算来自确定性代码；观点来自有证据支撑的研究层。
-> 当前交付：**M1–M8.6** — AAPL/MSFT 的 SEC 财务事实与公开行情链路，以及总览、财务分析、业务构成、管理层、估值、风险、规则研究助手、护城河、承诺追踪和数据新鲜度页面。事实、计算、配置假设与证据缺口在界面中分别标注。
+> 当前形态：桌面网页端的个人研究工具。公司目录由已发布数据决定，各公司的模块能力与估值审核状态分别显示；不能把“已添加公司”理解为所有功能均可用。
+> 最新实现、验证环境与未完成事项见 [桌面产品状态与交接索引](docs/reviews/2026-10-06-desktop-status.md)。尚未完成正式数据环境验收，不宣称整个平台已完全可投入使用。
 
 ## 快速开始
 
 ```bash
 # 1. 后端（Python 3.12 + uv）
 uv sync                                   # 安装依赖（默认走清华 PyPI 镜像）
-uv run equitylens sync AAPL MSFT          # 拉取并规范化 SEC 数据（首次联网，之后 --no-fetch 可离线重跑）
-uv run equitylens sync-segments AAPL MSFT # 拉取 10-K/10-Q filing 并提取分部数据（M4）
-uv run equitylens sync-management AAPL MSFT # 拉取 DEF 14A + Form 4 并提取管理层数据（M6）
-uv run equitylens sync-quotes AAPL MSFT     # 同步真实行情：原始快照 + market_quote 行（M8，Nasdaq 主源/腾讯备源）
-# 估值：无同步命令；DCF 直接基于已同步的 canonical facts，每次 POST /valuation/run 持久化
-uv run uvicorn equitylens.api.main:app --port 8000
+# 替换为自己的真实联系邮箱；示例/默认 contact@example.com 不能用于公司识别
+export EQUITYLENS_USER_AGENT='EquityLens personal research your-real-email@your-domain.com'
+# 默认使用仓库 data/。测试应先复制数据目录，再显式选择副本，避免改动正式数据
+# export EQUITYLENS_DATA_DIR='/absolute/path/to/data-copy'
+uv run uvicorn equitylens.api.main:app --host 127.0.0.1 --port 8000
 
 # 2. 前端（Node 24 + pnpm）
 cd apps/web
@@ -21,7 +21,13 @@ pnpm install
 pnpm dev                                  # http://localhost:3000（/api/v1/* 自动代理到 :8000）
 ```
 
-打开 http://localhost:3000 → 搜索 AAPL → **公司总览**（真实 KPI）→ **财务分析** → 点击指标 → **查看来源**。
+打开 http://localhost:3000 → 选择已发布公司 → 公司总览 / 财务分析 → 点击指标查看来源。生产方式为在 `apps/web` 执行 `pnpm build`，再 `pnpm start --port 3000`；修改代码后须重新构建并重启生产服务。
+
+启动不会自动导入演示公司。空目录请使用“添加公司”→识别法律实体/证券→建档→质量检查/人工核验→发布。建档中心与任务提示用于查看阻塞原因；“等待适配”需要维护者补版本化公司资料，不会因为继续等待自动成功。审核通过的数据才进入研究目录。
+
+估值使用选定 publication 的冻结事实；需确认估值基准后才展示模型。五项假设包括收入增长、营业利润率、WACC、永续增长和稳定期 ROIC；预览不保存，明确保存才生成个人方案。利率展示来自确认/运行快照，不冒充当前实时利率。
+
+配置从进程环境读取，不自动加载 `.env`：修改后重启 API。`EQUITYLENS_DB_PATH` 可单独覆盖数据库路径，但原始快照仍在 `EQUITYLENS_DATA_DIR/raw`；迁移时必须一起保留，详见状态索引中的正式环境待办。
 
 ## 目录结构
 
@@ -51,7 +57,8 @@ equitylens/
 ```text
 SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规范化事实（canonical_fact）
   → fiscal resolver（财年/季度/独立季度推导）→ 确定性指标（metric_value 公式+输入）
-  → FastAPI → 前端（每个数字可点开 Source drawer 溯源到 accession/concept/期间）
+  → 候选版本与质量门禁 → 人工核验/发布 → publication 冻结事实与能力状态
+  → FastAPI → 前端（证据可用的指标通过来源抽屉溯源；缺失/未披露不补猜测数字）
 ```
 
 - **LLM 永不参与数字**：`LLM → 数字 → 持久化` 被禁止（CODEX_START_HERE.md）。
@@ -64,14 +71,21 @@ SEC data.sec.gov → 原始快照（落盘 + SHA-256）→ XBRL 解析 → 规�
 
 ```bash
 uv run pytest -q                       # 后端全量：golden（官方财报/分部/14A/Form4/DCF/风险/研究/行情/护城河/承诺）+ 单元 + 集成
-uv run python tests/e2e/smoke.py       # 浏览器冒烟（需两个服务已在跑）
+uv run python tests/e2e/smoke.py --base-url http://localhost:3000 # 需两个服务已在跑；动态读取已发布目录
+# 可用 --api-url http://127.0.0.1:8000/api/v1 或 --ticker NVDA；--help 查看选项
+# 未安装 Playwright Chromium 时可用 --chrome-path '/absolute/path/to/Chrome'
 cd apps/web && pnpm exec playwright test # 前端端到端回归（Playwright）
+# 前端可设置 PLAYWRIGHT_PORT=3012、PLAYWRIGHT_CHROME_PATH='/absolute/path/to/Chrome'
+# pnpm lint && pnpm exec vitest run && pnpm build
 ```
 
-Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收入 245,122M 等）
-与官方财报核对，任一不符即阻塞该指标发布。
+冒烟脚本检查已发布公司的八个模块导航、指标来源抽屉、研究问答、运行时错误和估值门禁；估值 READY 时另验滑杆预览重算与 Reverse DCF（不持久化）。`LIMITED` 是真实能力限制，不代表估值通过；仅已核实的缺发行人 defaults 草案错误可作为限制，未知错误仍失败。空目录/未发布 ticker 返回失败；不会导入、确认基准、保存方案或刷新数据。保存与并发等边界仍依靠完整回归及专项验证，冒烟通过不等于财务正确性或建档全链路验收。
 
-## 当前范围与边界（M1–M8.6）
+Golden 数据与官方财报核对。测试库/拦截接口回归与真实数据副本验证分别记录，均不能代替正式库迁移与备份恢复验收。
+
+## 模块能力与边界
+
+以下为已实现的模块，不承诺每家已发布公司均有完整覆盖；应以公司能力面板、缺口提示和所选 publication 为准。
 
 - ✅ 总览页 + 财务分析页：真实 SEC 数据（KPI、季度/年度趋势、指标卡、三年财务表、来源抽屉）
 - ✅ 业务构成页（M4）：AAPL 地理分部/产品类别 + MSFT 三大分部，来自 10-K/10-Q iXBRL 维度解析；
@@ -100,24 +114,24 @@ Golden 数据（AAPL FY2024 收入 391,035M、净利 93,736M；MSFT FY2024 收�
   兑现率在样本有意义前不计算
 - ✅ 数据新鲜度（M8.6）：GET /companies/{t}/freshness 按模块报告 as-of（SEC 财务/分部/管理层/行情/估值运行），
   过期/缺失标色并在页面顶部"数据新鲜度"条展示，绝不静默使用旧数据
-- ⚠️ 支持的 ticker：AAPL、MSFT（V0.1 正确性优先于覆盖面）
+- ⚠️ 支持公司不写死为 AAPL/MSFT：目录仅列出已发布版本；新 ticker 需要公司资料/映射/质量门禁适配，不能保证任意公司一键导入或直接估值。
 - ⚠️ LLM 解释层：暂未接入（按用户决定）——确定性引擎已可用，插槽保留，永不生成财务数字
 
 ## Docker Compose（可选打包）
 
 ```bash
 docker compose up -d --build                  # api(:8000) + web(:3000)
-docker compose exec api uv run --no-sync equitylens sync AAPL MSFT
-docker compose exec api uv run --no-sync equitylens sync-segments AAPL MSFT
-docker compose exec api uv run --no-sync equitylens sync-management AAPL MSFT
-docker compose exec api uv run --no-sync equitylens sync-quotes AAPL MSFT
 # 打开 http://localhost:3000（web 通过 EQUITYLENS_API_URL 代理到 compose 内网 api:8000）
 ```
 
 - `./data`（快照 + DuckDB）与 `./config`（只读）挂载进 api 容器；CLI 在容器内执行。
 - web 为**开发模式容器**（热更新）；生产 standalone 构建留待硬化。
+- 当前 Compose 的 API User-Agent 是固定旧值；公司识别前须将 `api.environment.EQUITYLENS_USER_AGENT` 改成含真实联系邮箱的标识。此路径尚未完成本轮 Docker 实测，不作为已验收部署方式。
 - 需 Docker Desktop/daemon；基础镜像 ghcr.io/astral-sh/uv、依赖走清华 PyPI 镜像。
 
 ## 常见问题
+
+- **同步与发布的区别**：`sync` / `sync-segments` / `sync-management` 是维护命令，不等价于新增公司审核发布；不能用它们绕过 publication 门禁。不要照旧版四条同步命令期待自动得到可估值公司。
+- **行情维护**：`uv run equitylens sync-quotes NVDA` 同步指定公司的公开行情快照；成功拉取不保证已是最新交易时点。过期行情不参与现价比较，页面会明确标注。刷新后台持久化和跨页面恢复仍有待办。
 - **同步失败/想离线重跑**：`uv run equitylens sync AAPL MSFT --no-fetch` 只从本地快照重算。
-- **SEC 拒绝请求**：请设置 `EQUITYLENS_USER_AGENT`（SEC fair-access 要求标识应用）。
+- **SEC 拒绝请求**：先确认 API 进程的 `EQUITYLENS_USER_AGENT` 含真实联系方式，再检查网络/限流；只在另一个终端设置变量不会更新正在运行的 API。

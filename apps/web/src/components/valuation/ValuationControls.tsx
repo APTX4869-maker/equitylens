@@ -15,35 +15,42 @@ const CONTROL_CONFIG: Record<Field, {
   label: string;
   baseRange: { min: number; max: number; step: number };
   decimals: number;
+  explanation: string;
 }> = {
   growth: {
     label: "首年收入增速（路径逐年递减）",
+    explanation: "收入增速决定生意能长多大",
     baseRange: { min: -100, max: 20, step: 0.5 },
     decimals: 2,
   },
   margin: {
     label: "第5年营业利润率",
+    explanation: "利润率决定每 100 元收入留下多少经营利润",
     baseRange: { min: 5, max: 60, step: 0.5 },
     decimals: 2,
   },
   wacc: {
     label: "WACC 折现率",
+    explanation: "WACC 决定未来现金今天值多少钱",
     baseRange: { min: 4, max: 15, step: 0.25 },
     decimals: 2,
   },
   terminal: {
     label: "永续增长率",
+    explanation: "永续增长影响稳定期现金流与终值",
     baseRange: { min: 0.5, max: 4, step: 0.25 },
     decimals: 2,
   },
   roic: {
     label: "稳定期增量资本回报率",
+    explanation: "稳定期 ROIC 决定实现增长需要多少再投资，进而影响自由现金流",
     baseRange: { min: 8, max: 40, step: 1 },
     decimals: 2,
   },
 };
 
-const FIELDS: Field[] = ["growth", "margin", "wacc", "terminal", "roic"];
+const FIELDS = Object.keys(CONTROL_CONFIG) as Field[];
+export const VALUATION_CONTROL_GUIDE = FIELDS.map(field => CONTROL_CONFIG[field].explanation);
 
 function percentages(draft: DcfInputs): Record<Field, number> {
   return {

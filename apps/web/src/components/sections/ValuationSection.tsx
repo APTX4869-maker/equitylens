@@ -6,7 +6,7 @@ import { fmtMoney } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner } from "@/components/ui";
 import { EChart, barOption } from "@/components/charts";
 import { ValuationSetupCard } from "@/components/sections/ValuationSetupCard";
-import { ValuationControls } from "@/components/valuation/ValuationControls";
+import { ValuationControls, VALUATION_CONTROL_GUIDE } from "@/components/valuation/ValuationControls";
 import { ValuationPlanLibrary } from "@/components/valuation/ValuationPlanLibrary";
 import { RiskFreeSnapshot } from "@/components/valuation/RiskFreeSnapshot";
 import type { ValuationPlanCopyDraft } from "@/lib/api";
@@ -616,7 +616,7 @@ export function ValuationSection({
           ? (mktStale
             ? ` 行情已同步但过期（${mktQuote.observed_at}），不参与现价与公允价对比。`
             : ` 行情已同步（${mktQuote.provider_label} · ${mktQuote.observed_at}）：现价与公允价对比为确定性计算，非买卖建议。`)
-          : " 行情未同步：本地快照模式（运行 equitylens sync-quotes AAPL MSFT 后价格对比自动出现），DCF 与 reverse DCF 可先用假设探索。"}
+          : ` 行情未同步：本地快照模式（运行 equitylens sync-quotes ${ticker} 后，可用且未过期的价格才参与对比），DCF 与 reverse DCF 可先用假设探索。`}
         {" "}该 FCFF DCF 适用于当前支持的高质量科技公司；银行/REIT/亏损成长等类型不直接套用此模型。
       </div>
       <div className="section-head">
@@ -708,14 +708,14 @@ export function ValuationSection({
           <div className="section-head">
             <div>
               <div className="card-title">5-Year FCFF DCF</div>
-              <div className="card-sub">代码计算现金流；改动假设即全量重算。开放 5 个核心假设。</div>
+              <div className="card-sub">代码计算现金流；改动假设即全量重算。开放 {VALUATION_CONTROL_GUIDE.length} 个核心假设。</div>
             </div>
             <Pill tone="blue">FCFF DCF</Pill>
           </div>
           <div className="dcf-output">
             <div className="card-sub">当前假设下每股内在价值</div>
             <div className="fair" style={{ fontSize: 34 }} data-testid="fair-value">${fair != null ? fair.toFixed(0) : "—"}</div>
-            <div className="delta">净现金 ${fmtMoney(base.result.net_cash)} · 股本 {Math.round(i.shares / 1e6)}M（{meta.shares?.basis ?? i.share_basis_label ?? "股数口径未标注"}）</div>
+            <div className="delta">净现金 {fmtMoney(base.result.net_cash)} · 股本 {Math.round(i.shares / 1e6)}M（{meta.shares?.basis ?? i.share_basis_label ?? "股数口径未标注"}）</div>
           </div>
           <ValuationControls
             draft={i}
@@ -740,8 +740,8 @@ export function ValuationSection({
           <div className="beginner-note">
             <div>💡</div>
             <div>
-              <strong>四个滑杆在改什么？</strong>
-              <p>收入增速决定生意能长多大；利润率决定每 100 元收入留下多少经营利润；WACC 决定未来现金今天值多少钱；永续增长决定终值。</p>
+              <strong>{VALUATION_CONTROL_GUIDE.length} 个核心假设在改什么？</strong>
+              <p>{VALUATION_CONTROL_GUIDE.join("；")}。</p>
             </div>
           </div>
         </Card>

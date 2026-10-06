@@ -65,6 +65,42 @@ async function stub(page: Page) {
   });
 }
 
+test("valuation guide explains all five visible controls including ROIC", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "估值" }).click();
+  const model = page.getByTestId("dcf-model");
+  await expect(model.getByRole("slider")).toHaveCount(5);
+  await expect(model.locator(".beginner-note")).toContainText("5 个核心假设");
+  await expect(model.locator(".beginner-note")).toContainText("ROIC");
+  await expect(model.locator(".beginner-note")).toContainText("再投资");
+});
+
+for (const [cash, formatted] of [[10_000_000_000, "$10B"], [0, "$0"], [-10_000_000_000, "$-10B"]] as const) {
+  test(`net cash uses one currency marker and preserves ${cash}`, async ({ page }) => {
+    await stub(page);
+    await page.route("**/api/v1/companies/AAPL/valuation/default?**", route => route.fulfill({ json: response({ ...inputs, net_cash: cash }) }));
+    await page.goto("/");
+    await page.getByRole("button", { name: "估值" }).click();
+    await expect(page.locator(".delta")).toContainText(`净现金 ${formatted}`);
+    await expect(page.locator(".delta")).not.toContainText("$$");
+  });
+}
+
+for (const ticker of ["AAPL", "MSFT"]) test(`missing quote instructions refer only to selected ${ticker}`, async ({ page }) => {
+  await stub(page);
+  if (ticker === "MSFT") {
+    await page.route("**/api/v1/companies/MSFT/valuation/default?**", route => route.fulfill({ json: { ...response(), ticker } }));
+    await page.route("**/api/v1/companies/MSFT/valuation/plans?**", route => route.fulfill({ json: { plans: [], next_cursor: null } }));
+    await stubFinancials(page);
+  }
+  await page.goto("/");
+  if (ticker === "MSFT") await page.getByRole("button", { name: "MSFT Microsoft" }).click();
+  await page.getByRole("button", { name: "估值" }).click();
+  await expect(page.locator(".demo-banner")).toContainText(`equitylens sync-quotes ${ticker} 后`);
+  await expect(page.locator(".demo-banner")).not.toContainText("AAPL MSFT");
+});
+
 async function stubFinancials(page: Page) {
   for (const ticker of ["AAPL", "MSFT"]) {
     const name = ticker === "AAPL" ? "Apple Inc." : "Microsoft Corp.";

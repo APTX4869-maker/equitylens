@@ -1,177 +1,196 @@
-"""Playwright smoke test for the EquityLens web app (real-data pages).
+"""Read-only desktop smoke against a running app's published directory.
 
-Assumes:
-- FastAPI on 127.0.0.1:8000 (data/equitylens.duckdb already synced)
-- Next.js dev/prod server on 127.0.0.1:3000
-
-Run:  cd apps/web && pnpm dev &  (backend already running)
-      uv run python tests/e2e/smoke.py
+No import, confirmation, save or refresh; calculation previews are not persisted. Expected limitations are reported,
+never called a valuation pass. Run with --help for server/browser options.
 """
-
 from __future__ import annotations
 
+import argparse
 import re
 import sys
+import tempfile
+from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
+from urllib.parse import urlsplit
 
+import httpx
 from playwright.sync_api import expect, sync_playwright
 
-BASE = "http://localhost:3000"
+
+def is_expected_draft_block(response, expected: bool) -> bool:
+    if not expected or response.status != 409 or not urlsplit(str(response.url)).path.endswith("/valuation-profile/draft"):
+        return False
+    try:
+        body = response.json()
+        return isinstance(body, dict) and isinstance(body.get("error"), dict) and body["error"].get("code") == "VALUATION_DEFAULT_UNAVAILABLE"
+    except ValueError:
+        return False
+
+
+def published_companies(api_url: str) -> list[dict]:
+    items: list[dict] = []
+    cursor = None
+    seen: set[str] = set()
+    with httpx.Client(timeout=30) as client:
+        while True:
+            params = {"limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            response = client.get(f"{api_url}/companies", params=params)
+            response.raise_for_status()
+            result = response.json()
+            items.extend(item for item in result["items"] if item.get("publication_id"))
+            cursor = result.get("next_cursor")
+            if not cursor:
+                break
+            if cursor in seen:
+                raise ValueError("directory returned a repeated pagination cursor")
+            seen.add(cursor)
+    if not items:
+        raise ValueError("No published companies: finish publication first; nothing tested")
+    return items
 
 
 def main() -> int:
-    failures: list[str] = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
-        console_errors: list[str] = []
-        page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-        page.on("pageerror", lambda exc: console_errors.append(str(exc)))
-
-        # 1) Overview renders with REAL KPI values
-        page.goto(BASE, wait_until="networkidle")
-        page.wait_for_timeout(1500)
-        expect(page.get_by_role("heading", name="Apple Inc.")).to_be_visible()
-        body = page.locator("body").inner_text()
-        if "TTM 营业收入" not in body or "$4" not in body:
-            failures.append("overview: real KPI cards not rendered (TTM revenue missing)")
-        if "数据新鲜度" not in body:
-            failures.append("overview: data freshness strip missing")
-        page.screenshot(path="/tmp/el_overview.png", full_page=True)
-
-        # 2) Financial Analysis tab: real quarterly chart + metric cards + drawers
-        page.get_by_role("button", name="财务分析").click()
-        page.wait_for_timeout(1500)
-        page.screenshot(path="/tmp/el_financials.png", full_page=True)
-        fin_body = page.locator("body").inner_text()
-        if "三年简化财务表" not in fin_body:
-            failures.append("financials: annual statement table missing")
-        if "营业收入" not in fin_body or "自由现金流" not in fin_body:
-            failures.append("financials: metric cards missing")
-
-        # 3) Metric drawer opens with knowledge + view-source
-        page.locator(".metric-card", has_text="营业利润率").first.click()
-        page.wait_for_timeout(600)
-        expect(page.get_by_role("dialog").first).to_be_visible()
-        drawer = page.locator(".modal-body").first.inner_text()
-        if "用人话理解" not in drawer:
-            failures.append("metric drawer: explanation missing")
-        page.get_by_role("button", name="查看来源 →").click()
-        page.wait_for_timeout(1000)
-        src = page.locator(".modal-body").first.inner_text()
-        if "SEC" not in src and "Accession" not in src:
-            failures.append("source drawer: lineage not shown")
-        page.screenshot(path="/tmp/el_sourcedrawer.png")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-
-        # 4) Business tab (AAPL): REAL segment data from SEC filings
-        page.get_by_role("button", name="业务构成").click()
-        page.wait_for_timeout(2500)
-        biz = page.locator("body").inner_text()
-        if "公司报告分部" not in biz or "美洲" not in biz:
-            failures.append("business: real segments not rendered (AAPL)")
-        if "NOT_DISCLOSED" not in biz:
-            failures.append("business: NOT_DISCLOSED profitability badge missing")
-        page.screenshot(path="/tmp/el_business.png", full_page=True)
-
-        # 5) Company switch -> MSFT: segments with disclosed profit
-        page.get_by_role("button", name="MSFT Microsoft").click()
-        page.wait_for_timeout(1500)
-        expect(page.get_by_role("heading", name="Microsoft")).to_be_visible()
-        page.get_by_role("button", name="业务构成").click()
-        page.wait_for_timeout(2500)
-        biz2 = page.locator("body").inner_text()
-        if "智能云" not in biz2 or "生产力与业务流程" not in biz2:
-            failures.append("business: MSFT segments not rendered")
-        if "官方披露 · 营业利润" not in biz2:
-            failures.append("business: MSFT disclosed segment profit missing")
-
-        # 6) Management tab (real DEF 14A + Form 4 data)
-        page.get_by_role("button", name="管理层").click()
-        page.wait_for_timeout(2500)
-        mgmt = page.locator("body").inner_text()
-        if "管理层质量评分卡" not in mgmt or "Satya Nadella" not in mgmt:
-            failures.append("management: scorecard or leaders missing (MSFT)")
-        if "总分不可用" not in mgmt and "证据覆盖" not in mgmt:
-            failures.append("management: evidence-coverage gating not shown")
-        if "资本配置去向" not in mgmt or "内部人交易" not in mgmt:
-            failures.append("management: allocation or Form 4 section missing")
-        if "承诺追踪" not in mgmt:
-            failures.append("management: promise tracker card missing")
-        page.screenshot(path="/tmp/el_management.png", full_page=True)
-
-        # 7) Valuation tab: real DCF + slider recompute + market quote state
-        page.get_by_role("button", name="估值").click()
-        page.wait_for_timeout(2500)
-        val = page.locator("body").inner_text()
-        if "5-Year FCFF DCF" not in val or "Scenario Valuation" not in val or "Reverse DCF" not in val:
-            failures.append("valuation: DCF sections missing")
-        snap = page.locator(".valuation-snapshot").first.inner_text()
-        if "市场价" not in snap:
-            failures.append("valuation: market snapshot card missing")
-        if "未同步" not in snap and not re.search(r"\$\d+\.\d{2}", snap):
-            failures.append("valuation: synced quote card missing a price")
-        page.screenshot(path="/tmp/el_valuation.png", full_page=True)
-        # move a slider -> fair value recomputes deterministically
-        fair_before = page.locator(".fair").first.inner_text()
-        slider = page.locator('input[type="range"]').nth(0)
-        slider.fill("12")  # bump growth
-        page.wait_for_timeout(1500)
-        fair_after = page.locator(".fair").first.inner_text()
-        if fair_before == fair_after:
-            failures.append("valuation: slider did not recompute fair value")
-        # reverse DCF
-        page.locator('input[type="number"]').first.fill("300")
-        page.get_by_role("button", name="计算隐含增长").click()
-        page.wait_for_timeout(1500)
-        if "市场隐含" not in page.locator("body").inner_text() and "无根" not in page.locator("body").inner_text():
-            failures.append("valuation: reverse DCF output missing")
-
-        # 8) Risks tab: real deterministic risk signals
-        page.get_by_role("button", name="风险").click()
-        page.wait_for_timeout(2000)
-        rk = page.locator("body").inner_text()
-        if "确定性规则" not in rk and "风险信号" not in rk:
-            failures.append("risks: deterministic banner missing")
-        page.screenshot(path="/tmp/el_risks.png", full_page=True)
-
-        # 9) AI tab: evidence-first Q&A
-        page.get_by_role("button", name="AI研究助手").click()
-        page.wait_for_timeout(1500)
-        page.get_by_role("button", name="公司最近的风险有哪些？").click()
-        page.wait_for_timeout(2500)
-        ai = page.locator("body").inner_text()
-        if "证据优先" not in ai and "Evidence-first" not in ai:
-            failures.append("ai: evidence-first banner missing")
-        if "置信度" not in ai:
-            failures.append("ai: structured claims with confidence missing")
-        page.screenshot(path="/tmp/el_ai.png", full_page=True)
-
-        # 10) Moat tab: real SEC-evidence signals + explicit qualitative gaps
-        page.get_by_role("button", name="护城河").click()
-        page.wait_for_timeout(2500)
-        moat_body = page.locator("body").inner_text()
-        if "护城河证据" not in moat_body or "确定性" not in moat_body:
-            failures.append("moat: real evidence banner missing")
-        if "证据缺口" not in moat_body:
-            failures.append("moat: qualitative evidence gaps not shown")
-        if "强信号" not in moat_body:
-            failures.append("moat: verdict signals missing")
-        if "模拟" in moat_body:
-            failures.append("moat: demo banner still present")
-
-        page.screenshot(path="/tmp/el_moat.png", full_page=True)
-        browser.close()
-
-    if console_errors:
-        failures.append(f"browser console errors: {console_errors[:5]}")
-    if failures:
-        print("SMOKE FAILED:")
-        for f in failures:
-            print("  -", f)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default="http://localhost:3000")
+    parser.add_argument("--api-url", help="API prefix; default BASE/api/v1 proxy")
+    parser.add_argument("--ticker", action="append", help="Published ticker (repeatable); default all")
+    parser.add_argument("--chrome-path", help="Installed Chrome instead of bundled Chromium")
+    args = parser.parse_args()
+    base = args.base_url.rstrip("/")
+    try:
+        companies = published_companies((args.api_url or f"{base}/api/v1").rstrip("/"))
+        if args.ticker:
+            requested = {ticker.upper() for ticker in args.ticker}
+            absent = requested - {item["ticker"] for item in companies}
+            if absent:
+                raise ValueError(f"Not in published directory: {sorted(absent)}")
+            companies = [item for item in companies if item["ticker"] in requested]
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        print(f"SMOKE FAILED (preflight): {exc}")
         return 1
-    print("SMOKE OK")
-    return 0
+
+    artifacts = Path(tempfile.mkdtemp(prefix="equitylens-smoke-"))
+    failures: list[str] = []
+    limitations: list[str] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, executable_path=args.chrome_path)
+        try:
+            for company in companies:
+                ticker = company["ticker"]
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                page.set_default_timeout(15_000)
+                expected_draft_block = False
+                draft_blocks: list[str] = []
+                def check_response(response):
+                    if response.status < 400:
+                        return
+                    if is_expected_draft_block(response, expected_draft_block):
+                        draft_blocks.append(response.text())
+                        limitations.append(f"{ticker}: review draft blocked: {response.text()}")
+                    else:
+                        failures.append(f"{ticker}: HTTP {response.status} {response.url}")
+                page.on("response", check_response)
+                page.on("pageerror", lambda exc: failures.append(f"{ticker}: runtime error {exc}"))
+                page.on("console", lambda msg: failures.append(f"{ticker}: {msg.text}")
+                        if msg.type == "error" and not msg.text.startswith("Failed to load resource:") else None)
+                try:
+                    page.goto(base, wait_until="networkidle")
+                    page.get_by_role("button", name=re.compile(rf"^{re.escape(ticker)}(?:\s|$)")).click()
+                    expect(page.get_by_role("heading", level=1)).to_contain_text(ticker)
+                    page.get_by_role("button", name="专业模式", exact=True).click()
+                    for tab, heading in [
+                        ("公司总览", "公司概况"), ("财务分析", "财务分析"),
+                        ("业务构成", "业务构成"), ("管理层", "管理层与公司治理"),
+                        ("风险", "风险清单"), ("护城河", "护城河分析"), ("AI研究助手", "研究助手"),
+                    ]:
+                        page.get_by_role("button", name=re.compile(rf"{tab}$")).click()
+                        expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
+                        page.wait_for_load_state("networkidle")
+                        expect(page.get_by_role("heading", level=1)).to_contain_text(ticker)
+                        assert "加载失败" not in page.locator("main").inner_text(), f"{tab}: load failure"
+                        if tab == "财务分析":
+                            expect(page.get_by_text("三年简化财务表", exact=False)).to_be_visible()
+                            revenue_card = page.locator(".metric-card", has_text="营业收入").first
+                            expect(revenue_card.locator(".metric-value")).to_have_text(re.compile(r"^\$-?\d"))
+                            revenue_card.click()
+                            expect(page.get_by_text("用人话理解：", exact=True)).to_be_visible()
+                            page.get_by_role("dialog").locator(".source-row button").first.click()
+                            source = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="数据来源与溯源"))
+                            expect(source.get_by_text("加载溯源链…", exact=True)).to_have_count(0)
+                            expect(source.locator(".prov-node").first).to_be_visible()
+                            assert "加载失败" not in source.inner_text(), "source drawer failed"
+                            page.screenshot(path=str(artifacts / f"{ticker}-来源.png"))
+                            source.get_by_role("button", name="×", exact=True).click()
+                            expect(page.get_by_role("dialog")).to_have_count(0)
+                        elif tab == "AI研究助手":
+                            page.get_by_role("button", name="公司最近的风险有哪些？", exact=True).click()
+                            expect(page.get_by_text("RESEARCH HELPER · 规则检索", exact=True)).to_be_visible()
+                            expect(page.locator(".answer-point").first).to_be_visible()
+                            expect(page.locator(".answer-point").first).to_contain_text("置信度")
+                        page.screenshot(path=str(artifacts / f"{ticker}-{tab}.png"))
+                    capability = next((item for item in company.get("capabilities", []) if item["module"] == "valuation"), {})
+                    state = capability.get("status", "UNKNOWN")
+                    expected_draft_block = state == "NEEDS_CONFIGURATION"
+                    if state == "READY":
+                        with page.expect_response(lambda res: "/valuation/default" in res.url and res.status == 200) as default_response:
+                            page.get_by_role("button", name=re.compile("估值$")).click()
+                        baseline = default_response.value.json()["result"]["fair_value_per_share"]
+                    else:
+                        page.get_by_role("button", name=re.compile("估值$")).click()
+                    if state == "READY":
+                        expect(page.get_by_test_id("fair-value")).to_have_text(re.compile(r"^\$-?\d"))
+                        expect(page.get_by_test_id("dcf-model").get_by_role("slider")).to_have_count(5)
+                        expect(page.get_by_test_id("risk-free-snapshot")).to_be_visible()
+                        expect(page.get_by_test_id("valuation-plan-library")).to_be_visible()
+                        assert "$$" not in page.locator(".delta").inner_text(), "duplicate currency marker"
+                        slider = page.get_by_test_id("dcf-model").get_by_role("slider").first
+                        growth = float(slider.input_value())
+                        step = float(slider.get_attribute("step") or "1")
+                        upper = float(slider.get_attribute("max"))
+                        changed_growth = growth + step if growth + step <= upper else growth - step
+                        with page.expect_response(lambda res: "/valuation/run" in res.url and res.status == 200) as preview_response:
+                            slider.fill(str(changed_growth))
+                        preview = preview_response.value.json()
+                        assert abs(preview["assumptions"]["inputs"]["revenue_growth"][0] - changed_growth / 100) < 1e-9, "preview uses stale growth"
+                        exact_fair = preview["result"]["fair_value_per_share"]
+                        assert exact_fair != baseline, "growth preview did not recalculate precise fair value"
+                        rounded_fair = Decimal(str(exact_fair)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                        expect(page.get_by_test_id("fair-value")).to_have_text(f"${rounded_fair}")
+                        page.get_by_label("Reverse DCF 参考价", exact=True).fill("300")
+                        page.get_by_role("button", name="计算隐含增长", exact=True).click()
+                        expect(page.get_by_test_id("reverse-dcf").locator(".reverse-number")).to_be_visible()
+                        expect(page.get_by_test_id("reverse-dcf").locator(".reverse-number strong")).to_have_text(re.compile(r"^-?\d+(?:\.\d+)?%$|^无根$"))
+                    elif state == "NEEDS_CONFIGURATION":
+                        panel = page.get_by_test_id("valuation-setup").or_(page.get_by_test_id("valuation-setup-error"))
+                        expect(panel).to_be_visible()
+                        page.wait_for_load_state("networkidle")
+                        if page.get_by_test_id("valuation-setup-error").count():
+                            assert draft_blocks, "unexpected valuation setup error (not missing defaults)"
+                        expect(page.get_by_test_id("fair-value")).to_have_count(0)
+                        limitations.append(f"{ticker}: valuation needs review/configuration; no confirmation submitted")
+                    else:
+                        expect(page.get_by_test_id("valuation-gate")).to_be_visible()
+                        expect(page.get_by_test_id("fair-value")).to_have_count(0)
+                        limitations.append(f"{ticker}: valuation {state}: {capability.get('reason')}")
+                    page.wait_for_load_state("networkidle")
+                    page.screenshot(path=str(artifacts / f"{ticker}-估值.png"))
+                    print(f"{ticker}: 8 module navigation checked; valuation {state}")
+                except Exception as exc:
+                    failures.append(f"{ticker}: {exc}")
+                    page.screenshot(path=str(artifacts / f"{ticker}-failure.png"))
+                finally:
+                    page.close()
+        finally:
+            browser.close()
+    for note in limitations:
+        print(f"LIMITED: {note}")
+    for failure in failures:
+        print(f"FAIL: {failure}")
+    print(f"Artifacts: {artifacts}")
+    print("SMOKE FAILED" if failures else "SMOKE OK (navigation, sources, Q&A, available valuation previews/gates; not a financial or onboarding audit)")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
