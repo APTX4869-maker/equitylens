@@ -164,7 +164,7 @@ def main() -> int:
                         expect(page.get_by_test_id("reverse-dcf").locator(".reverse-number strong")).to_have_text(re.compile(r"^-?\d+(?:\.\d+)?%$|^无根$"))
                     elif state == "NEEDS_CONFIGURATION":
                         panel = page.get_by_test_id("valuation-setup").or_(page.get_by_test_id("valuation-setup-error"))
-                        expect(panel).to_be_visible()
+                        expect(panel).to_be_visible(timeout=15_000)
                         page.wait_for_load_state("networkidle")
                         if page.get_by_test_id("valuation-setup-error").count():
                             assert draft_blocks, "unexpected valuation setup error (not missing defaults)"

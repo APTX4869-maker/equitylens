@@ -116,6 +116,7 @@ export function ValuationSection({
   refreshGeneration = 0,
   refreshReviewRequired = false,
   onConfirmed = () => {},
+  onOpenFinancials,
 }: {
   ticker: string;
   identity: ResearchIdentity;
@@ -123,6 +124,7 @@ export function ValuationSection({
   refreshGeneration?: number;
   refreshReviewRequired?: boolean;
   onConfirmed?: () => Promise<void> | void;
+  onOpenFinancials?: () => void;
 }) {
   const identitySuffix = `?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
   const gateStatus = gate?.status ?? "READY";
@@ -569,7 +571,7 @@ export function ValuationSection({
   }, [base]);
 
   if (gate?.status === "BLOCKED") return <Card className="card-pad" data-testid="valuation-gate"><div className="section-head"><div><span className="eyebrow">Valuation readiness</span><h2 style={{ margin: "4px 0" }}>估值尚未开放</h2></div><Pill tone="bad">数据阻断</Pill></div><div className="next-step">{gate.reason ?? "关键财务事实、币种或每股口径尚未通过质量门禁。"}<br />修复数据阻断后，系统才会生成可审核的估值方案。</div></Card>;
-  if (gate?.status === "NEEDS_CONFIGURATION") return <ValuationSetupCard ticker={ticker} identity={identity} gate={gate} onConfirmed={onConfirmed} />;
+  if (gate?.status === "NEEDS_CONFIGURATION") return <ValuationSetupCard ticker={ticker} identity={identity} gate={gate} onConfirmed={onConfirmed} onOpenFinancials={onOpenFinancials} />;
   if (gate && gate.status !== "READY") return <Card className="card-pad" data-testid="valuation-gate"><div className="section-head"><div><span className="eyebrow">Valuation readiness</span><h2 style={{ margin: "4px 0" }}>估值尚未开放</h2></div><Pill tone="warn">状态待处理</Pill></div><div className="next-step">{gate.reason ?? "当前估值能力状态不支持直接配置。"}</div></Card>;
   if (error && !base) return <Card><ErrorBox message={error} onRetry={loadDefault} /></Card>;
   if (!base) return <Spinner label="正在加载估值引擎…" />;

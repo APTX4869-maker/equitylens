@@ -16,6 +16,7 @@ import { MoatSection } from "@/components/sections/MoatSection";
 import { MetricDrawer } from "@/components/MetricDrawer";
 import { SourceDrawer } from "@/components/SourceDrawer";
 import { AddCompanyDialog } from "@/components/companies/AddCompanyDialog";
+import { CompanyCapabilities } from "@/components/companies/CompanyCapabilities";
 import { OnboardingCenter } from "@/components/companies/OnboardingCenter";
 import { OnboardingAttentionButton } from "@/components/companies/OnboardingAttentionButton";
 import {
@@ -400,6 +401,7 @@ export default function Home() {
           {!company && !companyListError ? <div className="onboarding-empty">正在读取已发布公司…</div> : null}
           {company && researchIdentity ? <>
           <Hero company={entry?.info ?? null} market={activeMarket} />
+          {selectedCompany ? <CompanyCapabilities key={`${company}:${selectedCompany.publication_id}`} company={selectedCompany} onNavigate={setTab} /> : null}
           <div className="research-toolbar">
             <div className="tool-left">
               <div className="tool-group">
@@ -520,10 +522,11 @@ export default function Home() {
                 key={`${company}:${researchIdentity.security_id}`}
                 ticker={company}
                 identity={researchIdentity}
-                gate={selectedCompany?.capabilities.find((capability) => capability.module === "valuation") ?? null}
+                gate={selectedCompany?.capabilities.find((capability) => capability.module === "valuation") ?? { status: "UNKNOWN", reason: "当前发布未记录估值能力，需维护者核对能力记录；不能据此认定估值可用。" }}
                 refreshGeneration={valuationReviewGeneration[company] ?? 0}
                 refreshReviewRequired={(valuationReviewGeneration[company] ?? 0) > 0}
                 onConfirmed={handleValuationConfirmed}
+                onOpenFinancials={() => setTab("financials")}
               />
             </section>
           ) : null}

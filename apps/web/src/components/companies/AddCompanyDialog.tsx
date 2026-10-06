@@ -128,6 +128,12 @@ export function AddCompanyDialog({ open, onClose, onCreated }: {
               <div className="coverage-strip">
                 <span>10-K {discovery.coverage.form_counts["10-K"] ?? 0} 份</span><span>10-Q {discovery.coverage.form_counts["10-Q"] ?? 0} 份</span><span>覆盖至 {discovery.coverage.latest_report_date ?? "未知"}</span>
               </div>
+              {discovery.eligibility.status !== "REJECTED" ? <div className="discovery-capability-boundary" data-testid="discovery-capability-boundary">
+                <strong>证券识别成功不是所有模块已可用</strong>
+                <p>当前仅完成证券身份识别和披露目录检查，文件数量不是解析成功或质量通过的证明。</p>
+                <ul><li>财务：待抓取与质量核验</li><li>分部：待适配与披露核验</li><li>估值：待适配与基准审核；不保证当前模型适用</li><li>行情：独立同步，不随财务发布自动变成最新</li></ul>
+                <p>若需维护者适配，任务会停下，不会一直自动运行。已完成产物和下一步在建档中心查看。</p>
+              </div> : null}
               <button className="primary-action full" onClick={() => void create()} disabled={busy || !candidateId || discovery.eligibility.status === "REJECTED"}>{busy ? "正在创建…" : "确认并建档"}</button>
             </div>
           ) : null}

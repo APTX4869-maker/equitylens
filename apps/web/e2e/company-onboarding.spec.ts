@@ -348,6 +348,11 @@ test("supported SEC discovery is presented as eligible for onboarding", async ({
   await page.getByRole("button", { name: "识别公司" }).click();
 
   await expect(page.getByText("符合自动建档范围")).toBeVisible();
+  const scope = page.getByTestId("discovery-capability-boundary");
+  await expect(scope).toContainText("不是所有模块已可用");
+  await expect(scope).toContainText("财务：待抓取与质量核验");
+  await expect(scope).toContainText("估值：待适配与基准审核");
+  await expect(scope).toContainText("行情：独立同步");
   await expect(page.getByText("需要人工适配")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "确认并建档" })).toBeEnabled();
 });

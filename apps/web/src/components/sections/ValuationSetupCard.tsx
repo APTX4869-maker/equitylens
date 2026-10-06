@@ -54,13 +54,14 @@ export type ValuationSetupCardProps = {
   identity: ResearchIdentity;
   gate: { status: string; reason: string | null };
   onConfirmed: () => Promise<void> | void;
+  onOpenFinancials?: () => void;
 };
 
 function draftUrl(ticker: string, identity: ResearchIdentity) {
   return `/api/v1/companies/${encodeURIComponent(ticker)}/valuation-profile/draft?security_id=${encodeURIComponent(identity.security_id)}&publication_id=${encodeURIComponent(identity.publication_id)}`;
 }
 
-export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: ValuationSetupCardProps) {
+export function ValuationSetupCard({ ticker, identity, gate, onConfirmed, onOpenFinancials }: ValuationSetupCardProps) {
   const securityId = identity.security_id;
   const publicationId = identity.publication_id;
   const [source, setSource] = useState<ValuationDraft | null>(null);
@@ -71,6 +72,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
   const [submitting, setSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requiresMaintainer, setRequiresMaintainer] = useState(false);
   const [rawControlErrors, setRawControlErrors] = useState<ValuationDraftErrors>({});
   const [confirmed, setConfirmed] = useState(false);
   const requestSequence = useRef(0);
@@ -79,6 +81,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
+    setRequiresMaintainer(false);
     setAcknowledged(false);
     setConfirmed(false);
     try {
@@ -91,7 +94,10 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
       setDraft(draftFromInputs(response.assumptions.inputs));
       setPreview(response.preview);
     } catch (reason) {
-      if (sequence === requestSequence.current) setError(userErrorMessage(reason));
+      if (sequence === requestSequence.current) {
+        setError(userErrorMessage(reason));
+        setRequiresMaintainer(reason instanceof ApiRequestError && reason.detail.code === "VALUATION_DEFAULT_UNAVAILABLE");
+      }
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
@@ -189,8 +195,12 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
     return (
       <Card className="valuation-setup card-pad" data-testid="valuation-setup-error">
         <div className="section-head"><div><span className="eyebrow">Valuation review</span><h2>无法生成估值审核方案</h2></div><Pill tone="bad">数据阻断</Pill></div>
-        <div className="action-error">{error ?? gate.reason ?? "关键财务事实或发行人研究配置不足。"}</div>
-        <button className="secondary-action" onClick={() => void loadDraft()}>重新加载</button>
+        {requiresMaintainer ? <>
+          <div className="action-error"><strong>需要维护者处理</strong><p>{ticker} 的公司研究配置或关键财务事实不足，当前无法生成可审核基准。等待或重复刷新不会自动解除。</p><p>下一步：维护者补充并核验公司配置与证据，适配完成后再检查审核草案。此页面不能用确认假设绕过缺失配置。</p></div>
+          <details className="capability-reason"><summary>原始错误与技术原因</summary><p>{error}</p></details>
+          {onOpenFinancials ? <button className="secondary-action" onClick={onOpenFinancials}>继续查看财务数据</button> : null}
+        </> : <div className="action-error">{error ?? gate.reason ?? "关键财务事实或发行人研究配置不足。"}</div>}
+        <button className="secondary-action" onClick={() => void loadDraft()}>{requiresMaintainer ? "适配完成后重新检查" : "重新加载"}</button>
       </Card>
     );
   }
