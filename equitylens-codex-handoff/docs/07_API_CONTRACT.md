@@ -19,6 +19,27 @@ raw/normalized values accessible in the quote tooltip, and shows full unknown
 text rather than guessing or truncating it. Timezone-less source text is labeled
 as such; the UTC normalization assumption is not presented as a provider zone.
 
+### Frozen risk-free metadata (R07, 2026-10-06)
+
+Valuation review, confirmed default, preview, saved run and historical detail
+display `assumptions.meta.risk_free` from that specific bundle: numeric `value`,
+`as_of`, `source`, `source_type` and nullable `fallback_reason`. Missing metadata
+is explicitly unrecorded, not filled from a newer top-level or live rate. This
+component is not WACC; saved snapshots and confirmation metadata are not rewritten.
+
+`GET /companies/{ticker}/valuation-profile/draft` additionally returns
+`risk_free_fingerprint`, a server-computed hash of the entire rate metadata.
+The web client includes it in `PUT /companies/{ticker}/valuation-profile`.
+If freshly generated server metadata differs, confirmation returns 409
+`VALUATION_RISK_FREE_CHANGED` without persisting a confirmation; reload and
+renewed acknowledgement are required. Checking and freezing use the same bundle,
+not a second rate fetch. The field remains optional for legacy API callers;
+callers omitting it do not receive this review-to-confirmation drift protection.
+For fingerprint-bearing requests the confirmation identity also includes the
+reviewed rate metadata: unchanged retries reuse the confirmation, while newly
+reviewed source/date changes create a new immutable confirmation even if the
+DCF inputs are unchanged. Existing history is preserved without migration.
+
 ## 1. Company
 
 ### `GET /companies/{ticker}`

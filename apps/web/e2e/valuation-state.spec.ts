@@ -41,6 +41,45 @@ function defaults(): Assumptions {
   };
 }
 
+for (const [label, riskFree, expected] of [
+  ["frozen fallback", { value: 0.0425, as_of: "2026-08-01", source: "Frozen Treasury fallback", source_type: "config_assumption", fallback_reason: "Treasury feed unavailable; using dated config fallback." }, ["4.25%", "2026-08-01", "Frozen Treasury fallback", "配置回退", "国债数据源不可用"]],
+  ["external observation", { value: 0.041, as_of: "2026-09-01", source: "Frozen Treasury observation", source_type: "external_observation", fallback_reason: null }, ["4.10%", "2026-09-01", "Frozen Treasury observation", "外部观察"]],
+  ["missing metadata", undefined, ["利率未记录", "日期未记录", "来源未记录", "状态未记录"]],
+  ["zero undated", { value: 0, source_type: "config_assumption" }, ["0.00%", "日期未记录", "来源未记录", "配置假设"]],
+] as const) {
+  test(`risk-free display preserves ${label} through preview and save`, async ({ page }) => {
+    await stubPage(page);
+    const response = (fair: number, inputs: Assumptions) => ({
+      ...runResponse(fair, inputs),
+      assumptions: { inputs, meta: riskFree ? { risk_free: riskFree } : {} },
+      // Deliberately newer/conflicting legacy field must not replace the frozen metadata.
+      risk_free: { value: 0.099, as_of: "2026-10-06", source: "New live rate" },
+    });
+    await page.route("**/api/v1/companies/AAPL/valuation/default?**", route => route.fulfill({ json: response(300, defaults()) }));
+    await page.route("**/api/v1/companies/AAPL/valuation/run?**", route => {
+      const body = route.request().postDataJSON();
+      return route.fulfill({ json: { ...response(250, body.assumptions), valuation_run_id: body.persist ? "run-frozen" : null } });
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "估值" }).click();
+    await expect(page.locator(".valuation-tags")).toContainText(expected[0]);
+    const display = page.getByTestId("risk-free-snapshot");
+    await display.getByText("利率来源与说明", { exact: true }).click();
+    expect(await page.locator(".valuation-tags > span").first().evaluate(element => element.getBoundingClientRect().height)).toBeLessThan(40);
+    for (const text of expected) await expect(display).toContainText(text);
+    if (riskFree && "source" in riskFree) await expect(display.getByText(`来源：${riskFree.source}`, { exact: true })).toBeVisible();
+    await expect(display).not.toContainText("9.90%");
+    await page.getByTestId("valuation-input-wacc").fill("9.7");
+    await expect(page.getByTestId("fair-value")).toHaveText("$250");
+    for (const text of expected) await expect(display).toContainText(text);
+    await expect(display).not.toContainText("9.90%");
+    await page.getByRole("button", { name: "保存本次运行" }).click();
+    await expect(page.getByText("已保存 · run run-frozen", { exact: true })).toBeVisible();
+    for (const text of expected) await expect(display).toContainText(text);
+    await expect(display).not.toContainText("9.90%");
+  });
+}
+
 test("shows exact issuer values with adaptive sliders and blocks invalid text", async ({ page }) => {
   let runRequests = 0;
   await stubPage(page);

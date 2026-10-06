@@ -17,6 +17,8 @@ const inputs = {
   share_basis_label: "FY diluted weighted-average shares",
 };
 
+const frozenRiskFree = { value: 0.0425, as_of: "2026-08-01", source: "Frozen Treasury fallback", source_type: "config_assumption", fallback_reason: "Treasury feed unavailable; using dated config fallback." };
+
 function scenarios(fair = 200) {
   const scenarioInputs = {
     revenue_growth: inputs.revenue_growth,
@@ -39,7 +41,7 @@ function readyValuation() {
     model_version: "fcff_dcf.v2",
     run_at: "2026-09-25T00:00:00Z",
     valuation_run_id: null,
-    assumptions: { inputs, meta: {} },
+    assumptions: { inputs, meta: { risk_free: frozenRiskFree } },
     result: {
       fair_value_per_share: 200,
       enterprise_value: 2100,
@@ -105,9 +107,11 @@ async function stubSetupPage(page: Page, valuationReady: () => boolean) {
     company_id: "0001045810", ticker: "NVDA", security_id: "sec-nvda",
     publication_id: "pub-nvda", model_version: "fcff_dcf.v2",
     status: "NEEDS_CONFIGURATION", acknowledgement_required: true,
+    risk_free_fingerprint: "reviewed-risk-free",
     assumptions: {
       inputs,
       meta: {
+        risk_free: frozenRiskFree,
         revenue_growth: { reason: "AI 增长路径研究先验", source: "nvda-growth.v1", version: "nvda-growth.v1" },
         op_margin_end: { reason: "五年利润率路径", source: "margin-path.v1", version: "margin-path.v1" },
         wacc: { reason: "资本成本估计", source: "wacc-defaults.v6", version: "wacc-defaults.v6" },
@@ -145,6 +149,9 @@ test("reviews complete assumptions before confirming valuation", async ({ page }
   const setup = page.getByTestId("valuation-setup");
   await expect(setup).toContainText("pub-nvda");
   await expect(setup).toContainText("fcff_dcf.v2");
+  await expect(setup).toContainText("4.25%");
+  await expect(setup).toContainText("2026-08-01");
+  await expect(setup).toContainText("配置回退");
   await expect(page.getByTestId("valuation-input-growth")).toHaveValue("30");
   await expect(page.getByTestId("valuation-input-margin")).toHaveValue("60.5");
   await expect(page.getByTestId("valuation-confirm")).toBeDisabled();
@@ -167,11 +174,30 @@ test("reviews complete assumptions before confirming valuation", async ({ page }
   await expect(page.getByTestId("valuation-setup")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "NVIDIA UPDATED NVDA" })).toBeVisible();
   await expect(page.getByTestId("fair-value")).toHaveText("$200");
+  await expect(page.getByTestId("risk-free-snapshot")).toContainText("4.25%");
+  await expect(page.getByTestId("risk-free-snapshot")).toContainText("Frozen Treasury fallback");
   expect(confirmation).toMatchObject({
     security_id: "sec-nvda",
     publication_id: "pub-nvda",
     model_version: "fcff_dcf.v2",
     confirmed: true,
+    risk_free_fingerprint: "reviewed-risk-free",
     assumptions: { wacc: 0.12, shares: 10, revenue_base: 1000 },
   });
+});
+
+test("changed risk-free metadata requires reload and renewed acknowledgement", async ({ page }) => {
+  await stubSetupPage(page, () => false);
+  await page.route("**/api/v1/companies/NVDA/valuation-profile", route => route.fulfill({
+    status: 409, json: { error: { code: "VALUATION_RISK_FREE_CHANGED", message: "risk-free metadata changed" } },
+  }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "估值" }).click();
+  await page.getByRole("checkbox", { name: /我已审核/ }).check();
+  await page.getByTestId("valuation-confirm").click();
+  await expect(page.getByTestId("valuation-setup-error")).toContainText("利率来源或时点已变化，请重新加载并审核");
+  await expect(page.getByTestId("valuation-confirm")).toBeDisabled();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: /我已审核/ })).not.toBeChecked();
+  await expect(page.getByTestId("valuation-confirm")).toBeDisabled();
 });

@@ -8,6 +8,7 @@ import { EChart, barOption } from "@/components/charts";
 import { ValuationSetupCard } from "@/components/sections/ValuationSetupCard";
 import { ValuationControls } from "@/components/valuation/ValuationControls";
 import { ValuationPlanLibrary } from "@/components/valuation/ValuationPlanLibrary";
+import { RiskFreeSnapshot } from "@/components/valuation/RiskFreeSnapshot";
 import type { ValuationPlanCopyDraft } from "@/lib/api";
 import type { ResearchIdentity } from "@/lib/types";
 import {
@@ -91,7 +92,6 @@ type RunResponse = {
       fair_value_per_share?: number;
     };
   };
-  risk_free?: { value: number; as_of?: string; source?: string };
 };
 
 type AssumptionMeta = {
@@ -690,9 +690,9 @@ export function ValuationSection({
             <div className="big-number" style={{ fontSize: 22 }}>{(base.result.terminal_value_share * 100).toFixed(0)}%</div>
           </div>
         </div>
-        <div className="valuation-tags">
+        <div className="valuation-tags" style={{ alignItems: "flex-start" }}>
           <span>模型：{base.result.model_version}</span>
-          <span>无风险利率 {base.risk_free ? `${(base.risk_free.value * 100).toFixed(2)}%（${base.risk_free.as_of ?? ""}）` : "—"}</span>
+          <RiskFreeSnapshot meta={meta.risk_free} />
           <span>{saved && !refreshStale && base.valuation_run_id ? `已保存 · run ${base.valuation_run_id}` : saved && !refreshStale ? "已保存方案" : isDirty || refreshStale ? "未保存（预览已过期）" : "未保存（预览）"}</span>
           <button className="tab-btn" onClick={saveRun} disabled={!canSave}>
             保存本次运行

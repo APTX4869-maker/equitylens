@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RiskFreeSnapshot } from "@/components/valuation/RiskFreeSnapshot";
 
 import {
   api,
@@ -65,6 +66,7 @@ function PlanDetail({ plan, run }: { plan: ValuationPlan; run: ValuationRunSnaps
       <div className="plan-detail-grid">
         <div>
           <h5>已冻结假设</h5>
+          <RiskFreeSnapshot meta={run?.assumptions.meta?.risk_free} />
           <dl className="plan-assumptions">
             {Object.entries(assumptions).map(([key, value]) => (
               <div key={key}><dt>{ASSUMPTION_LABELS[key] ?? key}</dt><dd>{displayValue(key, value)}</dd></div>

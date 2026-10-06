@@ -124,6 +124,7 @@ def confirm_valuation_profile(
     model_version: str,
     assumptions: dict,
     confirmed: bool,
+    risk_free_fingerprint: str | None = None,
 ) -> dict:
     """Validate and optionally persist an identity-bound valuation confirmation."""
     security = store.query_one(
@@ -210,6 +211,12 @@ def confirm_valuation_profile(
     except (PublicationConflict, TypeError, ValueError) as exc:
         _valuation_error("VALUATION_DEFAULT_UNAVAILABLE", str(exc))
     baseline = valuation["assumptions"]
+    if risk_free_fingerprint is not None and risk_free_fingerprint != sha256_json(baseline["meta"].get("risk_free")):
+        _valuation_error(
+            "VALUATION_RISK_FREE_CHANGED",
+            "risk-free metadata changed; reload and review the valuation draft",
+            "risk_free_fingerprint",
+        )
     source_bundle = confirmed_personal_assumptions(
         {
             "assumptions": baseline["inputs"],
@@ -230,6 +237,13 @@ def confirm_valuation_profile(
         model_version=model_version,
         assumptions=assumptions,
     )
+    if risk_free_fingerprint is not None:
+        # Same inputs with newly reviewed rate provenance are a new immutable
+        # confirmation; retries of the same reviewed bundle remain idempotent.
+        fingerprint = sha256_json({
+            "inputs_identity": fingerprint,
+            "risk_free_fingerprint": risk_free_fingerprint,
+        })
     status_value = "CONFIRMED" if confirmed else "DRAFT"
     existing = store.query_one(
         """
@@ -332,6 +346,7 @@ def valuation_profile_draft(
         "model_version": dcf_mod.MODEL_VERSION,
         "status": "READY" if confirmed else "NEEDS_CONFIGURATION",
         "confirmation_id": confirmed["assumption_set_id"] if confirmed else None,
+        "risk_free_fingerprint": sha256_json(assumptions["meta"].get("risk_free")),
         "assumptions": assumptions,
         "preview": {
             key: valuation[key]

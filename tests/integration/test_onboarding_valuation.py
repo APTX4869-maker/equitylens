@@ -388,6 +388,57 @@ def test_confirmation_baseline_generation_failure_writes_nothing(db, monkeypatch
     assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
 
 
+@pytest.mark.parametrize("change", ["value", "source"])
+def test_confirmation_requires_rereview_when_risk_free_metadata_changes(db, monkeypatch, change):
+    publication = _install_company(db, ticker="AAPL", complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    rate = {"value": 0.0425, "as_of": "2026-08-01", "source": "documented config fallback"}
+    monkeypatch.setattr("equitylens.valuation.service.risk_free_rate", lambda: dict(rate))
+    params = {"security_id": "security-newco", "publication_id": publication.publication_id}
+    draft = client.get("/api/v1/companies/AAPL/valuation-profile/draft", params=params).json()
+    assert isinstance(draft.get("risk_free_fingerprint"), str)
+    body = {**params, "model_version": MODEL_VERSION, "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True, "risk_free_fingerprint": draft["risk_free_fingerprint"]}
+    before = db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"]
+    rate[change] = 0.05 if change == "value" else "US Treasury daily yield curve (BC_10YEAR)"
+    response = client.put("/api/v1/companies/AAPL/valuation-profile", json=body)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "VALUATION_RISK_FREE_CHANGED"
+    assert db.query_one("SELECT count(*) AS n FROM valuation_assumption_set")["n"] == before
+    renewed = client.get("/api/v1/companies/AAPL/valuation-profile/draft", params=params).json()
+    body.update(assumptions=renewed["assumptions"]["inputs"], risk_free_fingerprint=renewed["risk_free_fingerprint"])
+    response = client.put("/api/v1/companies/AAPL/valuation-profile", json=body)
+    assert response.status_code == 200, response.text
+    frozen = client.get("/api/v1/companies/AAPL/valuation/default", params=params).json()["assumptions"]["meta"]["risk_free"]
+    assert frozen == renewed["assumptions"]["meta"]["risk_free"]
+    rate["value"] = 0.099
+    assert client.get("/api/v1/companies/AAPL/valuation/default", params=params).json()["assumptions"]["meta"]["risk_free"] == frozen
+
+
+def test_rereviewed_rate_provenance_does_not_reuse_an_older_confirmation(db, monkeypatch):
+    publication = _install_company(db, ticker="AAPL", complete_valuation_facts=True)
+    client = _client(db, monkeypatch)
+    rate = {"value": 0.0425, "as_of": "2026-08-01", "source": "documented config fallback"}
+    monkeypatch.setattr("equitylens.valuation.service.risk_free_rate", lambda: dict(rate))
+    params = {"security_id": "security-newco", "publication_id": publication.publication_id}
+    def confirm_review():
+        draft = client.get("/api/v1/companies/AAPL/valuation-profile/draft", params=params).json()
+        response = client.put("/api/v1/companies/AAPL/valuation-profile", json={
+            **params, "model_version": MODEL_VERSION, "assumptions": draft["assumptions"]["inputs"],
+            "confirmed": True, "risk_free_fingerprint": draft["risk_free_fingerprint"],
+        })
+        assert response.status_code == 200, response.text
+        return response.json(), draft
+    first, _ = confirm_review()
+    assert confirm_review()[0]["confirmation_id"] == first["confirmation_id"]
+    rate.update(as_of="2026-09-01", source="US Treasury daily yield curve (BC_10YEAR)")
+    second, reviewed = confirm_review()
+    assert second["confirmation_id"] != first["confirmation_id"]
+    assert confirm_review()[0]["confirmation_id"] == second["confirmation_id"]
+    frozen = client.get("/api/v1/companies/AAPL/valuation/default", params=params).json()["assumptions"]["meta"]["risk_free"]
+    assert frozen == reviewed["assumptions"]["meta"]["risk_free"]
+
+
 def test_confirmation_rejects_draft_after_active_publication_changes(db, monkeypatch):
     publication = _install_company(
         db,

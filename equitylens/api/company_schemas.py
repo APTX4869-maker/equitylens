@@ -68,3 +68,4 @@ class ValuationProfileRequest(StrictRequest):
     model_version: StrictStr
     assumptions: ValuationProfileAssumptions
     confirmed: StrictBool
+    risk_free_fingerprint: StrictStr | None = None

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, userErrorMessage } from "@/lib/api";
 import { ValuationControls } from "@/components/valuation/ValuationControls";
+import { RiskFreeSnapshot } from "@/components/valuation/RiskFreeSnapshot";
 import {
   buildPreviewRequest,
   draftFromInputs,
@@ -40,6 +41,7 @@ type ValuationDraft = {
   model_version: string;
   status: string;
   acknowledgement_required: boolean;
+  risk_free_fingerprint?: string;
   assumptions: {
     inputs: DcfInputs;
     meta: Record<string, AssumptionMeta>;
@@ -161,6 +163,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
           publication_id: source.publication_id,
           model_version: source.model_version,
           assumptions: buildPreviewRequest(draft).assumptions,
+          risk_free_fingerprint: source.risk_free_fingerprint,
           confirmed: true,
         }),
       });
@@ -169,6 +172,9 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
     } catch (reason) {
       if (reason instanceof ApiRequestError && reason.detail.code === "VALUATION_DRAFT_STALE") {
         setError("财务发布版本已变化，请重新加载审核方案");
+      } else if (reason instanceof ApiRequestError && reason.detail.code === "VALUATION_RISK_FREE_CHANGED") {
+        setAcknowledged(false);
+        setError("利率来源或时点已变化，请重新加载并审核");
       } else {
         setError(userErrorMessage(reason));
       }
@@ -216,6 +222,7 @@ export function ValuationSetupCard({ ticker, identity, gate, onConfirmed }: Valu
         <span><small>模型</small><strong>{source.model_version}</strong></span>
       </div>
 
+      <RiskFreeSnapshot meta={source.assumptions.meta.risk_free} />
       <div className="valuation-review-grid">
         <div className="valuation-review-controls">
           <ValuationControls

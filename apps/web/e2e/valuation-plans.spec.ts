@@ -90,7 +90,7 @@ test("plan library exposes retry, all pages, search, archive, restore and immuta
     return route.fulfill({ json: {
       valuation_run_id: runId, status: "complete", model_name: "FCFF_DCF",
       model_version: "fcff_dcf.v2", run_at: "2026-09-06T00:00:00Z",
-      assumptions: { inputs, meta: {} }, output: { fair_value_per_share: 100 },
+      assumptions: { inputs, meta: { risk_free: { value: 0.035, as_of: "2025-08-01", source: "Historical rate", source_type: "external_observation" } } }, output: { fair_value_per_share: 100 },
       scenarios: runResponse().scenarios, sensitivity: null, model_quality: null, warnings: [],
     }});
   });
@@ -162,6 +162,11 @@ test("plan library exposes retry, all pages, search, archive, restore and immuta
   await expect(detail).toContainText("20.00%");
   await expect(detail).toContainText("所选情景每股价值");
   await expect(detail.getByText("$70.00", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("3.50%");
+  await expect(detail).toContainText("2025-08-01");
+  await detail.getByText("利率来源与说明", { exact: true }).click();
+  await expect(detail.getByText("来源：Historical rate", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("Historical rate");
 });
 
 test("copy-and-edit saves lineage and comparison shows actual values including equal fields", async ({ page }) => {
