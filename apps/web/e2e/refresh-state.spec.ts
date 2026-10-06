@@ -240,9 +240,33 @@ test("stale quote is labeled expired with observation and fetch times", async ({
 
   const expired = page.getByTestId("market-quote-state");
   await expect(expired).toContainText("行情已过期");
-  await expect(expired).toContainText("观察 2026-08-01");
-  await expect(expired).toContainText("抓取 2026-09-25");
+  await expect(expired).toContainText("观察 2026年08月01日 14:30:00 UTC");
+  await expect(expired).toContainText("抓取 2026年09月25日 01:02:03 UTC");
   await expect(expired).not.toContainText("未同步");
+});
+
+test("provider observation year and timezone stay complete in hero and financial cards", async ({ page }) => {
+  await stubShell(page);
+  await page.route("**/api/v1/companies/AAPL/market/quote?**", (route) => route.fulfill({ json: {
+    status: "STALE", configured: true, synced: true,
+    quote: { price: 321, currency: "USD", observed_at: "Sep 16, 2026 9:31 AM ET",
+      observed_at_utc: "2026-09-16T13:31:00+00:00", provider: "nasdaq", provider_label: "Nasdaq",
+      source_label: "Nasdaq", source_url: "https://example.test/stale", fetched_at: "2026-10-06T01:02:03+00:00" }, derived: {},
+  } }));
+  await page.route("**/api/v1/companies/AAPL/metrics?**", (route) => route.fulfill({ json: { metrics: [] } }));
+  await page.route("**/api/v1/companies/AAPL/facts?**", (route) => route.fulfill({ json: { facts: [] } }));
+  await page.goto("/");
+  const hero = page.getByTestId("market-quote-state");
+  await expect(hero).toContainText("观察 2026年09月16日 09:31 ET");
+  await expect(hero).toContainText("抓取 2026年10月06日 01:02:03 UTC");
+  await expect(hero).toHaveAttribute("title", /Sep 16, 2026 9:31 AM ET/);
+  await page.getByRole("button", { name: "⌁ 财务分析", exact: true }).click();
+  await page.getByRole("button", { name: "专业模式", exact: true }).click();
+  for (const name of [/市盈率 P\/E/, /市现率 P\/FCF/, /FCF 收益率/]) {
+    const card = page.getByRole("button", { name });
+    await expect(card).toContainText("观察 2026年09月16日 09:31 ET");
+    await expect(card).toContainText("抓取 2026年10月06日 01:02:03 UTC");
+  }
 });
 
 test("overview warns when KPI periods are not aligned", async ({ page }) => {
@@ -436,14 +460,14 @@ test("optional reload failures retain the last complete quote and freshness snap
   });
 
   await page.goto("/");
-  await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
+  await expect(page.getByTestId("market-quote-state")).toContainText("行情 TestFeed $123.45 · 观察 2026年09月24日 · 抓取 2026年09月25日 01:00:00 UTC");
   await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
 
   await page.getByRole("button", { name: "↻ 刷新数据" }).click();
   await expect(page.getByText("刷新完成：财务暂无更新、分部暂无更新、治理暂无更新、行情暂无更新")).toBeVisible();
   expect(quoteRequests).toBeGreaterThan(1);
   expect(freshnessRequests).toBeGreaterThan(1);
-  await expect(page.getByText("行情 TestFeed $123.45 · 2026-09-24")).toBeVisible();
+  await expect(page.getByTestId("market-quote-state")).toContainText("行情 TestFeed $123.45 · 观察 2026年09月24日 · 抓取 2026年09月25日 01:00:00 UTC");
   await expect(page.getByTestId("freshness-market_quote")).toContainText("行情 2026-09-24");
   await expect(page.getByText("页面重新读取失败，已保留上次行情和数据新鲜度")).toBeVisible();
   await expect(page.getByTestId("refresh-module-quotes")).toContainText("页面摘要更新 —");

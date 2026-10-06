@@ -4,6 +4,21 @@ Prefix: `/api/v1`
 
 All monetary values are raw numeric base units in API payloads. UI handles B/M formatting.
 
+### Market observation time (R05, 2026-10-06)
+
+`GET /companies/{ticker}/market/quote` retains the provider's full original
+`quote.observed_at` and the distinct `quote.fetched_at`. The additive nullable
+`quote.observed_at_utc` is an ISO-8601 aware UTC timestamp parsed using the existing
+freshness parser (ET/PT/CT/MT respect daylight saving; offset ISO is normalized;
+legacy timezone-less timestamps retain the parser's UTC assumption). Unknown
+formats return null, never the fetch time. No persisted quote or valuation
+snapshot is rewritten. Existing saved snapshots may omit this new field.
+
+The UI formats the original source-local date/time with its zone intact, keeps
+raw/normalized values accessible in the quote tooltip, and shows full unknown
+text rather than guessing or truncating it. Timezone-less source text is labeled
+as such; the UTC normalization assumption is not presented as a provider zone.
+
 ## 1. Company
 
 ### `GET /companies/{ticker}`

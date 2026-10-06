@@ -229,8 +229,10 @@ def quote_block(
         "source_label": row["source_label"], "source_url": row["source_url"],
         "fetched_at": _timestamp_text(row.get("fetched_at")),
     }
-    from equitylens.market.age import quote_observation_status
+    from equitylens.market.age import parse_observed_at, quote_observation_status
 
+    observation = parse_observed_at(str(row.get("observed_at") or ""))
+    quote["observed_at_utc"] = observation.isoformat() if observation else None
     age = quote_observation_status(str(row.get("observed_at") or ""))
     status = "OK" if age["status"] == "ok" else "STALE"
     derived = _derived(store, company_id, row)

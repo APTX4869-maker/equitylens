@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { MarketQuote, MetricPoint, Fact, ResearchIdentity } from "@/lib/types";
-import { fmtMoney, fmtPct, signedPct } from "@/lib/format";
+import { fmtMoney, fmtPct, signedPct, fmtQuoteTime } from "@/lib/format";
 import { Card, Pill, ErrorBox, Spinner, ExplainNote } from "@/components/ui";
 import { EChart, seriesOption } from "@/components/charts";
 
@@ -57,7 +57,7 @@ export function FinancialsSection({ ticker, identity, market, onOpenMetric, onOp
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
   const quoteUnavailableNote = market?.status === "STALE" && market.quote
-    ? `行情已过期 · 观察 ${market.quote.observed_at.slice(0, 10)} · 抓取 ${market.quote.fetched_at.slice(0, 10)}`
+    ? `行情已过期 · 观察 ${fmtQuoteTime(market.quote.observed_at)} · 抓取 ${fmtQuoteTime(market.quote.fetched_at)}`
     : "行情未同步";
 
   useEffect(() => {

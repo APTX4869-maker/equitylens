@@ -3,11 +3,33 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from equitylens.domain.companies import get_company
 from equitylens.domain.freshness import freshness
 
 AAPL_CIK = get_company("AAPL").cik
+
+
+@pytest.mark.parametrize("raw, normalized", [
+    ("Sep 16, 2026 9:31 AM ET", "2026-09-16T13:31:00+00:00"),
+    ("Jan 3, 2026 9:58 AM ET", "2026-01-03T14:58:00+00:00"),
+    ("2026-09-16T23:31:00-04:00", "2026-09-17T03:31:00+00:00"),
+    ("2026-09-16 09:31:41", "2026-09-16T09:31:41+00:00"),
+    ("unknown provider time", None),
+])
+def test_quote_exposes_machine_observation_without_replacing_raw_or_using_fetch(db, raw, normalized):
+    from equitylens.market.service import quote_block
+    db.insert_market_quote({
+        "quote_id": "mq_machine_time", "company_id": AAPL_CIK, "ticker": "AAPL",
+        "provider": "nasdaq", "observed_at": raw, "price": 300.0,
+        "currency": "USD", "source_label": "Nasdaq", "source_url": "https://x",
+        "fetched_at": "2026-10-06T01:02:03+00:00",
+    })
+    quote = quote_block(db, AAPL_CIK, "AAPL")["quote"]
+    assert quote["observed_at_utc"] == normalized
+    assert quote["observed_at"] == raw
+    assert quote["fetched_at"].startswith("2026-10-06")
 
 
 def test_empty_db_reports_missing_with_commands(db):

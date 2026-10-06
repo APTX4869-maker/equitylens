@@ -281,6 +281,7 @@ export type MarketQuote = {
     price: number;
     currency: string;
     observed_at: string;
+    observed_at_utc?: string | null;
     provider: string;
     provider_label: string;
     name?: string | null;

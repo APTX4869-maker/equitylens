@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { CompanyInfo, CompanyListItem, MarketQuote } from "@/lib/types";
+import { fmtQuoteTime } from "@/lib/format";
 
 export type TabKey =
   | "overview"
@@ -162,11 +163,12 @@ export function Hero({ company, market }: { company: CompanyInfo | null; market?
           <span
             className={mq ? "pill good" : staleQuote ? "pill warn" : "pill neutral"}
             data-testid="market-quote-state"
+            title={market?.quote ? `原始观察时间：${market.quote.observed_at}；标准UTC：${market.quote.observed_at_utc ?? "无法解析或未提供"}；原始抓取时间：${market.quote.fetched_at}` : undefined}
           >
             {mq
-              ? `行情 ${mq.provider_label} $${mq.price.toFixed(2)} · ${mq.observed_at}`
+              ? `行情 ${mq.provider_label} $${mq.price.toFixed(2)} · 观察 ${fmtQuoteTime(mq.observed_at)} · 抓取 ${fmtQuoteTime(mq.fetched_at)}`
               : staleQuote
-                ? `行情已过期 · ${staleQuote.provider_label} $${staleQuote.price.toFixed(2)} · 观察 ${staleQuote.observed_at.slice(0, 10)} · 抓取 ${staleQuote.fetched_at.slice(0, 10)}`
+                ? `行情已过期 · ${staleQuote.provider_label} $${staleQuote.price.toFixed(2)} · 观察 ${fmtQuoteTime(staleQuote.observed_at)} · 抓取 ${fmtQuoteTime(staleQuote.fetched_at)}`
                 : "行情未同步"}
           </span>
           <span className="pill blue">高质量公司研究</span>
