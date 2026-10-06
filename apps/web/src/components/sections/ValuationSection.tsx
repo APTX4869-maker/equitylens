@@ -133,6 +133,11 @@ export function ValuationSection({
   const [appliedFingerprint, setAppliedFingerprint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [targetPrice, setTargetPrice] = useState("");
+  const [targetPriceSource, setTargetPriceSource] = useState<{
+    kind: "automatic" | "historical" | "manual";
+    observedAt?: string;
+    provider?: string;
+  } | null>(null);
   const [reverse, setReverse] = useState<{
     implied: number | null;
     hist: number | null;
@@ -160,6 +165,7 @@ export function ValuationSection({
   const reverseReqSeq = useRef(0);
   const draftRef = useRef<DcfInputs | null>(null);
   const targetPriceRef = useRef("");
+  const targetPriceEditedRef = useRef(false);
   const refreshGenerationRef = useRef(refreshGeneration);
   const planSavePendingRef = useRef(false);
   const planIdempotencyRef = useRef<{ signature: string; key: string } | null>(null);
@@ -182,12 +188,11 @@ export function ValuationSection({
   // preserving the exact market decimals (326.68 stays 326.68, not 327).
   const prefillReverseTarget = useCallback((d: RunResponse) => {
     const q = d.market?.status === "OK" ? d.market.quote : null;
-    if (q && q.price > 0) {
-      setTargetPrice((prev) => {
-        const next = prev === "" ? String(q.price) : prev;
-        targetPriceRef.current = next;
-        return next;
-      });
+    if (q && Number.isFinite(q.price) && q.price > 0
+      && targetPriceRef.current === "" && !targetPriceEditedRef.current) {
+      targetPriceRef.current = String(q.price);
+      setTargetPrice(String(q.price));
+      setTargetPriceSource({ kind: "automatic", observedAt: q.observed_at, provider: q.provider_label });
     }
   }, []);
 
@@ -599,6 +604,8 @@ export function ValuationSection({
   const mkt = base.market && base.market.quote ? base.market : null;
   const mktQuote = mkt?.quote ?? null;
   const mktStale = base.market?.status === "STALE";
+  const canUseHistoricalPrice = mktStale && mktQuote != null
+    && Number.isFinite(mktQuote.price) && mktQuote.price > 0;
   const premiumPct = !mktStale ? (mkt?.derived?.price_vs_fair_pct ?? null) : null;
 
   return (
@@ -816,9 +823,15 @@ export function ValuationSection({
         <Card className="card-pad" data-testid="reverse-dcf">
           <div className="card-title">Reverse DCF：某价格隐含什么增长？</div>
           <div className="card-sub">
-            {mktQuote
-              ? `行情已同步：现价 $${mktQuote.price.toFixed(2)} 已自动填入（可改价），反推市场当前价格隐含的增长。`
-              : "行情未同步 → 输入一个参考价（例如当前市场价）做探索。"}
+            {targetPrice !== "" && targetPriceSource?.kind === "automatic"
+              ? `行情参考价 $${targetPrice} 已自动填入（可改价）；观察时点：${targetPriceSource.observedAt} · ${targetPriceSource.provider}。用于探索该价格隐含的增长，不代表实时成交价。`
+              : targetPrice !== "" && targetPriceSource?.kind === "historical"
+                ? `已选择历史观察价 $${targetPrice}；观察时点：${targetPriceSource.observedAt} · ${targetPriceSource.provider}。仅作历史价格探索，不代表当前市场价格。`
+                : targetPrice !== "" && targetPriceSource?.kind === "manual"
+                  ? "使用手动输入的参考价探索隐含增长；系统不将其视为已同步行情。"
+                  : canUseHistoricalPrice
+                    ? `历史观察价 $${mktQuote.price.toFixed(2)}（${mktQuote.observed_at} · ${mktQuote.provider_label}）已过期，未自动使用。请手动输入参考价，或明确选择历史价探索。`
+                    : "参考价尚未填写；行情未同步或未使用，请输入一个参考价做探索。"}
           </div>
           <div className="reverse-box" style={{ marginTop: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -831,11 +844,24 @@ export function ValuationSection({
                   reverseReqSeq.current += 1;
                   setReverseLoading(false);
                   targetPriceRef.current = e.target.value;
+                  targetPriceEditedRef.current = true;
                   setTargetPrice(e.target.value);
+                  setTargetPriceSource({ kind: "manual" });
                   setReverseError(null);
                 }}
                 style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", width: 140 }}
               />
+              {canUseHistoricalPrice ? (
+                <button className="tab-btn" onClick={() => {
+                  reverseReqSeq.current += 1;
+                  setReverseLoading(false);
+                  targetPriceRef.current = String(mktQuote.price);
+                  targetPriceEditedRef.current = true;
+                  setTargetPrice(String(mktQuote.price));
+                  setTargetPriceSource({ kind: "historical", observedAt: mktQuote.observed_at, provider: mktQuote.provider_label });
+                  setReverseError(null);
+                }}>使用历史观察价探索</button>
+              ) : null}
               <button className="tab-btn" onClick={runReverse} disabled={reverseLoading || publicationStale}>
                 {reverseLoading ? "计算中…" : "计算隐含增长"}
               </button>

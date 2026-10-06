@@ -155,6 +155,64 @@ test("invalid reverse price is rejected with a visible message", async ({ page }
   await expect(page.getByText(/预览：参考价/)).toHaveCount(0);
 });
 
+for (const status of ["OK", "STALE", "UNAVAILABLE"] as const) {
+  test(`reverse price explains its actual input source for ${status} quotes`, async ({ page }) => {
+    await stub(page);
+    const quote = { price: 492.40, currency: "USD", observed_at: "Sep 16, 2026 9:31 AM ET",
+      provider: "nasdaq", provider_label: "Nasdaq", source_url: "https://www.nasdaq.com/market-activity/stocks/aapl" };
+    const market = status === "UNAVAILABLE" ? { status, reason: "行情未同步" } : { status, quote };
+    await page.route("**/api/v1/companies/AAPL/valuation/default?**", (route) => route.fulfill({ json: { ...response(), market } }));
+    await page.goto("/");
+    await page.getByRole("button", { name: "◎ 估值", exact: true }).click();
+    const card = page.getByTestId("reverse-dcf");
+    const price = card.getByRole("textbox", { name: "Reverse DCF 参考价" });
+    await expect(price).toHaveValue(status === "OK" ? "492.4" : "");
+    if (status === "OK") {
+      await expect(card).toContainText("已自动填入");
+    } else if (status === "STALE") {
+      await expect(card).toContainText("历史观察价");
+      await expect(card).toContainText("未自动使用");
+      await expect(card).toContainText("Sep 16, 2026 9:31 AM ET");
+      await price.fill("450.25");
+      let releaseReverse!: () => void;
+      const holdReverse = new Promise<void>((resolve) => { releaseReverse = resolve; });
+      let markRequested!: () => void;
+      const requested = new Promise<void>((resolve) => { markRequested = resolve; });
+      await page.route("**/api/v1/companies/AAPL/valuation/reverse-dcf?**", async (route) => {
+        expect(route.request().postDataJSON().target_price).toBe(450.25);
+        markRequested();
+        await holdReverse;
+        await route.fulfill({ json: { implied_revenue_cagr: 0.123, historical_revenue_cagr: 0.05 } });
+      });
+      await card.getByRole("button", { name: "计算隐含增长" }).click();
+      await requested;
+      await card.getByRole("button", { name: "使用历史观察价探索" }).click();
+      await expect(price).toHaveValue("492.4");
+      await expect(card).toContainText("已选择历史观察价");
+      await expect(card).not.toContainText("现价");
+      const returned = page.waitForResponse((r) => r.url().includes("/valuation/reverse-dcf") && r.status() === 200);
+      releaseReverse();
+      await returned;
+      await expect(card.locator(".reverse-number")).toHaveCount(0);
+      await expect(card.getByRole("button", { name: "计算隐含增长" })).toBeEnabled();
+    } else {
+      await expect(card).toContainText("行情未同步");
+    }
+    await price.fill("450.25");
+    await expect(card).toContainText("手动输入的参考价");
+    await expect(card).not.toContainText("已自动填入");
+    await page.getByRole("button", { name: "专业模式" }).click();
+    await page.getByRole("button", { name: "初学者模式" }).click();
+    await expect(price).toHaveValue("450.25");
+    await expect(card).toContainText("手动输入的参考价");
+    await price.fill("");
+    await expect(card).not.toContainText("已自动填入");
+    await expect(card).not.toContainText("已选择历史观察价");
+    await card.getByRole("button", { name: "计算隐含增长" }).click();
+    await expect(card.getByRole("alert")).toHaveText("请输入大于 0 的有效价格");
+  });
+}
+
 test("financial metric units and drawers stay scoped to the selected company", async ({ page }) => {
   await stubFinancials(page);
   await page.goto("/");
